@@ -73,6 +73,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         private set => SetProperty(ref _avatarViewModel, value);
     }
 
+    public MediaLibraryViewModel MediaViewModel { get; }
+
     public GroupViewModel? GroupViewModel
     {
         get => _groupViewModel;
@@ -112,10 +114,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             new("avatarsearch", "Avatar Search", "\uE721"),
             new("groups", "Groups", "\uE70E"),
             new("activity", "Activity", "\uE790"),
+            new("media", "Media", "\uEB9F"),
             new("accounts", "Accounts", "\uE716"),
             new("settings", "Settings", "\uE713")
         };
         _selectedSection = Sections[0];
+        MediaViewModel = new MediaLibraryViewModel();
 
         Statuses = new ObservableCollection<StatusOption>
         {
@@ -337,6 +341,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 AvatarViewModel.IsBrowseTabActive = value.Key == "avatarsearch";
             }
 
+            // Media is local, so it loads even before a session is restored.
+            if (value.Key == "media")
+            {
+                _ = MediaViewModel.EnsureLoadedAsync();
+            }
+
             if (!IsLoggedIn)
             {
                 return;
@@ -382,6 +392,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         "avatarsearch" => "Search every avatar VRChat knows about and wear or save it.",
         "groups" => "Manage your VRChat groups, roles, and members.",
         "activity" => "See what your friends have been up to.",
+        "media" => "Your in-game pictures, grouped by world and month.",
         "accounts" => "Switch between multiple VRChat accounts.",
         _ => "Your account, status, and trust level at a glance."
     };

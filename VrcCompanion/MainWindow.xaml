@@ -2556,6 +2556,81 @@
             </ScrollViewer>
         </DataTemplate>
 
+        <DataTemplate x:Key="MediaTemplate">
+            <Grid Margin="28,24,28,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="Media" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="{Binding MediaViewModel.SummaryText}"
+                                   Foreground="#8C93A6" Margin="0,4,0,0" />
+                        <TextBlock Text="{Binding MediaViewModel.RootPath}"
+                                   Foreground="#5F6779" FontSize="11" Margin="0,2,0,0" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                VerticalAlignment="Center">
+                        <Button Content="Open folder"
+                                Command="{Binding MediaViewModel.OpenFolderCommand}"
+                                Padding="12,6" />
+                        <Button Content="Refresh"
+                                Command="{Binding MediaViewModel.RefreshCommand}"
+                                Padding="12,6" Margin="8,0,0,0" />
+                    </StackPanel>
+                </Grid>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding MediaViewModel.Groups}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,20">
+                                    <TextBlock Text="{Binding Title}"
+                                               Foreground="#E6E9F0" FontWeight="SemiBold"
+                                               Margin="0,0,0,8" />
+                                    <ItemsControl ItemsSource="{Binding Items}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Padding="0" BorderThickness="0"
+                                                        Background="Transparent"
+                                                        Margin="0,0,8,8"
+                                                        ToolTip="{Binding FileName}"
+                                                        Command="{Binding DataContext.MediaViewModel.OpenFileCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding Path}">
+                                                    <Border Width="220" Height="140"
+                                                            CornerRadius="8"
+                                                            ClipToBounds="True"
+                                                            Background="#151A24">
+                                                        <Image Source="{Binding Thumbnail}"
+                                                               Stretch="UniformToFill" />
+                                                    </Border>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <TextBlock Grid.Row="1"
+                           Text="{Binding MediaViewModel.EmptyMessage}"
+                           Foreground="#8C93A6"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Visibility="{Binding MediaViewModel.HasPictures, Converter={StaticResource InverseBoolToVis}}" />
+            </Grid>
+        </DataTemplate>
+
         <!-- Section switching swaps ContentTemplate, which rebuilds each tab's visual
              tree; that recreation is what returns a tab to the top. Checked on
              friends (29 rows), notifications (24 items / 65 texts) and worlds (35
@@ -2597,6 +2672,9 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding SelectedSection.Key}" Value="accounts">
                     <Setter Property="ContentTemplate" Value="{StaticResource AccountsTemplate}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="media">
+                    <Setter Property="ContentTemplate" Value="{StaticResource MediaTemplate}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
