@@ -50,12 +50,15 @@ public sealed class FriendDetailViewModel : ViewModelBase
         OpenGroupCommand = new RelayCommand<VrcProfileGroup>(
             group =>
             {
+                IsGroupsOpen = false;
                 if (group is not null && openGroup is not null && !string.IsNullOrWhiteSpace(group.Id))
                 {
                     openGroup(group.Id);
                 }
             },
             group => group is not null && !string.IsNullOrWhiteSpace(group.Id));
+        OpenGroupsCommand = new RelayCommand(() => IsGroupsOpen = true);
+        CloseGroupsCommand = new RelayCommand(() => IsGroupsOpen = false);
 
         var stored = _notes.Get(_friend.Id);
         _noteText = stored?.Text ?? string.Empty;
@@ -299,6 +302,25 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     /// <summary>Opens a group chip in the group info popup (join/leave/details).</summary>
     public RelayCommand<VrcProfileGroup> OpenGroupCommand { get; }
+
+    public RelayCommand OpenGroupsCommand { get; }
+
+    public RelayCommand CloseGroupsCommand { get; }
+
+    private bool _isGroupsOpen;
+
+    /// <summary>Scrollable list of every group on this profile.</summary>
+    public bool IsGroupsOpen
+    {
+        get => _isGroupsOpen;
+        set
+        {
+            if (SetProperty(ref _isGroupsOpen, value))
+            {
+                OnPropertyChanged(nameof(Groups));
+            }
+        }
+    }
 
     public string GroupsSummary => Profile?.Groups is { Count: > 0 } groups
         ? $"{groups.Count} public group{(groups.Count == 1 ? string.Empty : "s")}"

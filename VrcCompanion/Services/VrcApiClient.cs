@@ -1819,6 +1819,7 @@ public sealed class VrcApiClient : IDisposable
         {
             401 when !string.IsNullOrWhiteSpace(detail) && !detail.Equals("Missing Credentials", StringComparison.OrdinalIgnoreCase) => detail,
             401 => "Incorrect username, password, or 2FA code.",
+            403 when !string.IsNullOrWhiteSpace(detail) => detail,
             403 => "VRChat refused the request (403). Your account may need email verification, or the API is blocking this client.",
             429 => "VRChat's rate limit was reached. Wait a minute or two, then refresh.",
             404 => string.IsNullOrWhiteSpace(detail) ? "That VRChat item could not be found." : detail,

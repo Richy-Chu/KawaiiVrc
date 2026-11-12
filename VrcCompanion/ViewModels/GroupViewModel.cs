@@ -37,6 +37,10 @@ public sealed class GroupViewModel : ViewModelBase
     private bool _isGroupInfoBusy;
     private string? _groupInfoError;
     private bool _isMemberOfGroupInfo;
+    private bool _isLeaveGroupConfirmOpen;
+    private ObservableCollection<GroupInstance> _groupInfoInstances = new();
+    private bool _isLoadingGroupInfoInstances;
+    private bool _groupInstancesHidden;
 
     public GroupViewModel(VrcApiClient api, Func<LaunchMode>? launchMode = null)
     {
@@ -54,9 +58,11 @@ public sealed class GroupViewModel : ViewModelBase
         RefreshInstancesCommand = Track(new AsyncRelayCommand(LoadGroupInstancesAsync, () => SelectedGroup is not null && !IsBusy));
         JoinGroupInstanceCommand = Track(new RelayCommand<GroupInstance>(JoinGroupInstance, instance => instance?.CanJoin == true));
         CloseGroupInfoCommand = Track(new RelayCommand(() => IsGroupInfoOpen = false));
-        JoinGroupInfoCommand = Track(new AsyncRelayCommand(JoinGroupInfoAsync, () => GroupInfo is not null && !IsGroupInfoBusy && !IsMemberOfGroupInfo));
+        JoinGroupInfoCommand = Track(new AsyncRelayCommand(JoinGroupInfoAsync, () => GroupInfo is not null && IsGroupJoinOpen && !IsGroupInfoBusy && !IsMemberOfGroupInfo));
         LeaveGroupInfoCommand = Track(new AsyncRelayCommand(LeaveGroupInfoAsync, () => GroupInfo is not null && !IsGroupInfoBusy && IsMemberOfGroupInfo));
         OpenGroupInfoOnWebCommand = Track(new RelayCommand(OpenGroupInfoOnWeb, () => GroupInfo is not null));
+        RequestLeaveGroupCommand = Track(new RelayCommand(() => IsLeaveGroupConfirmOpen = true, () => GroupInfo is not null && IsMemberOfGroupInfo && !IsGroupInfoBusy));
+        CancelLeaveGroupCommand = Track(new RelayCommand(() => IsLeaveGroupConfirmOpen = false));
     }
 
     public ObservableCollection<Group> Groups
@@ -121,6 +127,8 @@ public sealed class GroupViewModel : ViewModelBase
             if (SetProperty(ref _groupInfo, value))
             {
                 OnPropertyChanged(nameof(GroupInfoMemberText));
+                OnPropertyChanged(nameof(GroupJoinHint));
+                OnPropertyChanged(nameof(IsGroupJoinOpen));
                 RaiseCommandStates();
             }
         }
@@ -158,12 +166,27 @@ public sealed class GroupViewModel : ViewModelBase
             if (SetProperty(ref _isMemberOfGroupInfo, value))
             {
                 OnPropertyChanged(nameof(GroupInfoMemberText));
+                OnPropertyChanged(nameof(GroupJoinHint));
+                OnPropertyChanged(nameof(IsGroupJoinOpen));
                 RaiseCommandStates();
             }
         }
     }
 
     public string GroupInfoMemberText => IsMemberOfGroupInfo ? "You are a member" : "You are not a member";
+
+    public bool IsGroupJoinOpen => string.Equals(GroupInfo?.JoinState, "open", StringComparison.OrdinalIgnoreCase);
+
+    public string GroupJoinHint => GroupInfo is null
+        ? string.Empty
+        : GroupInfo.JoinState?.ToLowerInvariant() switch
+        {
+            "open" => "This group is open — Join group adds you right away.",
+            "request" => "This group requires a join request, which VRChat only accepts on vrchat.com.",
+            "invite" => "This group is invite-only. Ask a member for an invite on vrchat.com.",
+            "closed" => "This group is closed to new members.",
+            _ => string.Empty
+        };
 
     public RelayCommand CloseGroupInfoCommand { get; }
 
@@ -172,6 +195,54 @@ public sealed class GroupViewModel : ViewModelBase
     public AsyncRelayCommand LeaveGroupInfoCommand { get; }
 
     public RelayCommand OpenGroupInfoOnWebCommand { get; }
+
+    public RelayCommand RequestLeaveGroupCommand { get; }
+
+    public RelayCommand CancelLeaveGroupCommand { get; }
+
+    /// <summary>Leaving changes real membership, so it always needs a second click.</summary>
+    public bool IsLeaveGroupConfirmOpen
+    {
+        get => _isLeaveGroupConfirmOpen;
+        private set => SetProperty(ref _isLeaveGroupConfirmOpen, value);
+    }
+
+    public ObservableCollection<GroupInstance> GroupInfoInstances
+    {
+        get => _groupInfoInstances;
+        private set => SetProperty(ref _groupInfoInstances, value);
+    }
+
+    public bool IsLoadingGroupInfoInstances
+    {
+        get => _isLoadingGroupInfoInstances;
+        private set => SetProperty(ref _isLoadingGroupInfoInstances, value);
+    }
+
+    public bool GroupInstancesHidden
+    {
+        get => _groupInstancesHidden;
+        private set => SetProperty(ref _groupInstancesHidden, value);
+    }
+
+    public string GroupInfoInstancesText
+    {
+        get
+        {
+            if (IsLoadingGroupInfoInstances)
+            {
+                return "Checking for open instances…";
+            }
+            if (GroupInstancesHidden)
+            {
+                return "Open instances are only visible to members.";
+            }
+
+            return GroupInfoInstances.Count == 0
+                ? "No open instances right now."
+                : $"{GroupInfoInstances.Count} open instance{(GroupInfoInstances.Count == 1 ? string.Empty : "s")}";
+        }
+    }
 
     public AsyncRelayCommand RefreshInstancesCommand { get; }
 
@@ -329,6 +400,9 @@ public sealed class GroupViewModel : ViewModelBase
         Instances = new ObservableCollection<GroupInstance>();
         GroupInfo = null;
         IsGroupInfoOpen = false;
+        IsLeaveGroupConfirmOpen = false;
+        GroupInfoInstances = new ObservableCollection<GroupInstance>();
+        GroupInstancesHidden = false;
         HasLoaded = false;
         ErrorMessage = null;
     }
@@ -394,10 +468,13 @@ public sealed class GroupViewModel : ViewModelBase
             return;
         }
 
-        IsGroupInfoOpen = true;
+                IsGroupInfoOpen = true;
         IsGroupInfoBusy = true;
         GroupInfoError = null;
         GroupInfo = null;
+        IsLeaveGroupConfirmOpen = false;
+        GroupInfoInstances = new ObservableCollection<GroupInstance>();
+        GroupInstancesHidden = false;
 
         try
         {
@@ -406,6 +483,10 @@ public sealed class GroupViewModel : ViewModelBase
             var mine = Groups.Count > 0 ? (IReadOnlyList<Group>)Groups.ToList() : await _api.GetMyGroupsAsync();
             IsMemberOfGroupInfo = mine.Any(group =>
                 string.Equals(group.Id, groupId, StringComparison.Ordinal));
+
+            // Instance lists are member-only; non-members get a 403 we must not
+            // surface as a scary failure.
+            await LoadGroupInfoInstancesAsync(groupId);
         }
         catch (VrcApiException ex)
         {
@@ -423,6 +504,29 @@ public sealed class GroupViewModel : ViewModelBase
         finally
         {
             IsGroupInfoBusy = false;
+        }
+    }
+
+    private async Task LoadGroupInfoInstancesAsync(string groupId)
+    {
+        IsLoadingGroupInfoInstances = true;
+        GroupInstancesHidden = false;
+        OnPropertyChanged(nameof(GroupInfoInstancesText));
+        try
+        {
+            var instances = await _api.GetGroupInstancesAsync(groupId);
+            GroupInfoInstances = new ObservableCollection<GroupInstance>(
+                instances.OrderByDescending(instance => instance.MemberCount));
+        }
+        catch (VrcApiException ex) when (ex.StatusCode is 401 or 403 or 404)
+        {
+            GroupInfoInstances = new ObservableCollection<GroupInstance>();
+            GroupInstancesHidden = true;
+        }
+        finally
+        {
+            IsLoadingGroupInfoInstances = false;
+            OnPropertyChanged(nameof(GroupInfoInstancesText));
         }
     }
 
@@ -449,6 +553,10 @@ public sealed class GroupViewModel : ViewModelBase
         {
             await _api.JoinGroupAsync(GroupInfo.Id);
             IsMemberOfGroupInfo = true;
+            GroupInstancesHidden = false;
+            await LoadGroupInfoInstancesAsync(GroupInfo.Id);
+            // Refresh the cached membership list in the background; the popup
+            // above must not wait for it or re-derive membership from stale data.
             _ = LoadGroupsAsync();
         }
         catch (VrcApiException ex)
@@ -483,6 +591,10 @@ public sealed class GroupViewModel : ViewModelBase
         {
             await _api.LeaveGroupAsync(GroupInfo.Id);
             IsMemberOfGroupInfo = false;
+            IsLeaveGroupConfirmOpen = false;
+            GroupInfoInstances = new ObservableCollection<GroupInstance>();
+            GroupInstancesHidden = true;
+            OnPropertyChanged(nameof(GroupInfoInstancesText));
             if (SelectedGroup?.Id == GroupInfo.Id)
             {
                 SelectedGroup = null;

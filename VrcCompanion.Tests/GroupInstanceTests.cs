@@ -1,6 +1,9 @@
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text.Json;
 using VrcCompanion.Models;
+using VrcCompanion.Services;
+using VrcCompanion.ViewModels;
 using Xunit;
 
 namespace VrcCompanion.Tests;
@@ -32,6 +35,24 @@ public class GroupInstanceTests
         Assert.Equal("Group", instance.AccessText);
         Assert.True(instance.CanJoin);
         Assert.Contains("file_abc", instance.ThumbnailUrl, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LeaveGroupNeedsASecondConfirmationStep()
+    {
+        using var api = new VrcApiClient();
+        var vm = new GroupViewModel(api);
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        typeof(GroupViewModel).GetField("_groupInfo", flags)!.SetValue(vm,
+            new Group { Id = "grp_test", Name = "Test group", JoinState = "open" });
+        typeof(GroupViewModel).GetField("_isMemberOfGroupInfo", flags)!.SetValue(vm, true);
+
+        Assert.False(vm.IsLeaveGroupConfirmOpen);
+        vm.RequestLeaveGroupCommand.Execute(null);
+        Assert.True(vm.IsLeaveGroupConfirmOpen);
+
+        vm.CancelLeaveGroupCommand.Execute(null);
+        Assert.False(vm.IsLeaveGroupConfirmOpen);
     }
 
     [Fact]

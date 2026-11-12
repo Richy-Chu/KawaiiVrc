@@ -55,6 +55,18 @@ public class FriendDetailNoteTests : IDisposable
     }
 
     [Fact]
+    public void OpenGroupsCommand_ShowsTheProfileGroupListUntilClosed()
+    {
+        var profile = CreateProfile(new FriendNotesStore(NotesPath));
+
+        profile.OpenGroupsCommand.Execute(null);
+        Assert.True(profile.IsGroupsOpen);
+
+        profile.CloseGroupsCommand.Execute(null);
+        Assert.False(profile.IsGroupsOpen);
+    }
+
+    [Fact]
     public void SavePendingNote_PersistsTypedTextWhenTheProfileCloses()
     {
         var store = new FriendNotesStore(NotesPath);

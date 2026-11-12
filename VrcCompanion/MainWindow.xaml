@@ -3606,11 +3606,6 @@
         <!-- ========================================================= -->
                     <!-- Friend detail popup -->
                     <Grid Visibility="{Binding HasSelectedFriend, Converter={StaticResource BoolToVis}}">
-                        <controls:ImageBackdrop SourcePath="{Binding ProfileBackdropPath}"
-                                                Animate="{Binding AnimateBackdrop}"
-                                                Visibility="{Binding HasProfileBackdrop, Converter={StaticResource BoolToVis}}" />
-                        <Border Background="#CC0B0D12"
-                                Visibility="{Binding HasProfileBackdrop, Converter={StaticResource BoolToVis}}" />
                         <Button Command="{Binding CloseFriendDetailCommand}"
                                 Focusable="False"
                                 Cursor="Arrow"
@@ -3636,6 +3631,14 @@
                                                   Opacity="0.6"
                                                   Color="#000000" />
                             </Border.Effect>
+                            <Grid>
+                                <Border CornerRadius="15" ClipToBounds="True"
+                                        Visibility="{Binding HasProfileBackdrop, Converter={StaticResource BoolToVis}}">
+                                    <controls:ImageBackdrop SourcePath="{Binding ProfileBackdropPath}"
+                                                            Animate="{Binding AnimateBackdrop}" />
+                                </Border>
+                                <Border Background="#E60B0D12" CornerRadius="15"
+                                        Visibility="{Binding HasProfileBackdrop, Converter={StaticResource BoolToVis}}" />
                             <ScrollViewer VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled"
                                           DataContext="{Binding SelectedFriendDetail}">
@@ -3951,7 +3954,16 @@
 
                                     <StackPanel Visibility="{Binding HasGroups, Converter={StaticResource BoolToVis}}"
                                                 Margin="0,14,0,0">
-                                        <TextBlock Text="GROUPS" Style="{StaticResource FieldLabel}" />
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="GROUPS" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" />
+                                            <Button Content="View all groups"
+                                                    Style="{StaticResource GhostButton}"
+                                                    FontSize="10"
+                                                    Padding="8,3"
+                                                    HorizontalAlignment="Right"
+                                                    Command="{Binding DataContext.OpenGroupsCommand, RelativeSource={RelativeSource AncestorType=ScrollViewer}}"
+                                                    ToolTip="See every group on this profile" />
+                                        </Grid>
                                         <ItemsControl ItemsSource="{Binding Groups}">
                                             <ItemsControl.ItemsPanel>
                                                 <ItemsPanelTemplate>
@@ -4023,8 +4035,108 @@
                                                Margin="0,16,0,0" />
                                 </StackPanel>
                             </ScrollViewer>
+                            </Grid>
                         </Border>
 
+                    </Grid>
+
+                    <!-- All groups on the open friend profile -->
+                    <Grid Panel.ZIndex="24"
+                          Background="Transparent"
+                          DataContext="{Binding SelectedFriendDetail}"
+                          Visibility="{Binding IsGroupsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+                        <Button Command="{Binding CloseGroupsCommand}"
+                                Focusable="False"
+                                Cursor="Arrow"
+                                ToolTip="Close">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="#C4060810" />
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+
+                        <Border Width="540" MaxHeight="640"
+                                HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Background="{StaticResource PanelBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1" CornerRadius="16">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <Border Padding="20,16" BorderBrush="{StaticResource SoftBorderBrush}" BorderThickness="0,0,0,1">
+                                    <Grid>
+                                        <StackPanel>
+                                            <TextBlock Text="Groups" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                            <TextBlock Text="Pick a group to see details, open instances and membership."
+                                                       Style="{StaticResource MutedText}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                        <Button Style="{StaticResource GhostButton}" Padding="7,4"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                Command="{Binding CloseGroupsCommand}" ToolTip="Close">
+                                            <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="10" />
+                                        </Button>
+                                    </Grid>
+                                </Border>
+
+                                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="14,12,14,14">
+                                    <ItemsControl ItemsSource="{Binding Groups}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Command="{Binding DataContext.OpenGroupCommand, RelativeSource={RelativeSource AncestorType=ScrollViewer}}"
+                                                        CommandParameter="{Binding}"
+                                                        Cursor="Hand"
+                                                        Padding="0"
+                                                        Background="Transparent"
+                                                        BorderThickness="0"
+                                                        Margin="0,0,0,6"
+                                                        ToolTip="Open this group">
+                                                    <Button.Template>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <ContentPresenter x:Name="Row" />
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="Row" Property="Opacity" Value="0.8" />
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Button.Template>
+                                                    <Border Background="{StaticResource InputBrush}"
+                                                            BorderBrush="{StaticResource BorderBrush}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="10"
+                                                            Padding="10">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <Border Width="38" Height="38" CornerRadius="9" Background="#151A24" Margin="0,0,10,0">
+                                                                <controls:AsyncImage SourceUrl="{Binding IconUrl}" DecodeWidth="96" CornerRadius="9" />
+                                                            </Border>
+                                                            <TextBlock Grid.Column="1" Text="{Binding Name}"
+                                                                       FontSize="12" FontWeight="SemiBold"
+                                                                       Foreground="{StaticResource TextBrush}"
+                                                                       VerticalAlignment="Center"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Grid.Column="2" Text="View →"
+                                                                       FontSize="10.5"
+                                                                       Foreground="{StaticResource AccentHoverBrush}"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="10,0,0,0" />
+                                                        </Grid>
+                                                    </Border>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Grid>
+                        </Border>
                     </Grid>
 
                     <!-- Group info popup (from any group chip) -->
@@ -4092,7 +4204,7 @@
                                                    Foreground="{StaticResource ErrorTextBrush}"
                                                    TextWrapping="Wrap"
                                                    Margin="0,0,0,8"
-                                                   Visibility="{Binding GroupViewModel.GroupInfoError, Converter={StaticResource NullToVis}}" />
+                                                   Visibility="{Binding GroupViewModel.GroupInfoError, Converter={StaticResource NullToVis}, ConverterParameter=invert}" />
 
                                         <TextBlock Text="ABOUT" Style="{StaticResource FieldLabel}" />
                                         <TextBlock Text="{Binding GroupViewModel.GroupInfo.Description}"
@@ -4102,6 +4214,79 @@
                                         <TextBlock Text="{Binding GroupViewModel.GroupInfoMemberText}"
                                                    Style="{StaticResource MutedText}"
                                                    Margin="0,12,0,0" />
+                                        <TextBlock Text="{Binding GroupViewModel.GroupJoinHint}"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,3,0,0" />
+
+                                        <StackPanel Margin="0,14,0,0">
+                                            <TextBlock Text="OPEN INSTANCES" Style="{StaticResource FieldLabel}" />
+                                            <TextBlock Text="{Binding GroupViewModel.GroupInfoInstancesText}"
+                                                       Style="{StaticResource MutedText}"
+                                                       Margin="0,4,0,6"
+                                                       TextWrapping="Wrap" />
+                                            <ItemsControl ItemsSource="{Binding GroupViewModel.GroupInfoInstances}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Background="{StaticResource InputBrush}"
+                                                                BorderBrush="{StaticResource BorderBrush}"
+                                                                BorderThickness="1"
+                                                                CornerRadius="9"
+                                                                Padding="10"
+                                                                Margin="0,0,0,6">
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <Border Width="38" Height="38" CornerRadius="8" Background="#151A24" Margin="0,0,10,0">
+                                                                    <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}" DecodeWidth="96" CornerRadius="8" />
+                                                                </Border>
+                                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding WorldName}" FontSize="11.5" FontWeight="SemiBold"
+                                                                               Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock FontSize="10" Foreground="{StaticResource MutedBrush}"
+                                                                               Text="{Binding UsersText}" Margin="0,2,0,0" />
+                                                                </StackPanel>
+                                                                <Button Grid.Column="2" Content="Join"
+                                                                        Style="{StaticResource SecondaryButton}"
+                                                                        Padding="10,5" FontSize="10.5"
+                                                                        VerticalAlignment="Center"
+                                                                        Command="{Binding DataContext.GroupViewModel.JoinGroupInstanceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                        CommandParameter="{Binding}" />
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+
+                                        <Border Style="{StaticResource ErrorBannerPanel}"
+                                                Margin="0,12,0,0"
+                                                Visibility="{Binding GroupViewModel.IsLeaveGroupConfirmOpen, Converter={StaticResource BoolToVis}}">
+                                            <StackPanel>
+                                                <TextBlock Text="Leave this group?"
+                                                           FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{StaticResource TextBrush}" />
+                                                <TextBlock Text="This removes your membership on VRChat. You can rejoin public groups later."
+                                                           Style="{StaticResource MutedText}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,8" />
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Button Content="Yes, leave group"
+                                                            Style="{StaticResource PrimaryButton}"
+                                                            Padding="11,5" FontSize="10.5"
+                                                            Margin="0,0,8,0"
+                                                            Command="{Binding GroupViewModel.LeaveGroupInfoCommand}" />
+                                                    <Button Content="Keep membership"
+                                                            Style="{StaticResource SecondaryButton}"
+                                                            Padding="11,5" FontSize="10.5"
+                                                            Command="{Binding GroupViewModel.CancelLeaveGroupCommand}" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
 
                                         <WrapPanel Margin="0,12,0,0">
                                             <Button Content="Join group"
@@ -4109,13 +4294,14 @@
                                                     Padding="12,6" FontSize="11" Margin="0,0,8,6"
                                                     Command="{Binding GroupViewModel.JoinGroupInfoCommand}"
                                                     Visibility="{Binding GroupViewModel.IsMemberOfGroupInfo, Converter={StaticResource InverseBoolToVis}}"
-                                                    ToolTip="Join this public group" />
+                                                    IsEnabled="{Binding GroupViewModel.IsGroupJoinOpen}"
+                                                    ToolTip="Join this open group" />
                                             <Button Content="Leave group"
                                                     Style="{StaticResource SecondaryButton}"
                                                     Padding="12,6" FontSize="11" Margin="0,0,8,6"
-                                                    Command="{Binding GroupViewModel.LeaveGroupInfoCommand}"
+                                                    Command="{Binding GroupViewModel.RequestLeaveGroupCommand}"
                                                     Visibility="{Binding GroupViewModel.IsMemberOfGroupInfo, Converter={StaticResource BoolToVis}}"
-                                                    ToolTip="Leave this group" />
+                                                    ToolTip="Leave this group (asks first)" />
                                             <Button Content="Open on vrchat.com"
                                                     Style="{StaticResource SecondaryButton}"
                                                     Padding="12,6" FontSize="11" Margin="0,0,8,6"

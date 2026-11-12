@@ -31,6 +31,10 @@ public sealed class Group
     [JsonPropertyName("memberCount")]
     public int MemberCount { get; set; }
 
+    /// <summary>open, request, invite or closed — only open groups can be joined directly.</summary>
+    [JsonPropertyName("joinState")]
+    public string JoinState { get; set; } = string.Empty;
+
     [JsonPropertyName("roles")]
     public List<GroupRole> Roles { get; set; } = new();
 
