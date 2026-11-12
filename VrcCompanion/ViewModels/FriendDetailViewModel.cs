@@ -16,7 +16,10 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     private readonly VrcApiClient _api;
     private readonly ImageLoader _images;
+    private readonly FriendNotesStore _notes;
     private FriendItem _friend;
+    private string _noteText = string.Empty;
+    private string _noteStatusText = string.Empty;
     private VrcProfile? _profile;
     private VrcMutuals? _mutuals;
     private ImageSource? _avatarImage;
@@ -25,11 +28,54 @@ public sealed class FriendDetailViewModel : ViewModelBase
     private string? _error;
     private bool _isLoading;
 
-    public FriendDetailViewModel(FriendItem friend, VrcApiClient api, ImageLoader images)
+    public FriendDetailViewModel(
+        FriendItem friend,
+        VrcApiClient api,
+        ImageLoader images,
+        FriendNotesStore? notes = null)
     {
         _friend = friend;
         _api = api;
         _images = images;
+        _notes = notes ?? FriendNotesStore.Shared;
+
+        var stored = _notes.Get(_friend.Id);
+        _noteText = stored?.Text ?? string.Empty;
+        _noteStatusText = stored is null
+            ? "Only you can see this; it stays on this PC."
+            : $"Saved locally · {stored.UpdatedAt.ToLocalTime():g}";
+        SaveNoteCommand = new RelayCommand(SaveNote);
+    }
+
+    /// <summary>
+    /// A local note about this friend. VRChat has no note endpoint, so this is
+    /// never sent to VRChat and is stored in the app's own JSON file.
+    /// </summary>
+    public string Note
+    {
+        get => _noteText;
+        set => SetProperty(ref _noteText, value);
+    }
+
+    public string NoteStatusText
+    {
+        get => _noteStatusText;
+        private set => SetProperty(ref _noteStatusText, value);
+    }
+
+    public bool HasNote => !string.IsNullOrWhiteSpace(_notes.Get(Friend.Id)?.Text);
+
+    public RelayCommand SaveNoteCommand { get; }
+
+    private void SaveNote()
+    {
+        var saved = _notes.Set(Friend.Id, _noteText);
+        _noteText = saved?.Text ?? string.Empty;
+        OnPropertyChanged(nameof(Note));
+        OnPropertyChanged(nameof(HasNote));
+        NoteStatusText = saved is null
+            ? "Note cleared."
+            : $"Saved locally · {saved.UpdatedAt.ToLocalTime():g}";
     }
 
     public FriendItem Friend => _friend;
