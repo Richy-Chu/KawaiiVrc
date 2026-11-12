@@ -82,6 +82,17 @@ public class MediaLibraryScannerTests : IDisposable
     }
 
     [Fact]
+    public void Scan_TreatsVrchatDateFoldersAsTheDefaultLibrary()
+    {
+        Picture("2026-11/VRChat_2026-11-02_10-00-00.000_1920x1080.png");
+
+        var group = Assert.Single(MediaLibraryScanner.Scan(_root));
+
+        Assert.Equal("VRChat", group.WorldName);
+        Assert.Equal("VRChat · November 2026", group.Title);
+    }
+
+    [Fact]
     public void Scan_MissingFolderReturnsNothing()
     {
         Assert.Empty(MediaLibraryScanner.Scan(Path.Combine(_root, "nope")));

@@ -49,6 +49,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             {
                 RefreshCommand.RaiseCanExecuteChanged();
                 OnPropertyChanged(nameof(IsEmpty));
+                OnPropertyChanged(nameof(SummaryText));
             }
         }
     }
@@ -72,15 +73,20 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(HasError));
                 OnPropertyChanged(nameof(IsEmpty));
+                OnPropertyChanged(nameof(SummaryText));
             }
         }
     }
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
 
-    public string SummaryText => PictureCount == 0
-        ? "No VRChat pictures yet"
-        : $"{PictureCount} picture{(PictureCount == 1 ? string.Empty : "s")} in {Groups.Count} group{(Groups.Count == 1 ? string.Empty : "s")}";
+    public string SummaryText => IsBusy
+        ? "Scanning pictures…"
+        : HasError
+            ? "Pictures could not be loaded"
+            : PictureCount == 0
+                ? "No VRChat pictures yet"
+                : $"{PictureCount} picture{(PictureCount == 1 ? string.Empty : "s")} in {Groups.Count} group{(Groups.Count == 1 ? string.Empty : "s")}";
 
     public string EmptyMessage => Directory.Exists(RootPath)
         ? "No pictures in the VRChat folder yet. Take a photo in-game and press Refresh."

@@ -30,6 +30,7 @@ public class MediaLibraryViewModelTests
         Assert.True(viewModel.IsBusy);
         Assert.False(viewModel.IsEmpty);
         Assert.False(viewModel.HasPictures);
+        Assert.Equal("Scanning pictures…", viewModel.SummaryText);
 
         gate.SetResult(Array.Empty<MediaGroup>());
         await load;
@@ -55,6 +56,7 @@ public class MediaLibraryViewModelTests
         Assert.False(viewModel.IsEmpty);
         Assert.False(viewModel.HasPictures);
         Assert.False(string.IsNullOrWhiteSpace(viewModel.ErrorMessage));
+        Assert.Equal("Pictures could not be loaded", viewModel.SummaryText);
 
         shouldFail = false;
         await viewModel.LoadAsync(force: true);

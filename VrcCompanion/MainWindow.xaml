@@ -2564,21 +2564,23 @@
                 </Grid.RowDefinitions>
 
                 <Grid Grid.Row="0" Margin="0,0,0,16">
-                    <StackPanel>
-                        <TextBlock Text="Media" Style="{StaticResource SectionTitle}" />
+                    <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="{Binding MediaViewModel.SummaryText}"
-                                   Foreground="#8C93A6" Margin="0,4,0,0" />
+                                   FontSize="13" FontWeight="SemiBold"
+                                   Foreground="#E6E9F0" />
                         <TextBlock Text="{Binding MediaViewModel.RootPath}"
-                                   Foreground="#5F6779" FontSize="11" Margin="0,2,0,0" />
+                                   Foreground="#5F6779" FontSize="11" Margin="0,3,0,0" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
                         <Button Content="Open folder"
+                                Style="{StaticResource SecondaryButton}"
                                 Command="{Binding MediaViewModel.OpenFolderCommand}"
-                                Padding="12,6" />
+                                Padding="12,6" FontSize="11" />
                         <Button Content="Refresh"
+                                Style="{StaticResource SecondaryButton}"
                                 Command="{Binding MediaViewModel.RefreshCommand}"
-                                Padding="12,6" Margin="8,0,0,0" />
+                                Padding="12,6" FontSize="11" Margin="8,0,0,0" />
                     </StackPanel>
                 </Grid>
 
@@ -2602,9 +2604,20 @@
                                                 <Button Padding="0" BorderThickness="0"
                                                         Background="Transparent"
                                                         Margin="0,0,8,8"
+                                                        Cursor="Hand"
                                                         ToolTip="{Binding FileName}"
                                                         Command="{Binding DataContext.MediaViewModel.OpenFileCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                         CommandParameter="{Binding Path}">
+                                                    <Button.Template>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <ContentPresenter x:Name="Card" />
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="Card" Property="Opacity" Value="0.85" />
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Button.Template>
                                                     <Border Width="220" Height="140"
                                                             CornerRadius="8"
                                                             ClipToBounds="True"

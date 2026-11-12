@@ -77,6 +77,11 @@ public static class MediaLibraryScanner
         @"VRChat_(?<date>\d{4}-\d{2}-\d{2})_(?<time>\d{2}-\d{2}-\d{2})",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    // VRChat writes date folders (2023-08); those are not world names.
+    private static readonly Regex DateFolder = new(
+        @"^\d{4}([-_.]\d{1,2}){0,2}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     public static string DefaultRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
         "VRChat");
@@ -120,12 +125,21 @@ public static class MediaLibraryScanner
             .ToList();
     }
 
-    /// <summary>First folder under the root, so pictures/VRChat/Japan/x.png is "Japan".</summary>
+    /// <summary>
+    /// First folder under the root, so pictures/VRChat/Japan/x.png is "Japan".
+    /// Date folders (VRChat's own layout) count as the default library instead.
+    /// </summary>
     private static string WorldOf(string root, string file)
     {
         var relative = Path.GetRelativePath(root, file);
         var separator = relative.IndexOf(Path.DirectorySeparatorChar);
-        return separator > 0 ? relative[..separator] : "VRChat";
+        if (separator <= 0)
+        {
+            return "VRChat";
+        }
+
+        var folder = relative[..separator];
+        return DateFolder.IsMatch(folder) ? "VRChat" : folder;
     }
 
     /// <summary>Uses VRChat's file-name timestamp, falling back to last write time.</summary>
