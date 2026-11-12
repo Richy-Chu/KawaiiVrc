@@ -455,6 +455,54 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task LoadMore_AutoRetryNamesThePageAfterTwoLoadedPages()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = false, Json = IdsJson(Ids(50, "bulk")) };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            handler.Json = IdsJson(Ids(50, "more"));
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            Assert.Contains("page 2", vm.CommunityStatusText);
+
+            // Page 3 is the one that fails, so its retry must name page 3.
+            handler.Html = true;
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            Assert.Contains("retrying in 30s", vm.CommunityStatusText);
+
+            var pending = new TaskCompletionSource<List<Avatar>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            TestHooks.UseBrowseFetch(vm, (_, _) => pending.Task);
+            now = now.AddSeconds(30);
+            TestHooks.PumpBrowseBackoff(vm);
+
+            Assert.Contains("retrying page 3", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying page 2", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
+
+            pending.SetResult(Enumerable.Range(1, 50)
+                .Select(i => new Avatar { Id = $"avtr_third-{i}", Name = $"third-{i}", SourceName = "avtr.icu" })
+                .ToList());
+            await WaitUntilIdle(vm);
+
+            Assert.Contains("page 3", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying page 3", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task LoadMore_AutoRetryFallsBackToFirstPageAfterCap()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
