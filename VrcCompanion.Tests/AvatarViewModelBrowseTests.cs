@@ -488,10 +488,24 @@ public class AvatarViewModelBrowseTests
             Assert.Equal(new[] { 50, 50, 50, 50 }, offsets);
 
             // The fourth expiry gives up on that page and asks for offset 0.
+            // Hold that reload open so its dedicated status can be observed.
+            var pending = new TaskCompletionSource<List<Avatar>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            TestHooks.UseBrowseFetch(vm, (offset, _) =>
+            {
+                offsets.Add(offset);
+                return pending.Task;
+            });
             now = now.AddSeconds(600);
             TestHooks.PumpBrowseBackoff(vm);
+
+            Assert.True(vm.IsGlobalBusy);
+            Assert.Contains("reloading page 1", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
+
+            pending.SetException(new HttpRequestException("still down"));
             await WaitUntilIdle(vm);
             Assert.Equal(new[] { 50, 50, 50, 50, 0 }, offsets);
+            Assert.DoesNotContain("reloading page 1", vm.CommunityStatusText);
 
             // When page 1 answers again it replaces the grid and drops the page suffix.
             TestHooks.UseBrowseFetch(vm, null);

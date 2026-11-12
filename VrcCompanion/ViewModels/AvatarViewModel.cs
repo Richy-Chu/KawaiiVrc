@@ -647,7 +647,7 @@ public sealed class AvatarViewModel : ViewModelBase
 
             if (_browseRetryInFlight)
             {
-                const string inFlight = "retrying now…";
+                var inFlight = _browseRetryInFlightPageOneReload ? "reloading page 1…" : "retrying now…";
                 return text.Length == 0 ? inFlight : $"{text}   ·   {inFlight}";
             }
 
@@ -1029,7 +1029,7 @@ public sealed class AvatarViewModel : ViewModelBase
             _browsePageRetryCount = 0;
             _browseRetryIsLoadMore = false;
             _communityLoaded = false;
-            StartAutomaticBrowseRetry(loadMore: false);
+            StartAutomaticBrowseRetry(loadMore: false, pageOneReload: true);
             return;
         }
 
@@ -1038,9 +1038,10 @@ public sealed class AvatarViewModel : ViewModelBase
         StartAutomaticBrowseRetry(loadMore: true);
     }
 
-    private void StartAutomaticBrowseRetry(bool loadMore)
+    private void StartAutomaticBrowseRetry(bool loadMore, bool pageOneReload = false)
     {
         _browseRetryInFlight = true;
+        _browseRetryInFlightPageOneReload = pageOneReload;
         OnPropertyChanged(nameof(CommunityStatusText));
         if (loadMore)
         {
@@ -1060,6 +1061,7 @@ public sealed class AvatarViewModel : ViewModelBase
         }
 
         _browseRetryInFlight = false;
+        _browseRetryInFlightPageOneReload = false;
         OnPropertyChanged(nameof(CommunityStatusText));
     }
 
@@ -1954,6 +1956,8 @@ public sealed class AvatarViewModel : ViewModelBase
     private int _browsePageRetryCount;
     // Set while the cooldown tick is fetching by itself, so the status can say so.
     private bool _browseRetryInFlight;
+    // True when the in-flight retry is the cap falling back to page 1.
+    private bool _browseRetryInFlightPageOneReload;
 
     public void BrowseCatalog()
     {
