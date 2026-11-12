@@ -502,6 +502,45 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task BrowseAutoRetry_WaitsWhileAnotherTabIsOpenAndFiresOnReturn()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            // No pages loaded: this is the page-1 retry path, not load-more.
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            var afterFailure = handler.Requests;
+            Assert.Contains("retrying in 30s", vm.CommunityStatusText);
+
+            // The window expires while another tab is open.
+            vm.IsBrowseTabActive = false;
+            now = now.AddSeconds(30);
+            TestHooks.PumpBrowseBackoff(vm);
+            await Task.Delay(30);
+
+            Assert.False(vm.IsGlobalBusy);
+            Assert.Equal(afterFailure, handler.Requests);
+
+            // Coming back to Avatar Search runs the page-1 retry by itself.
+            vm.IsBrowseTabActive = true;
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(afterFailure + 1, handler.Requests);
+            Assert.Contains("retrying in 60s", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task BackoffTickerStopsAwayFromTheTabAndResumesOnReturn()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
