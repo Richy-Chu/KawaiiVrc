@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace VrcCompanion.Services;
@@ -23,22 +24,64 @@ public static class LaunchService
             throw new ArgumentException("That is not a valid VRChat world location.", nameof(location));
         }
 
-        StartUri($"vrchat://launch?ref=vrchat.com&id={location}", mode);
+        StartUri(BuildLaunchUri(location), mode);
     }
+
+    /// <summary>Builds the launch URI with the location escaped as a query value.</summary>
+    internal static string BuildLaunchUri(string location)
+        => $"vrchat://launch?ref=vrchat.com&id={Uri.EscapeDataString(location)}";
 
     /// <summary>Opens VRChat without joining a world.</summary>
     public static void LaunchClient(LaunchMode mode = LaunchMode.Vr)
         => StartUri("vrchat://launch/", mode);
 
-    public static void OpenUrl(string url)
+    /// <summary>
+    /// Opens a web link. Only http(s) is allowed: these strings come from VRChat
+    /// data, and ShellExecute would run file:, ms-* or any registered handler.
+    /// Returns false, without launching anything, for any other scheme.
+    /// </summary>
+    public static bool OpenUrl(string? url)
     {
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        if (!IsWebUrl(url))
+        {
+            return false;
+        }
+
+        Process.Start(new ProcessStartInfo(url!) { UseShellExecute = true });
+        return true;
     }
 
+    public static bool IsWebUrl(string? url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+           (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    // wrld_ plus a UUID, then an instance id made of the characters VRChat uses
+    // (numbers, ~region(us), ~private(usr_…)) and nothing that could rewrite the
+    // launch query or escape into another argument.
+    private static readonly Regex WorldIdPattern = new(
+        "^wrld_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex InstancePattern = new(
+        "^[A-Za-z0-9~()_.-]{1,256}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     public static bool IsLocation(string? value)
-        => !string.IsNullOrWhiteSpace(value) &&
-           value.StartsWith("wrld_", StringComparison.Ordinal) &&
-           value.Contains(':');
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var separator = value.IndexOf(':');
+        if (separator <= 0 || separator == value.Length - 1)
+        {
+            return false;
+        }
+
+        return WorldIdPattern.IsMatch(value[..separator]) &&
+               InstancePattern.IsMatch(value[(separator + 1)..]);
+    }
 
     public static string? GetWorldIdFromLocation(string? location)
     {
