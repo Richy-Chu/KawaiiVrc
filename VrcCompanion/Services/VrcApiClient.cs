@@ -775,20 +775,34 @@ public sealed class VrcApiClient : IDisposable
     }
 
     /// <summary>
-    /// Records what one index answered. Federation runs every provider fetch
-    /// concurrently with the same results map, so the write is locked: a plain
-    /// Dictionary cannot take concurrent writers safely.
+    /// Records what one index answered. Callers must own the map: parallel
+    /// fetches write to per-task maps and merge them after Task.WhenAll, so no
+    /// shared object is ever written concurrently and nothing needs locking.
     /// </summary>
     internal static void MarkIndexResult(IDictionary<string, int>? results, string name, int count)
     {
-        if (results is null)
+        if (results is not null)
+        {
+            results[name] = count;
+        }
+    }
+
+    /// <summary>Single-threaded merge of per-task index results, run after the awaits.</summary>
+    private static void MergeIndexResults(
+        IDictionary<string, int>? target,
+        params IReadOnlyDictionary<string, int>[] sources)
+    {
+        if (target is null)
         {
             return;
         }
 
-        lock (results)
+        foreach (var source in sources)
         {
-            results[name] = count;
+            foreach (var entry in source)
+            {
+                target[entry.Key] = entry.Value;
+            }
         }
     }
 
@@ -843,14 +857,21 @@ public sealed class VrcApiClient : IDisposable
         var merged = new List<Avatar>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        var tasks = VrcxProviders.Select(provider => FetchVrcxProviderAsync(
+        // Each provider owns its own results map; the merge happens after the await.
+        var probes = VrcxProviders
+            .Select(_ => new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+        var tasks = VrcxProviders.Select((provider, index) => FetchVrcxProviderAsync(
             provider.Name,
             $"{provider.Base}?authorId={Uri.EscapeDataString(authorId)}&n={providerLimit}",
             providerLimit,
             cancellationToken,
-            indexResults));
+            probes[index]));
 
-        foreach (var page in await Task.WhenAll(tasks))
+        var pages = await Task.WhenAll(tasks);
+        MergeIndexResults(indexResults, probes);
+
+        foreach (var page in pages)
         {
             foreach (var avatar in page)
             {
@@ -882,20 +903,28 @@ public sealed class VrcApiClient : IDisposable
         IDictionary<string, int>? indexResults = null,
         CancellationToken cancellationToken = default)
     {
-        var tasks = VrcxProviders.Select(provider => FetchVrcxProviderAsync(
+        // One results map per task, merged once every fetch has finished.
+        var probes = VrcxProviders
+            .Select(_ => new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+        var avtrProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var vrcndbProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        var tasks = VrcxProviders.Select((provider, index) => FetchVrcxProviderAsync(
             provider.Name,
             $"{provider.Base}?search={Uri.EscapeDataString(query.Trim())}&n={providerLimit}",
             providerLimit,
             cancellationToken,
-            indexResults)).ToList();
+            probes[index])).ToList();
 
         tasks.Add(FetchCommunityAsync(
             $"search?search={Uri.EscapeDataString(query.Trim())}&limit={limit}",
             cancellationToken,
-            indexResults));
-        tasks.Add(FetchVrcndbAsync(query.Trim(), providerLimit, 1, cancellationToken, indexResults));
+            avtrProbe));
+        tasks.Add(FetchVrcndbAsync(query.Trim(), providerLimit, 1, cancellationToken, vrcndbProbe));
 
         var pages = await Task.WhenAll(tasks);
+        MergeIndexResults(indexResults, probes.Append(avtrProbe).Append(vrcndbProbe).ToArray());
         var sources = new List<(string Source, IReadOnlyList<Avatar> Rows)>(pages.Length);
         for (var i = 0; i < pages.Length; i++)
         {
@@ -921,18 +950,21 @@ public sealed class VrcApiClient : IDisposable
         IDictionary<string, int>? indexResults = null,
         CancellationToken cancellationToken = default)
     {
+        var avtrProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var vrcndbProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var avtrTask = FetchCommunityAsync(
             $"search?search={Uri.EscapeDataString(query.Trim())}&limit={limit}&offset={avtrOffset}",
             cancellationToken,
-            indexResults);
+            avtrProbe);
         var vrcndbTask = FetchVrcndbAsync(
             query.Trim(),
             providerLimit,
             vrcndbPage,
             cancellationToken,
-            indexResults);
+            vrcndbProbe);
         await Task.WhenAll(avtrTask, vrcndbTask);
 
+        MergeIndexResults(indexResults, avtrProbe, vrcndbProbe);
         var avtr = await avtrTask;
         var vrcndb = await vrcndbTask;
 

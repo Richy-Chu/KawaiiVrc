@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -280,11 +279,10 @@ public sealed class AvatarViewModel : ViewModelBase
     private readonly List<Dictionary<string, int>> _pageProbes = new();
 
     /// <summary>
-    /// Probe filled by the fetch currently in flight (see _pageProbes). Federated
-    /// search writes it from concurrent provider tasks, so it must be a
-    /// concurrent map rather than a plain Dictionary.
+    /// Probe filled by the fetch currently in flight (see _pageProbes). Parallel
+    /// provider fetches merge into it after their awaits, so a plain map is safe.
     /// </summary>
-    private ConcurrentDictionary<string, int> _currentProbe = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, int> _currentProbe = new(StringComparer.OrdinalIgnoreCase);
 
     private int _searchPage;
 
@@ -1711,7 +1709,7 @@ public sealed class AvatarViewModel : ViewModelBase
 
                 // @name / usr_ searches must not stop at VRChat: ask the community
                 // providers by author id as well.
-                _currentProbe = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                _currentProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
                 if (authorId.Length > 0)
                 {

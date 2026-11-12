@@ -423,6 +423,56 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task Browse_PrivateFilteredPaging_StatusMatchesVisibleCardsPerPage()
+    {
+        static string Row(string id, bool isPrivate) =>
+            $"{{\"id\":\"avtr_{id}\",\"name\":\"{id}\",\"releaseStatus\":\"{(isPrivate ? "private" : "public")}\"}}";
+
+        // Page 1: 50 rows, the last two private, so the grid shows 48.
+        var page1 = Enumerable.Range(1, 50)
+            .Select(i => Row($"a-{i}", i > 48))
+            .ToList();
+        // Page 2: 20 repeats, 28 new public, 2 new private: 30 new rows, 28 visible.
+        var page2 = Enumerable.Range(1, 20).Select(i => Row($"a-{i}", false))
+            .Concat(Enumerable.Range(51, 28).Select(i => Row($"a-{i}", false)))
+            .Concat(Enumerable.Range(1, 2).Select(i => Row($"x-{i}", true)))
+            .ToList();
+
+        // These rows are already JSON objects, so join them without re-wrapping ids.
+        var handler = new ToggleHandler
+        {
+            Html = false,
+            Json = "[" + string.Join(",", page1) + "]"
+        };
+        TestHooks.UseCommunityHandler(handler);
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(48, vm.GlobalResults.Count);
+            Assert.Contains("avtr.icu 48", vm.CommunityStatusText);
+
+            handler.Json = "[" + string.Join(",", page2) + "]";
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+
+            // 30 new rows arrived but only 28 are public, and the total is visible-only.
+            Assert.Equal(76, vm.GlobalResults.Count);
+            Assert.Contains("avtr.icu 28", vm.CommunityStatusText);
+            Assert.Contains("page 2", vm.CommunityStatusText);
+
+            var cardsOnPage = vm.GlobalResults.Count - 48;
+            Assert.Equal(28, cardsOnPage);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task Browse_StatusCountMatchesGridWhenPrivateRowsAreFiltered()
     {
         // Public-only is the default, so one of these three rows never reaches the grid.
