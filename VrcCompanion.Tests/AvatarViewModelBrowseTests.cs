@@ -55,7 +55,11 @@ public class AvatarViewModelBrowseTests
             CancellationToken cancellationToken)
         {
             Requests++;
-            var body = Html ? CapturedHtml : Json;
+            // VRCNDb answers with {results:[...]}; every other index with a bare array.
+            var isVrcndb = request.RequestUri?.Host.Contains("vrcnext", StringComparison.OrdinalIgnoreCase) == true;
+            var body = Html
+                ? CapturedHtml
+                : isVrcndb ? "{\"results\":" + Json + "}" : Json;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 RequestMessage = request,
@@ -384,6 +388,65 @@ public class AvatarViewModelBrowseTests
             });
             vm.GlobalSearchCommand.Execute(null);
             Assert.True(vm.ResultsPageToken > beforeSearch);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task FederatedSearch_ConcurrentProviderWrites_KeepEveryIndexResult()
+    {
+        // Six indexes answer concurrently through one results map. Plain Dictionary
+        // writes would race here; the probe must end complete and consistent.
+        var handler = new ToggleHandler { Html = false };
+        TestHooks.UseCommunityHandler(handler);
+        try
+        {
+            var api = new VrcApiClient();
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                var probe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+                var rows = await api.SearchAllCommunityAvatarsAsync("cat", indexResults: probe);
+
+                Assert.NotEmpty(rows);
+                Assert.Equal(6, probe.Count); // four VRCX providers + avtr.icu + VRCNDb
+                Assert.All(probe.Values, value => Assert.True(value >= 0));
+            }
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task Browse_StatusCountMatchesGridWhenPrivateRowsAreFiltered()
+    {
+        // Public-only is the default, so one of these three rows never reaches the grid.
+        var handler = new ToggleHandler
+        {
+            Html = false,
+            Json = """
+                [
+                  {"id":"avtr_pub-1","name":"Public One","releaseStatus":"public"},
+                  {"id":"avtr_pub-2","name":"Public Two","releaseStatus":"public"},
+                  {"id":"avtr_priv-1","name":"Private One","releaseStatus":"private"}
+                ]
+                """
+        };
+        TestHooks.UseCommunityHandler(handler);
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(2, vm.GlobalResults.Count);
+            Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
+            Assert.DoesNotContain("avtr.icu 3", vm.CommunityStatusText);
         }
         finally
         {

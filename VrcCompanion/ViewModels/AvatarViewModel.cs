@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -278,8 +279,12 @@ public sealed class AvatarViewModel : ViewModelBase
     /// </summary>
     private readonly List<Dictionary<string, int>> _pageProbes = new();
 
-    /// <summary>Probe filled by the fetch currently in flight (see _pageProbes).</summary>
-    private Dictionary<string, int> _currentProbe = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Probe filled by the fetch currently in flight (see _pageProbes). Federated
+    /// search writes it from concurrent provider tasks, so it must be a
+    /// concurrent map rather than a plain Dictionary.
+    /// </summary>
+    private ConcurrentDictionary<string, int> _currentProbe = new(StringComparer.OrdinalIgnoreCase);
 
     private int _searchPage;
 
@@ -546,7 +551,7 @@ public sealed class AvatarViewModel : ViewModelBase
         _failedIndexes.Clear();
         if (_browsePage >= 1 && _browsePage <= _browsePageNewCounts.Count)
         {
-            _indexCounts["avtr.icu"] = _browsePageNewCounts[_browsePage - 1];
+            _indexCounts["avtr.icu"] = VisibleCountForBrowsePage(_browsePage);
         }
 
         BumpResultsPageToken();
@@ -1706,7 +1711,7 @@ public sealed class AvatarViewModel : ViewModelBase
 
                 // @name / usr_ searches must not stop at VRChat: ask the community
                 // providers by author id as well.
-                _currentProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                _currentProbe = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
                 if (authorId.Length > 0)
                 {
@@ -1853,7 +1858,8 @@ public sealed class AvatarViewModel : ViewModelBase
             {
                 _indexCounts.Clear();
                 _failedIndexes.Clear();
-                _indexCounts["avtr.icu"] = page.Count;
+                // Count only rows the grid will actually show (privacy filter applied).
+                _indexCounts["avtr.icu"] = VisibleCountForBrowsePage(1);
                 if (!fetched)
                 {
                     _indexCounts.Remove("avtr.icu");
@@ -1944,7 +1950,7 @@ public sealed class AvatarViewModel : ViewModelBase
             _browsePageNewCounts.Add(added);
             BumpResultsPageToken();
             _indexCounts.Clear();
-            _indexCounts["avtr.icu"] = added;
+            _indexCounts["avtr.icu"] = VisibleCountForBrowsePage(_browsePage);
             OnPropertyChanged(nameof(CommunityStatusText));
             PublishCommunityBrowse();
         }
@@ -1975,6 +1981,25 @@ public sealed class AvatarViewModel : ViewModelBase
     /// </summary>
     internal static bool BrowseFetchSucceeded(IReadOnlyDictionary<string, int> probe)
         => !probe.TryGetValue("avtr.icu", out var outcome) || outcome >= 0;
+
+    /// <summary>
+    /// Rows the grid shows for one loaded browse page: the cache slice is counted
+    /// after the privacy filter, so the status can never exceed the visible cards.
+    /// </summary>
+    private int VisibleCountForBrowsePage(int page)
+    {
+        if (_browsePageNewCounts.Count == 0)
+        {
+            return _communityCache.Count(MatchesPrivacy);
+        }
+
+        var clamped = Math.Clamp(page, 1, _browsePageNewCounts.Count);
+        var start = _browsePageNewCounts.Take(clamped - 1).Sum();
+        return _communityCache
+            .Skip(start)
+            .Take(_browsePageNewCounts[clamped - 1])
+            .Count(MatchesPrivacy);
+    }
 
     private void PublishCommunityBrowse()
     {

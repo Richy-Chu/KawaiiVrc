@@ -774,9 +774,19 @@ public sealed class VrcApiClient : IDisposable
             : new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
     }
 
-    private static void MarkIndexResult(IDictionary<string, int>? results, string name, int count)
+    /// <summary>
+    /// Records what one index answered. Federation runs every provider fetch
+    /// concurrently with the same results map, so the write is locked: a plain
+    /// Dictionary cannot take concurrent writers safely.
+    /// </summary>
+    internal static void MarkIndexResult(IDictionary<string, int>? results, string name, int count)
     {
-        if (results is not null)
+        if (results is null)
+        {
+            return;
+        }
+
+        lock (results)
         {
             results[name] = count;
         }
