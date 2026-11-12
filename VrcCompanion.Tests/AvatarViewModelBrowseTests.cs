@@ -110,10 +110,93 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
-    public async Task Browse_ThrowingFetch_ReportsGlobalErrorAndRetriesOnNextOpen()
+    public async Task FailedBrowse_BacksOffInsteadOfRetryingOnEveryTabActivation()
     {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
+            Assert.Equal(1, handler.Requests);
+
+            // Inside the 30 s cooldown, opening the tab again must not hit the index.
+            vm.BrowseCatalog();
+            vm.BrowseCatalog();
+            Assert.Equal(1, handler.Requests);
+
+            // Once the cooldown passes, the next activation retries exactly once.
+            now = now.AddSeconds(31);
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            Assert.Equal(2, handler.Requests);
+            Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
+
+            // A second failure doubles the wait: 31 s is no longer enough, 61 s is.
+            now = now.AddSeconds(31);
+            vm.BrowseCatalog();
+            Assert.Equal(2, handler.Requests);
+
+            now = now.AddSeconds(30);
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            Assert.Equal(3, handler.Requests);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task FailedBrowse_ExplicitRefreshBypassesBackoffAndSuccessClearsIt()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            Assert.Equal(1, handler.Requests);
+
+            // An explicit refresh is the user asking: it ignores the cooldown.
+            vm.RefreshBrowseCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            Assert.Equal(2, handler.Requests);
+
+            handler.Html = false;
+            vm.RefreshBrowseCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
+
+            // Recovery cleared the backoff, so a tab activation serves the cache.
+            vm.BrowseCatalog();
+            Assert.Equal(3, handler.Requests);
+            Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task Browse_ThrowingFetch_ReportsGlobalErrorAndRetriesAfterCooldown()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
         var handler = new ToggleHandler { Html = false };
         TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
         try
         {
             var vm = new AvatarViewModel(new VrcApiClient());
@@ -125,9 +208,10 @@ public class AvatarViewModelBrowseTests
             Assert.Equal("Could not reach the community avatar index.", vm.GlobalError);
             Assert.Equal(string.Empty, vm.CommunityStatusText);
 
-            // A throw must not mark browse as loaded: the next open retries, and a
-            // success then clears both the error and the (empty) failure status.
+            // A throw must not mark browse as loaded, but it also starts the
+            // backoff, so the retry only happens once the cooldown has passed.
             TestHooks.UseBrowseFetch(vm, null);
+            now = now.AddSeconds(31);
             vm.BrowseCatalog();
             await WaitUntilIdle(vm);
 
@@ -136,6 +220,7 @@ public class AvatarViewModelBrowseTests
         }
         finally
         {
+            TestHooks.ResetClock();
             TestHooks.UseCommunityHandler(null);
         }
     }

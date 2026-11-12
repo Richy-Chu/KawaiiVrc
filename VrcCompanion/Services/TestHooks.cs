@@ -25,4 +25,12 @@ internal static class TestHooks
 
     public static void SeedSearchCache(AvatarViewModel viewModel, AvatarViewModel.CachedSearch cached)
         => viewModel.SeedSearchCache(cached);
+
+    /// <summary>
+    /// Clock behind the browse backoff. Tests move it forward instead of waiting,
+    /// and must restore it with <see cref="ResetClock"/>.
+    /// </summary>
+    public static Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
+
+    public static void ResetClock() => UtcNow = () => DateTime.UtcNow;
 }

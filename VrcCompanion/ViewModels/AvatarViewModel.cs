@@ -919,6 +919,23 @@ public sealed class AvatarViewModel : ViewModelBase
         }
     }
 
+    /// <summary>True while a recent browse failure is still cooling down.</summary>
+    private bool BrowseBackoffActive
+        => _browseFailureStreak > 0 && TestHooks.UtcNow() < _browseRetryAfterUtc;
+
+    private void RecordBrowseFailure()
+    {
+        _browseFailureStreak = Math.Min(_browseFailureStreak + 1, 8);
+        var seconds = Math.Min(30 * Math.Pow(2, _browseFailureStreak - 1), 300);
+        _browseRetryAfterUtc = TestHooks.UtcNow().AddSeconds(seconds);
+    }
+
+    private void ClearBrowseBackoff()
+    {
+        _browseFailureStreak = 0;
+        _browseRetryAfterUtc = DateTime.MinValue;
+    }
+
     private void RefreshBrowse()
     {
         _communityLoaded = false;
@@ -1796,6 +1813,10 @@ public sealed class AvatarViewModel : ViewModelBase
     private bool _communityLoaded;
     private bool _communityPageFull;
     private int _communityOffset;
+    // A failing browse index is not retried on every tab activation: each failure
+    // doubles the wait (30 s, then 60 s, up to 5 min) until a fetch succeeds.
+    private int _browseFailureStreak;
+    private DateTime _browseRetryAfterUtc;
 
     public void BrowseCatalog()
     {
@@ -1823,6 +1844,13 @@ public sealed class AvatarViewModel : ViewModelBase
             return;
         }
 
+        // The index failed recently: skip the automatic retry so opening the tab
+        // repeatedly does not each wait on a timeout. RefreshBrowse still forces it.
+        if (BrowseBackoffActive)
+        {
+            return;
+        }
+
         _ = BrowseCommunityAsync();
     }
 
@@ -1836,6 +1864,15 @@ public sealed class AvatarViewModel : ViewModelBase
                 ? await fetchForTests(0, CancellationToken.None)
                 : await _api.GetCommunityLatestAsync(50, 0, probe);
             var fetched = BrowseFetchSucceeded(probe);
+            if (fetched)
+            {
+                ClearBrowseBackoff();
+            }
+            else
+            {
+                RecordBrowseFailure();
+            }
+
             _communityCache.Clear();
             _communityCache.AddRange(page);
             _communityOffset = page.Count;
@@ -1874,6 +1911,7 @@ public sealed class AvatarViewModel : ViewModelBase
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
+            RecordBrowseFailure();
             if (publish)
             {
                 GlobalError = "Could not reach the community avatar index.";
