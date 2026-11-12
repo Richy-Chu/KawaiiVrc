@@ -410,6 +410,108 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task LoadMore_AutoRetryShowsInProgressStateWhileFetching()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = false, Json = IdsJson(Ids(50, "bulk")) };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            handler.Html = true;
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            Assert.Contains("retrying in 30s", vm.CommunityStatusText);
+
+            // Hold the retry open so the in-progress status can be observed.
+            var pending = new TaskCompletionSource<List<Avatar>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            TestHooks.UseBrowseFetch(vm, (_, _) => pending.Task);
+            now = now.AddSeconds(30);
+            TestHooks.PumpBrowseBackoff(vm);
+
+            Assert.True(vm.IsGlobalBusy);
+            Assert.Contains("retrying now", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying in", vm.CommunityStatusText);
+
+            pending.SetResult(Enumerable.Range(1, 50)
+                .Select(i => new Avatar { Id = $"avtr_more-{i}", Name = $"more-{i}", SourceName = "avtr.icu" })
+                .ToList());
+            await WaitUntilIdle(vm);
+
+            Assert.Contains("page 2", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task LoadMore_AutoRetryFallsBackToFirstPageAfterCap()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = false, Json = IdsJson(Ids(50, "bulk")) };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            // Every later page fails; the offsets show what is being retried.
+            var offsets = new List<int>();
+            TestHooks.UseBrowseFetch(vm, (offset, _) =>
+            {
+                offsets.Add(offset);
+                throw new HttpRequestException("still down");
+            });
+
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            Assert.Equal(new[] { 50 }, offsets);
+
+            // Three automatic attempts at page 2, each after the cooldown.
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                now = now.AddSeconds(600);
+                TestHooks.PumpBrowseBackoff(vm);
+                await WaitUntilIdle(vm);
+            }
+
+            Assert.Equal(new[] { 50, 50, 50, 50 }, offsets);
+
+            // The fourth expiry gives up on that page and asks for offset 0.
+            now = now.AddSeconds(600);
+            TestHooks.PumpBrowseBackoff(vm);
+            await WaitUntilIdle(vm);
+            Assert.Equal(new[] { 50, 50, 50, 50, 0 }, offsets);
+
+            // When page 1 answers again it replaces the grid and drops the page suffix.
+            TestHooks.UseBrowseFetch(vm, null);
+            handler.Json = IdsJson(Ids(50, "fresh"));
+            now = now.AddSeconds(600);
+            TestHooks.PumpBrowseBackoff(vm);
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(50, vm.GlobalResults.Count);
+            Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
+            Assert.DoesNotContain("page 2", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task FailedBrowse_ExplicitRefreshBypassesBackoffAndSuccessClearsIt()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);

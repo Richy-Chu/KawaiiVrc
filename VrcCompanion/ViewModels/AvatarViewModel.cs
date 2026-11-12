@@ -640,7 +640,18 @@ public sealed class AvatarViewModel : ViewModelBase
 
             // While the browse index is cooling down, say so: a bare "failed" looks
             // like a stuck tab. Search results keep their own status untouched.
-            if (!string.IsNullOrWhiteSpace(GlobalSearchTerm) || !BrowseBackoffActive)
+            if (!string.IsNullOrWhiteSpace(GlobalSearchTerm))
+            {
+                return text;
+            }
+
+            if (_browseRetryInFlight)
+            {
+                const string inFlight = "retrying now…";
+                return text.Length == 0 ? inFlight : $"{text}   ·   {inFlight}";
+            }
+
+            if (!BrowseBackoffActive)
             {
                 return text;
             }
@@ -957,6 +968,7 @@ public sealed class AvatarViewModel : ViewModelBase
         _browseFailureStreak = 0;
         _browseRetryAfterUtc = DateTime.MinValue;
         _browseRetryIsLoadMore = false;
+        _browsePageRetryCount = 0;
         _browseBackoffTimer?.Stop();
     }
 
@@ -1001,13 +1013,54 @@ public sealed class AvatarViewModel : ViewModelBase
         _browseBackoffTimer?.Stop();
         if (!_communityLoaded)
         {
-            _ = BrowseCommunityAsync();
+            StartAutomaticBrowseRetry(loadMore: false);
+            return;
         }
-        else if (_browseRetryIsLoadMore)
+
+        if (!_browseRetryIsLoadMore)
         {
-            // Resume the page that failed rather than throwing the pages away.
+            return;
+        }
+
+        if (_browsePageRetryCount >= MaxAutoPageRetries)
+        {
+            // The same page keeps failing: stop chasing it and reload page 1. Mark
+            // browse unloaded so a failed reload is retried as page 1, not ignored.
+            _browsePageRetryCount = 0;
+            _browseRetryIsLoadMore = false;
+            _communityLoaded = false;
+            StartAutomaticBrowseRetry(loadMore: false);
+            return;
+        }
+
+        // Resume the page that failed rather than throwing the pages away.
+        _browsePageRetryCount++;
+        StartAutomaticBrowseRetry(loadMore: true);
+    }
+
+    private void StartAutomaticBrowseRetry(bool loadMore)
+    {
+        _browseRetryInFlight = true;
+        OnPropertyChanged(nameof(CommunityStatusText));
+        if (loadMore)
+        {
             _ = LoadMoreCommunityAsync();
         }
+        else
+        {
+            _ = BrowseCommunityAsync();
+        }
+    }
+
+    private void EndAutomaticBrowseRetry()
+    {
+        if (!_browseRetryInFlight)
+        {
+            return;
+        }
+
+        _browseRetryInFlight = false;
+        OnPropertyChanged(nameof(CommunityStatusText));
     }
 
     private void RefreshBrowse()
@@ -1896,6 +1949,11 @@ public sealed class AvatarViewModel : ViewModelBase
     // True when the failure came from a load-more page: expiry must retry that
     // page, not restart browse from the first one.
     private bool _browseRetryIsLoadMore;
+    // Automatic attempts at the same load-more page before giving up on it.
+    private const int MaxAutoPageRetries = 3;
+    private int _browsePageRetryCount;
+    // Set while the cooldown tick is fetching by itself, so the status can say so.
+    private bool _browseRetryInFlight;
 
     public void BrowseCatalog()
     {
@@ -1935,6 +1993,8 @@ public sealed class AvatarViewModel : ViewModelBase
 
     private async Task BrowseCommunityAsync(bool publish = true)
     {
+        // Reloading page 1 ends any series of retries aimed at a later page.
+        _browsePageRetryCount = 0;
         IsGlobalBusy = true;
         try
         {
@@ -1999,6 +2059,7 @@ public sealed class AvatarViewModel : ViewModelBase
         finally
         {
             IsGlobalBusy = false;
+            EndAutomaticBrowseRetry();
             OnPropertyChanged(nameof(GlobalSummaryText));
             OnPropertyChanged(nameof(HasNextGlobal));
             OnPropertyChanged(nameof(HasPreviousGlobal));
@@ -2096,6 +2157,8 @@ public sealed class AvatarViewModel : ViewModelBase
         finally
         {
             IsGlobalBusy = false;
+            EndAutomaticBrowseRetry();
+            EndAutomaticBrowseRetry();
             OnPropertyChanged(nameof(GlobalSummaryText));
             OnPropertyChanged(nameof(HasNextGlobal));
             OnPropertyChanged(nameof(HasPreviousGlobal));
