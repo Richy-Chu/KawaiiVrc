@@ -70,8 +70,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public AvatarViewModel? AvatarViewModel
     {
         get => _avatarViewModel;
-        // internal so tests can attach one without restoring a session.
-        internal set => SetProperty(ref _avatarViewModel, value);
+        private set => SetProperty(ref _avatarViewModel, value);
     }
 
     public GroupViewModel? GroupViewModel

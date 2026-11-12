@@ -18,7 +18,7 @@ public class MainViewModelSectionTests
         {
             var shell = new MainViewModel();
             var avatar = new AvatarViewModel(new VrcApiClient());
-            shell.AvatarViewModel = avatar;
+            TestHooks.AttachAvatarViewModel(shell, avatar);
 
             // The shell starts on Profile by assigning the field, not the setter.
             Assert.False(avatar.IsBrowseTabActive);

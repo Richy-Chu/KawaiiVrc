@@ -27,6 +27,21 @@ internal static class TestHooks
         => viewModel.SeedSearchCache(cached);
 
     /// <summary>
+    /// Attaches an avatar view model to the shell without restoring a session. The
+    /// shell keeps its setter private, so this goes through it by reflection and
+    /// stays the only test-side way in.
+    /// </summary>
+    public static void AttachAvatarViewModel(MainViewModel shell, AvatarViewModel avatar)
+    {
+        var setter = typeof(MainViewModel)
+            .GetProperty(nameof(MainViewModel.AvatarViewModel))
+            ?.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException("MainViewModel.AvatarViewModel setter not found.");
+
+        setter.Invoke(shell, new object?[] { avatar });
+    }
+
+    /// <summary>
     /// Clock behind the browse backoff. Tests move it forward instead of waiting,
     /// and must restore it with <see cref="ResetClock"/>.
     /// </summary>
