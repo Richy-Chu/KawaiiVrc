@@ -155,6 +155,75 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task FailedBrowse_StatusShowsRemainingCooldown()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
+            Assert.Contains("retrying in 30s", vm.CommunityStatusText);
+
+            // The status reads the clock, so it counts down instead of freezing.
+            now = now.AddSeconds(18);
+            Assert.Contains("retrying in 12s", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying in 30s", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task FailedBrowse_CooldownStopsDoublingAtFiveMinuteCap()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            // 30, 60, 120, 240, then 300 twice: the cap, not 480.
+            foreach (var seconds in new[] { 30, 60, 120, 240, 300, 300 })
+            {
+                Assert.Contains($"retrying in {seconds}s", vm.CommunityStatusText);
+
+                // One second short of the window: still cooling down, no request.
+                var before = handler.Requests;
+                now = now.AddSeconds(seconds - 1);
+                vm.BrowseCatalog();
+                Assert.Equal(before, handler.Requests);
+
+                // At the deadline the next activation retries and fails again.
+                now = now.AddSeconds(1);
+                vm.BrowseCatalog();
+                await WaitUntilIdle(vm);
+                Assert.Equal(before + 1, handler.Requests);
+            }
+
+            // A seventh failure would have been 480 s without the cap.
+            Assert.Contains("retrying in 300s", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task FailedBrowse_ExplicitRefreshBypassesBackoffAndSuccessClearsIt()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
@@ -206,7 +275,8 @@ public class AvatarViewModelBrowseTests
             await WaitUntilIdle(vm);
 
             Assert.Equal("Could not reach the community avatar index.", vm.GlobalError);
-            Assert.Equal(string.Empty, vm.CommunityStatusText);
+            // No index answered, so the status is only the cooldown countdown.
+            Assert.Equal("retrying in 30s", vm.CommunityStatusText);
 
             // A throw must not mark browse as loaded, but it also starts the
             // backoff, so the retry only happens once the cooldown has passed.

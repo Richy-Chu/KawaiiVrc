@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using System.Windows.Threading;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 
@@ -628,10 +629,27 @@ public sealed class AvatarViewModel : ViewModelBase
     /// "failed" when it was queried but did not answer usefully. Indexes that were
     /// not queried for this page are absent.
     /// </summary>
-    public string CommunityStatusText => FormatIndexStatus(
-        _indexCounts,
-        _failedIndexes,
-        _lastGlobalQuery.Length == 0 ? _browsePage : _searchPage);
+    public string CommunityStatusText
+    {
+        get
+        {
+            var text = FormatIndexStatus(
+                _indexCounts,
+                _failedIndexes,
+                _lastGlobalQuery.Length == 0 ? _browsePage : _searchPage);
+
+            // While the browse index is cooling down, say so: a bare "failed" looks
+            // like a stuck tab. Search results keep their own status untouched.
+            if (!string.IsNullOrWhiteSpace(GlobalSearchTerm) || !BrowseBackoffActive)
+            {
+                return text;
+            }
+
+            var remaining = Math.Max(1, (int)Math.Ceiling((_browseRetryAfterUtc - TestHooks.UtcNow()).TotalSeconds));
+            var retry = $"retrying in {remaining}s";
+            return text.Length == 0 ? retry : $"{text}   ·   {retry}";
+        }
+    }
 
     internal static string FormatIndexStatus(
         IReadOnlyDictionary<string, int> counts,
@@ -928,12 +946,39 @@ public sealed class AvatarViewModel : ViewModelBase
         _browseFailureStreak = Math.Min(_browseFailureStreak + 1, 8);
         var seconds = Math.Min(30 * Math.Pow(2, _browseFailureStreak - 1), 300);
         _browseRetryAfterUtc = TestHooks.UtcNow().AddSeconds(seconds);
+        EnsureBrowseBackoffTicker();
     }
 
     private void ClearBrowseBackoff()
     {
         _browseFailureStreak = 0;
         _browseRetryAfterUtc = DateTime.MinValue;
+        _browseBackoffTimer?.Stop();
+    }
+
+    /// <summary>Repaints the cooldown once a second so the status line counts down.</summary>
+    private void EnsureBrowseBackoffTicker()
+    {
+        if (_browseBackoffTimer is null)
+        {
+            _browseBackoffTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _browseBackoffTimer.Tick += (_, _) =>
+            {
+                OnPropertyChanged(nameof(CommunityStatusText));
+                if (!BrowseBackoffActive)
+                {
+                    _browseBackoffTimer?.Stop();
+                }
+            };
+        }
+
+        if (!_browseBackoffTimer.IsEnabled)
+        {
+            _browseBackoffTimer.Start();
+        }
     }
 
     private void RefreshBrowse()
@@ -1817,6 +1862,8 @@ public sealed class AvatarViewModel : ViewModelBase
     // doubles the wait (30 s, then 60 s, up to 5 min) until a fetch succeeds.
     private int _browseFailureStreak;
     private DateTime _browseRetryAfterUtc;
+    // Ticks the countdown in the status line while a cooldown is running.
+    private DispatcherTimer? _browseBackoffTimer;
 
     public void BrowseCatalog()
     {
