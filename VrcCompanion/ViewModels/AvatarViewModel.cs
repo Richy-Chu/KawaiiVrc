@@ -645,8 +645,7 @@ public sealed class AvatarViewModel : ViewModelBase
                 return text;
             }
 
-            var remaining = Math.Max(1, (int)Math.Ceiling((_browseRetryAfterUtc - TestHooks.UtcNow()).TotalSeconds));
-            var retry = $"retrying in {remaining}s";
+            var retry = $"retrying in {Math.Max(1, BrowseBackoffSecondsRemaining)}s";
             return text.Length == 0 ? retry : $"{text}   ·   {retry}";
         }
     }
@@ -941,8 +940,12 @@ public sealed class AvatarViewModel : ViewModelBase
     private bool BrowseBackoffActive
         => _browseFailureStreak > 0 && TestHooks.UtcNow() < _browseRetryAfterUtc;
 
-    private void RecordBrowseFailure()
+    private int BrowseBackoffSecondsRemaining
+        => Math.Max(0, (int)Math.Ceiling((_browseRetryAfterUtc - TestHooks.UtcNow()).TotalSeconds));
+
+    private void RecordBrowseFailure(bool loadMore = false)
     {
+        _browseRetryIsLoadMore = loadMore;
         _browseFailureStreak = Math.Min(_browseFailureStreak + 1, 8);
         var seconds = Math.Min(30 * Math.Pow(2, _browseFailureStreak - 1), 300);
         _browseRetryAfterUtc = TestHooks.UtcNow().AddSeconds(seconds);
@@ -953,6 +956,7 @@ public sealed class AvatarViewModel : ViewModelBase
     {
         _browseFailureStreak = 0;
         _browseRetryAfterUtc = DateTime.MinValue;
+        _browseRetryIsLoadMore = false;
         _browseBackoffTimer?.Stop();
     }
 
@@ -998,6 +1002,11 @@ public sealed class AvatarViewModel : ViewModelBase
         if (!_communityLoaded)
         {
             _ = BrowseCommunityAsync();
+        }
+        else if (_browseRetryIsLoadMore)
+        {
+            // Resume the page that failed rather than throwing the pages away.
+            _ = LoadMoreCommunityAsync();
         }
     }
 
@@ -1884,6 +1893,9 @@ public sealed class AvatarViewModel : ViewModelBase
     private DateTime _browseRetryAfterUtc;
     // Ticks the countdown in the status line while a cooldown is running.
     private DispatcherTimer? _browseBackoffTimer;
+    // True when the failure came from a load-more page: expiry must retry that
+    // page, not restart browse from the first one.
+    private bool _browseRetryIsLoadMore;
 
     public void BrowseCatalog()
     {
@@ -2000,6 +2012,14 @@ public sealed class AvatarViewModel : ViewModelBase
             return;
         }
 
+        // A failed page should not be refetched on every click: the same cooldown
+        // as a failed browse applies, and the status line counts it down.
+        if (BrowseBackoffActive)
+        {
+            GlobalError = $"The community index is cooling down. Try again in {Math.Max(1, BrowseBackoffSecondsRemaining)}s.";
+            return;
+        }
+
         IsGlobalBusy = true;
         try
         {
@@ -2009,9 +2029,19 @@ public sealed class AvatarViewModel : ViewModelBase
                 : await _api.GetCommunityLatestAsync(50, _communityOffset, probe);
             _communityOffset += page.Count;
 
+            var failed = !BrowseFetchSucceeded(probe);
+            if (failed)
+            {
+                RecordBrowseFailure(loadMore: true);
+            }
+            else
+            {
+                ClearBrowseBackoff();
+            }
+
             // A failed index answers with nothing; that is not "no more avatars",
             // and it must not advance the page counter.
-            if (probe.TryGetValue("avtr.icu", out var avtrOutcome) && avtrOutcome < 0)
+            if (failed)
             {
                 _indexCounts.Remove("avtr.icu");
                 _failedIndexes.Clear();
@@ -2060,6 +2090,7 @@ public sealed class AvatarViewModel : ViewModelBase
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
+            RecordBrowseFailure(loadMore: true);
             GlobalError = "Could not load more community avatars.";
         }
         finally

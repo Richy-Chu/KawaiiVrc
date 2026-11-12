@@ -319,6 +319,97 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task LoadMore_FailureRespectsCooldownInsteadOfRetryingEveryClick()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = false, Json = IdsJson(Ids(50, "bulk")) };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            handler.Html = true;
+            var afterFirstPage = handler.Requests;
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(afterFirstPage + 1, handler.Requests);
+            Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
+            Assert.Contains("retrying in 30s", vm.CommunityStatusText);
+
+            // Clicks inside the cooldown explain the wait instead of refetching.
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(afterFirstPage + 1, handler.Requests);
+            Assert.Contains("cooling down", vm.GlobalError);
+            Assert.DoesNotContain("page 2", vm.CommunityStatusText);
+
+            // After the window the next click fetches and advances normally.
+            handler.Html = false;
+            handler.Json = IdsJson(Ids(50, "more"));
+            now = now.AddSeconds(31);
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(afterFirstPage + 2, handler.Requests);
+            Assert.Contains("page 2", vm.CommunityStatusText);
+            Assert.DoesNotContain("cooling down", vm.GlobalError);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task LoadMore_RetriesItsFailedPageWhenCooldownExpires()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = false, Json = IdsJson(Ids(50, "bulk")) };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            handler.Html = true;
+            var afterPageOne = handler.Requests;
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            Assert.Equal(afterPageOne + 1, handler.Requests);
+            Assert.Contains("retrying in 30s", vm.CommunityStatusText);
+
+            // The expiry tick must fetch page 2 itself, with no click.
+            handler.Html = false;
+            handler.Json = IdsJson(Ids(50, "more"));
+            now = now.AddSeconds(30);
+            TestHooks.PumpBrowseBackoff(vm);
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(afterPageOne + 2, handler.Requests);
+            Assert.Contains("page 2", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying", vm.CommunityStatusText);
+            Assert.Equal(string.Empty, vm.GlobalError);
+            // 50 first-page rows plus the appended page, not a restart.
+            Assert.Equal(100, vm.GlobalResults.Count);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task FailedBrowse_ExplicitRefreshBypassesBackoffAndSuccessClearsIt()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
@@ -393,8 +484,10 @@ public class AvatarViewModelBrowseTests
     [Fact]
     public async Task LoadMore_ThrowingFetch_ReportsGlobalErrorAndKeepsPage()
     {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
         var handler = new ToggleHandler { Html = false, Json = IdsJson(Ids(50, "bulk")) };
         TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
         try
         {
             var vm = new AvatarViewModel(new VrcApiClient());
@@ -411,9 +504,11 @@ public class AvatarViewModelBrowseTests
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
             Assert.DoesNotContain("page 2", vm.CommunityStatusText);
 
-            // The next attempt with a working index does advance and clears the error.
+            // The next attempt with a working index does advance and clears the
+            // error, but only once the cooldown it started has passed.
             handler.Json = IdsJson(Ids(50, "more"));
             TestHooks.UseBrowseFetch(vm, null);
+            now = now.AddSeconds(31);
             vm.NextGlobalPageCommand.Execute(null);
             await WaitUntilIdle(vm);
 
@@ -422,6 +517,7 @@ public class AvatarViewModelBrowseTests
         }
         finally
         {
+            TestHooks.ResetClock();
             TestHooks.UseCommunityHandler(null);
         }
     }
