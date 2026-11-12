@@ -266,6 +266,21 @@ public sealed class AvatarViewModel : ViewModelBase
     /// <summary>Fetched result pages for the current query (page 1 is index 0).</summary>
     private readonly List<List<Avatar>> _searchPages = new();
 
+    /// <summary>
+    /// New avatars each loaded browse page contributed, so stepping back can show
+    /// exactly the pages already fetched instead of the whole growing cache.
+    /// </summary>
+    private readonly List<int> _browsePageNewCounts = new();
+
+    /// <summary>
+    /// Per page, what each index answered: rows, or -1 when that index failed.
+    /// Kept per page so the status line can name the indexes that did not respond.
+    /// </summary>
+    private readonly List<Dictionary<string, int>> _pageProbes = new();
+
+    /// <summary>Probe filled by the fetch currently in flight (see _pageProbes).</summary>
+    private Dictionary<string, int> _currentProbe = new(StringComparer.OrdinalIgnoreCase);
+
     private int _searchPage;
 
     public bool HasNextGlobal => !IsGlobalBusy &&
@@ -273,10 +288,27 @@ public sealed class AvatarViewModel : ViewModelBase
             ? _communityPageFull
             : _searchPage < _searchPages.Count || _lastVrchatPageFull || _communitySearchPageFull);
 
-    public bool HasPreviousGlobal => !IsGlobalBusy && _searchPage > 1;
+    /// <summary>
+    /// Bumped whenever the visible results page changes (browse or search); the view
+    /// scrolls to the top on each change so a new page never opens mid-list.
+    /// </summary>
+    public int ResultsPageToken => _browsePageToken;
+
+    private int _browsePageToken;
+
+    private void BumpResultsPageToken()
+    {
+        _browsePageToken++;
+        OnPropertyChanged(nameof(ResultsPageToken));
+    }
+
+    public bool HasPreviousGlobal => !IsGlobalBusy &&
+        (_lastGlobalQuery.Length == 0
+            ? _communityLoaded && _browsePage > 1
+            : _searchPage > 1);
 
     /// <summary>Short-lived cache so repeating a query does not re-hit every index.</summary>
-    private sealed class CachedSearch
+    internal sealed class CachedSearch
     {
         public List<List<Avatar>> Pages { get; init; } = new();
         public DateTime FetchedAt { get; init; }
@@ -284,7 +316,7 @@ public sealed class AvatarViewModel : ViewModelBase
         public bool VrchatMore { get; init; }
         public bool CommunityMore { get; init; }
         public string AuthorName { get; init; } = string.Empty;
-
+        public List<Dictionary<string, int>> PageProbes { get; init; } = new();
     }
 
     private readonly Dictionary<string, CachedSearch> _searchCache = new(StringComparer.OrdinalIgnoreCase);
@@ -300,6 +332,7 @@ public sealed class AvatarViewModel : ViewModelBase
         }
 
         _searchPages.Clear();
+        _pageProbes.Clear();
         _indexCounts.Clear();
         _searchPage = 0;
 
@@ -312,6 +345,9 @@ public sealed class AvatarViewModel : ViewModelBase
             _lastVrchatPageFull = cached.VrchatMore;
             _communitySearchPageFull = cached.CommunityMore;
             _searchPages.AddRange(cached.Pages);
+            // Failures are transient facts about one request, not about the page, so
+            // a cached restore drops them rather than claiming an index is still down.
+            _pageProbes.AddRange(cached.PageProbes.Select(HealthOnlyProbe));
             _searchPage = 1;
             PublishStoredPage();
             OnPropertyChanged(nameof(GlobalSummaryText));
@@ -328,17 +364,35 @@ public sealed class AvatarViewModel : ViewModelBase
 
         if (GlobalResults.Count > 0)
         {
-            AddResultChunks(GlobalResults.ToList());
+            AddResultChunks(GlobalResults.ToList(), _currentProbe);
             _searchPage = 1;
             PublishStoredPage();
             StoreSearchCache();
         }
     }
 
+    /// <summary>
+    /// Probe without failure entries: safe to show from cache, where a failure
+    /// recorded minutes ago may no longer be true.
+    /// </summary>
+    internal static Dictionary<string, int> HealthOnlyProbe(IReadOnlyDictionary<string, int> probe)
+    {
+        var healthy = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in probe)
+        {
+            if (entry.Value >= 0)
+            {
+                healthy[entry.Key] = entry.Value;
+            }
+        }
+
+        return healthy;
+    }
+
     private const int GlobalPageSize = 50;
 
     /// <summary>Splits fetched rows into 50-card pages for Back/Next.</summary>
-    private void AddResultChunks(List<Avatar> avatars)
+    private void AddResultChunks(List<Avatar> avatars, IReadOnlyDictionary<string, int>? probe = null)
     {
         for (var start = 0; start < avatars.Count; start += GlobalPageSize)
         {
@@ -348,6 +402,13 @@ public sealed class AvatarViewModel : ViewModelBase
                 .ToList());
         }
 
+        // Every chunk from this fetch shares the same "what each index answered".
+        while (_pageProbes.Count < _searchPages.Count)
+        {
+            _pageProbes.Add(probe is null
+                ? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, int>(probe, StringComparer.OrdinalIgnoreCase));
+        }
     }
 
     /// <summary>
@@ -369,6 +430,16 @@ public sealed class AvatarViewModel : ViewModelBase
         return counts;
     }
 
+    /// <summary>Test seam: preloads the cache for the current search key.</summary>
+    internal void SeedSearchCache(CachedSearch cached) => _searchCache[SearchCacheKey] = cached;
+
+    /// <summary>
+    /// Test seam: replaces the browse fetch (offset in, rows out) for both the
+    /// first page and "load more", so their failure branches can be exercised.
+    /// Null uses the real community index call.
+    /// </summary>
+    internal Func<int, CancellationToken, Task<List<Avatar>>>? BrowseFetch { get; set; }
+
     private void StoreSearchCache()
     {
         _searchCache[SearchCacheKey] = new CachedSearch
@@ -378,7 +449,10 @@ public sealed class AvatarViewModel : ViewModelBase
             VrchatRows = _vrchatRowsInResults,
             VrchatMore = _lastVrchatPageFull,
             CommunityMore = _communitySearchPageFull,
-            AuthorName = _authorFilterName
+            AuthorName = _authorFilterName,
+            PageProbes = _pageProbes
+                .Select(probe => new Dictionary<string, int>(probe, StringComparer.OrdinalIgnoreCase))
+                .ToList()
         };
 
         // Keep the cache tiny: one query per term, oldest dropped past 20 entries.
@@ -398,6 +472,15 @@ public sealed class AvatarViewModel : ViewModelBase
 
         if (_lastGlobalQuery.Length == 0)
         {
+            // Already-loaded pages are shown from the cache without a request.
+            if (_communityLoaded && _browsePage < _browsePageNewCounts.Count)
+            {
+                _browsePage++;
+                PublishCommunityBrowse();
+                ApplyBrowseStatusForPage();
+                return;
+            }
+
             await LoadMoreCommunityAsync();
             return;
         }
@@ -421,7 +504,7 @@ public sealed class AvatarViewModel : ViewModelBase
             return;
         }
 
-        AddResultChunks(added);
+        AddResultChunks(added, _currentProbe);
         _searchPage = Math.Min(_searchPage + 1, _searchPages.Count);
         PublishStoredPage();
         StoreSearchCache();
@@ -429,7 +512,25 @@ public sealed class AvatarViewModel : ViewModelBase
 
     private void PreviousPage()
     {
-        if (IsGlobalBusy || _searchPage <= 1)
+        if (IsGlobalBusy)
+        {
+            return;
+        }
+
+        if (_lastGlobalQuery.Length == 0)
+        {
+            if (!_communityLoaded || _browsePage <= 1)
+            {
+                return;
+            }
+
+            _browsePage--;
+            PublishCommunityBrowse();
+            ApplyBrowseStatusForPage();
+            return;
+        }
+
+        if (_searchPage <= 1)
         {
             return;
         }
@@ -438,8 +539,29 @@ public sealed class AvatarViewModel : ViewModelBase
         PublishStoredPage();
     }
 
+    /// <summary>Status line for the browse page being shown (already-loaded pages only).</summary>
+    private void ApplyBrowseStatusForPage()
+    {
+        _indexCounts.Clear();
+        _failedIndexes.Clear();
+        if (_browsePage >= 1 && _browsePage <= _browsePageNewCounts.Count)
+        {
+            _indexCounts["avtr.icu"] = _browsePageNewCounts[_browsePage - 1];
+        }
+
+        BumpResultsPageToken();
+        OnPropertyChanged(nameof(CommunityStatusText));
+        OnPropertyChanged(nameof(GlobalSummaryText));
+        OnPropertyChanged(nameof(HasNextGlobal));
+        OnPropertyChanged(nameof(HasPreviousGlobal));
+        NextGlobalPageCommand.RaiseCanExecuteChanged();
+        PreviousGlobalPageCommand.RaiseCanExecuteChanged();
+    }
+
     private void PublishStoredPage()
     {
+        // A stored page is always a page change, so start it at the top.
+        BumpResultsPageToken();
         GlobalResults.Clear();
         if (_searchPage >= 1 && _searchPage <= _searchPages.Count)
         {
@@ -452,11 +574,24 @@ public sealed class AvatarViewModel : ViewModelBase
         // Status counts unique avatars actually shown on this page, per index, so
         // an index can never claim rows that de-duplication removed.
         _indexCounts.Clear();
+        _failedIndexes.Clear();
         if (_searchPage >= 1 && _searchPage <= _searchPages.Count)
         {
             foreach (var entry in CountBySource(_searchPages[_searchPage - 1]))
             {
                 _indexCounts[entry.Key] = entry.Value;
+            }
+        }
+
+        // Indexes that were asked but did not answer usefully are still named.
+        if (_searchPage >= 1 && _searchPage <= _pageProbes.Count)
+        {
+            foreach (var entry in _pageProbes[_searchPage - 1])
+            {
+                if (entry.Value < 0)
+                {
+                    _failedIndexes.Add(entry.Key);
+                }
             }
         }
 
@@ -483,24 +618,37 @@ public sealed class AvatarViewModel : ViewModelBase
     private int _vrcndbPage;
 
     private readonly SortedDictionary<string, int> _indexCounts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _failedIndexes = new();
 
     /// <summary>
-    /// Which indexes answered the page you are looking at, how many rows each gave,
-    /// and which page that was. Indexes not queried for this page are absent.
+    /// What each index did for the page you are looking at: rows it contributed, or
+    /// "failed" when it was queried but did not answer usefully. Indexes that were
+    /// not queried for this page are absent.
     /// </summary>
-    public string CommunityStatusText
-    {
-        get
-        {
-            if (_indexCounts.Count == 0)
-            {
-                return string.Empty;
-            }
+    public string CommunityStatusText => FormatIndexStatus(
+        _indexCounts,
+        _failedIndexes,
+        _lastGlobalQuery.Length == 0 ? _browsePage : _searchPage);
 
-            var parts = string.Join("   ", _indexCounts.Select(entry => $"{entry.Key} {entry.Value}"));
-            var page = _lastGlobalQuery.Length == 0 ? _browsePage : _searchPage;
-            return page > 1 ? $"{parts}   ·   page {page}" : parts;
+    internal static string FormatIndexStatus(
+        IReadOnlyDictionary<string, int> counts,
+        IEnumerable<string> failed,
+        int page)
+    {
+        var entries = counts
+            .Select(entry => (Name: entry.Key, Text: $"{entry.Key} {entry.Value}"))
+            .Concat(failed.Select(name => (Name: name, Text: $"{name} failed")))
+            .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => entry.Text)
+            .ToList();
+
+        if (entries.Count == 0)
+        {
+            return string.Empty;
         }
+
+        var parts = string.Join("   ", entries);
+        return page > 1 ? $"{parts}   ·   page {page}" : parts;
     }
 
     private int _browsePage = 1;
@@ -1558,9 +1706,13 @@ public sealed class AvatarViewModel : ViewModelBase
 
                 // @name / usr_ searches must not stop at VRChat: ask the community
                 // providers by author id as well.
+                _currentProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
                 if (authorId.Length > 0)
                 {
-                    var byAuthor = await _api.SearchCommunityByAuthorAsync(authorId);
+                    var byAuthor = await _api.SearchCommunityByAuthorAsync(
+                        authorId,
+                        indexResults: _currentProbe);
                     _indexCounts.Clear();
                     foreach (var group in byAuthor.GroupBy(a => a.SourceName, StringComparer.OrdinalIgnoreCase))
                     {
@@ -1585,7 +1737,8 @@ public sealed class AvatarViewModel : ViewModelBase
                     community = await _api.SearchCommunityNextPageAsync(
                         _lastGlobalQuery,
                         _vrcndbPage,
-                        _communitySearchOffset);
+                        _communitySearchOffset,
+                        indexResults: _currentProbe);
                     _communitySearchOffset += 25;
                 }
                 else
@@ -1596,7 +1749,8 @@ public sealed class AvatarViewModel : ViewModelBase
                     // only VRCNDb and avtr.icu can continue on later pages.
                     community = await _api.SearchAllCommunityAvatarsAsync(
                         _lastGlobalQuery,
-                        providerLimit: 80);
+                        providerLimit: 80,
+                        indexResults: _currentProbe);
                     _communitySearchOffset = 25;
                 }
 
@@ -1674,16 +1828,40 @@ public sealed class AvatarViewModel : ViewModelBase
         IsGlobalBusy = true;
         try
         {
-            var page = await _api.GetCommunityLatestAsync(50, 0);
+            var probe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var page = BrowseFetch is { } fetchForTests
+                ? await fetchForTests(0, CancellationToken.None)
+                : await _api.GetCommunityLatestAsync(50, 0, probe);
+            var fetched = BrowseFetchSucceeded(probe);
             _communityCache.Clear();
             _communityCache.AddRange(page);
             _communityOffset = page.Count;
             _communityPageFull = page.Count >= 50;
-            _communityLoaded = true;
+            // A failed fetch must not count as "loaded": the next tab switch or
+            // refresh then retries, and a success clears the failure line.
+            _communityLoaded = fetched;
             _browsePage = 1;
-            _indexCounts.Clear();
-            _indexCounts["avtr.icu"] = page.Count;
-            OnPropertyChanged(nameof(CommunityStatusText));
+            BumpResultsPageToken();
+            _browsePageNewCounts.Clear();
+            if (fetched)
+            {
+                _browsePageNewCounts.Add(page.Count);
+            }
+            // A refresh during an active search only warms the browse cache; the
+            // status line still describes the search results on screen.
+            if (ShouldReportBrowseIndexStatus(GlobalSearchTerm, publish))
+            {
+                _indexCounts.Clear();
+                _failedIndexes.Clear();
+                _indexCounts["avtr.icu"] = page.Count;
+                if (!fetched)
+                {
+                    _indexCounts.Remove("avtr.icu");
+                    _failedIndexes.Add("avtr.icu");
+                }
+
+                OnPropertyChanged(nameof(CommunityStatusText));
+            }
             if (publish)
             {
                 PublishCommunityBrowse();
@@ -1716,8 +1894,25 @@ public sealed class AvatarViewModel : ViewModelBase
         IsGlobalBusy = true;
         try
         {
-            var page = await _api.GetCommunityLatestAsync(50, _communityOffset);
+            var probe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var page = BrowseFetch is { } fetchForTests
+                ? await fetchForTests(_communityOffset, CancellationToken.None)
+                : await _api.GetCommunityLatestAsync(50, _communityOffset, probe);
             _communityOffset += page.Count;
+
+            // A failed index answers with nothing; that is not "no more avatars",
+            // and it must not advance the page counter.
+            if (probe.TryGetValue("avtr.icu", out var avtrOutcome) && avtrOutcome < 0)
+            {
+                _indexCounts.Remove("avtr.icu");
+                _failedIndexes.Clear();
+                _failedIndexes.Add("avtr.icu");
+                GlobalError = "Could not load more community avatars.";
+                OnPropertyChanged(nameof(CommunityStatusText));
+                return;
+            }
+
+            _failedIndexes.Clear();
             _communityPageFull = page.Count >= 50;
             var added = 0;
             foreach (var avatar in page)
@@ -1732,11 +1927,22 @@ public sealed class AvatarViewModel : ViewModelBase
             if (page.Count == 0)
             {
                 GlobalError = "No more public avatars in the community index.";
+                return;
+            }
+
+            // A page of avatars already on screen adds nothing: do not advance the
+            // page counter or claim a zero-row page.
+            if (added == 0)
+            {
+                GlobalError = "No new public avatars on that page.";
+                return;
             }
 
             // Keep the index status in step with the browse page just fetched, and
             // report only the avatars that were actually new on screen.
             _browsePage++;
+            _browsePageNewCounts.Add(added);
+            BumpResultsPageToken();
             _indexCounts.Clear();
             _indexCounts["avtr.icu"] = added;
             OnPropertyChanged(nameof(CommunityStatusText));
@@ -1756,10 +1962,34 @@ public sealed class AvatarViewModel : ViewModelBase
         }
     }
 
-        private void PublishCommunityBrowse()
+    /// <summary>
+    /// Browse may only rewrite the index status line when it is what the user is
+    /// looking at: publishing, with no search query owning the tab.
+    /// </summary>
+    internal static bool ShouldReportBrowseIndexStatus(string searchTerm, bool publish)
+        => publish && string.IsNullOrWhiteSpace(searchTerm);
+
+    /// <summary>
+    /// True when the browse index actually answered. A failed browse must stay
+    /// retryable so its "failed" status cannot outlive the outage.
+    /// </summary>
+    internal static bool BrowseFetchSucceeded(IReadOnlyDictionary<string, int> probe)
+        => !probe.TryGetValue("avtr.icu", out var outcome) || outcome >= 0;
+
+    private void PublishCommunityBrowse()
     {
+        // Browse shows only the pages stepped through so far, never the whole
+        // prefetched cache, so Previous can genuinely go back.
+        var visible = _communityCache.Count;
+        if (_browsePageNewCounts.Count > 0)
+        {
+            visible = _browsePageNewCounts
+                .Take(Math.Clamp(_browsePage, 1, _browsePageNewCounts.Count))
+                .Sum();
+        }
+
         GlobalResults.Clear();
-        foreach (var avatar in _communityCache.Where(MatchesPrivacy))
+        foreach (var avatar in _communityCache.Take(visible).Where(MatchesPrivacy))
         {
             AddGlobalResult(avatar);
         }

@@ -4,6 +4,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:controls="clr-namespace:VrcCompanion.Controls"
+        xmlns:behaviors="clr-namespace:VrcCompanion.Behaviors"
         xmlns:converters="clr-namespace:VrcCompanion.Converters"
         xmlns:m="clr-namespace:VrcCompanion.Models"
         xmlns:sys="clr-namespace:System"
@@ -1736,7 +1737,8 @@
             <Grid>
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled"
-                              Padding="26,2,18,18">
+                              Padding="26,2,18,18"
+                              behaviors:ScrollViewerBehavior.PageToken="{Binding AvatarViewModel.ResultsPageToken}">
                     <StackPanel>
                         <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                             <StackPanel>
@@ -2554,7 +2556,13 @@
             </ScrollViewer>
         </DataTemplate>
 
-                <Style x:Key="SectionSwitcher" TargetType="ContentControl">
+        <!-- Section switching swaps ContentTemplate, which rebuilds each tab's visual
+             tree; that recreation is what returns a tab to the top. Checked on
+             friends (29 rows), notifications (24 items / 65 texts) and worlds (35
+             rows) with the offset going 100 -> 0 and the same row counts, plus an
+             active Avatar Search (50 cards, same status line). If these hosts are ever cached to keep tabs alive, each
+             tab will need its own scroll reset or the offset will persist. -->
+        <Style x:Key="SectionSwitcher" TargetType="ContentControl">
             <Setter Property="ContentTemplate" Value="{StaticResource ProfileTemplate}" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Stretch" />

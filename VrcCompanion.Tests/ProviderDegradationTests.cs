@@ -1,3 +1,4 @@
+using System.IO;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 using Xunit;
@@ -40,6 +41,30 @@ public sealed class ProviderDegradationTests
         var only = Assert.Single(merged);
         Assert.Equal("AviSeek", only.SourceName);
         Assert.Equal("still here", only.Name);
+    }
+
+    [Fact]
+    public void RealHtmlProviderResponse_ParsesToEmptyList()
+    {
+        // Captured live from avtrdb.com's API path: HTTP 200 with text/html and an
+        // SPA shell. This is what a non-JSON provider answer really looks like.
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "avtrdb-html-response.html");
+        var body = File.ReadAllText(path);
+
+        Assert.Contains("<html", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(VrcApiClient.ParseVrcxProviderBody(body, "avtrDB", 80));
+    }
+
+    [Fact]
+    public void HtmlBody_IsRejectedByTheSharedIndexGuard()
+    {
+        Assert.Null(VrcApiClient.ParseJsonBodyOrNull(HtmlBody, "VRCNDb"));
+        Assert.Null(VrcApiClient.ParseJsonBodyOrNull(HtmlBody, "avtr.icu"));
+        Assert.Null(VrcApiClient.ParseJsonBodyOrNull(string.Empty, "VRCNDb"));
+
+        using var valid = VrcApiClient.ParseJsonBodyOrNull("{\"results\":[]}", "VRCNDb");
+        Assert.NotNull(valid);
+        Assert.True(valid!.RootElement.TryGetProperty("results", out _));
     }
 
     [Fact]

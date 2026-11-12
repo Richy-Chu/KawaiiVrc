@@ -758,7 +758,29 @@ public sealed class VrcApiClient : IDisposable
 
     private readonly Dictionary<string, Avatar> _avatarCache = new(StringComparer.Ordinal);
 
-    private static readonly HttpClient CommunityHttp = CreateCommunityHttp();
+    private static HttpClient? _communityHttp;
+
+    private static HttpClient CommunityHttp => _communityHttp ??= CreateCommunityHttp();
+
+    /// <summary>
+    /// Test seam: swaps the community HTTP pipeline for a fake handler (pass null
+    /// to restore the real client). Only tests should call this.
+    /// </summary>
+    internal static void SetCommunityHandler(HttpMessageHandler? handler)
+    {
+        _communityHttp?.Dispose();
+        _communityHttp = handler is null
+            ? null
+            : new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+    }
+
+    private static void MarkIndexResult(IDictionary<string, int>? results, string name, int count)
+    {
+        if (results is not null)
+        {
+            results[name] = count;
+        }
+    }
 
     private static HttpClient CreateCommunityHttp()
     {
@@ -805,6 +827,7 @@ public sealed class VrcApiClient : IDisposable
     public async Task<List<Avatar>> SearchCommunityByAuthorAsync(
         string authorId,
         int providerLimit = 40,
+        IDictionary<string, int>? indexResults = null,
         CancellationToken cancellationToken = default)
     {
         var merged = new List<Avatar>();
@@ -814,7 +837,8 @@ public sealed class VrcApiClient : IDisposable
             provider.Name,
             $"{provider.Base}?authorId={Uri.EscapeDataString(authorId)}&n={providerLimit}",
             providerLimit,
-            cancellationToken));
+            cancellationToken,
+            indexResults));
 
         foreach (var page in await Task.WhenAll(tasks))
         {
@@ -845,18 +869,21 @@ public sealed class VrcApiClient : IDisposable
         string query,
         int limit = 25,
         int providerLimit = 40,
+        IDictionary<string, int>? indexResults = null,
         CancellationToken cancellationToken = default)
     {
         var tasks = VrcxProviders.Select(provider => FetchVrcxProviderAsync(
             provider.Name,
             $"{provider.Base}?search={Uri.EscapeDataString(query.Trim())}&n={providerLimit}",
             providerLimit,
-            cancellationToken)).ToList();
+            cancellationToken,
+            indexResults)).ToList();
 
         tasks.Add(FetchCommunityAsync(
             $"search?search={Uri.EscapeDataString(query.Trim())}&limit={limit}",
-            cancellationToken));
-        tasks.Add(FetchVrcndbAsync(query.Trim(), providerLimit, 1, cancellationToken));
+            cancellationToken,
+            indexResults));
+        tasks.Add(FetchVrcndbAsync(query.Trim(), providerLimit, 1, cancellationToken, indexResults));
 
         var pages = await Task.WhenAll(tasks);
         var sources = new List<(string Source, IReadOnlyList<Avatar> Rows)>(pages.Length);
@@ -881,12 +908,19 @@ public sealed class VrcApiClient : IDisposable
         int avtrOffset,
         int limit = 25,
         int providerLimit = 40,
+        IDictionary<string, int>? indexResults = null,
         CancellationToken cancellationToken = default)
     {
         var avtrTask = FetchCommunityAsync(
             $"search?search={Uri.EscapeDataString(query.Trim())}&limit={limit}&offset={avtrOffset}",
-            cancellationToken);
-        var vrcndbTask = FetchVrcndbAsync(query.Trim(), providerLimit, vrcndbPage, cancellationToken);
+            cancellationToken,
+            indexResults);
+        var vrcndbTask = FetchVrcndbAsync(
+            query.Trim(),
+            providerLimit,
+            vrcndbPage,
+            cancellationToken,
+            indexResults);
         await Task.WhenAll(avtrTask, vrcndbTask);
 
         var avtr = await avtrTask;
@@ -904,11 +938,12 @@ public sealed class VrcApiClient : IDisposable
     /// response shape: {page, limit, total, has_more, results:[{id, name,
     /// author_id, author_name, thumbnail}]}. Thumbnails are site-relative.
     /// </summary>
-    private async Task<List<Avatar>> FetchVrcndbAsync(
+    internal async Task<List<Avatar>> FetchVrcndbAsync(
         string query,
         int limit,
         int page,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IDictionary<string, int>? indexResults = null)
     {
         var results = new List<Avatar>();
         try
@@ -919,15 +954,23 @@ public sealed class VrcApiClient : IDisposable
             if (!response.IsSuccessStatusCode)
             {
                 System.Diagnostics.Debug.WriteLine($"VRCNDb: HTTP {(int)response.StatusCode}");
+                MarkIndexResult(indexResults, "VRCNDb", -1);
                 return results;
             }
 
-            using var document = System.Text.Json.JsonDocument.Parse(
-                await ReadLimitedBodyAsync(response.Content, cancellationToken));
+            using var document = ParseJsonBodyOrNull(
+                await ReadLimitedBodyAsync(response.Content, cancellationToken),
+                "VRCNDb");
+            if (document is null)
+            {
+                MarkIndexResult(indexResults, "VRCNDb", -1);
+                return results;
+            }
 
             if (!document.RootElement.TryGetProperty("results", out var array) ||
                 array.ValueKind != System.Text.Json.JsonValueKind.Array)
             {
+                MarkIndexResult(indexResults, "VRCNDb", -1);
                 return results;
             }
 
@@ -962,8 +1005,11 @@ public sealed class VrcApiClient : IDisposable
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine(ex);
+            MarkIndexResult(indexResults, "VRCNDb", -1);
+            return results;
         }
 
+        MarkIndexResult(indexResults, "VRCNDb", results.Count);
         return results;
     }
 
@@ -1040,6 +1086,30 @@ public sealed class VrcApiClient : IDisposable
         }
 
         return merged;
+    }
+
+    /// <summary>
+    /// Shared guard for index responses: an empty or non-JSON body (HTML error or
+    /// challenge page, SPA shell) returns null so that index simply contributes
+    /// nothing instead of throwing.
+    /// </summary>
+    internal static System.Text.Json.JsonDocument? ParseJsonBodyOrNull(string body, string source)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            System.Diagnostics.Debug.WriteLine($"{source}: empty body");
+            return null;
+        }
+
+        try
+        {
+            return System.Text.Json.JsonDocument.Parse(body);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"{source}: body is not JSON ({ex.Message})");
+            return null;
+        }
     }
 
     internal static string? RepairTruncatedJson(string text)
@@ -1120,11 +1190,12 @@ public sealed class VrcApiClient : IDisposable
         return root == '[' ? head + "]" : head + "]}";
     }
 
-    private async Task<List<Avatar>> FetchVrcxProviderAsync(
+    internal async Task<List<Avatar>> FetchVrcxProviderAsync(
         string name,
         string url,
         int cap,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IDictionary<string, int>? indexResults = null)
     {
         try
         {
@@ -1132,15 +1203,19 @@ public sealed class VrcApiClient : IDisposable
             if (!response.IsSuccessStatusCode)
             {
                 System.Diagnostics.Debug.WriteLine($"{name}: HTTP {(int)response.StatusCode}");
+                MarkIndexResult(indexResults, name, -1);
                 return new List<Avatar>();
             }
 
             var body = await ReadLimitedBodyAsync(response.Content, cancellationToken);
-            return ParseVrcxProviderBody(body, name, cap);
+            var rows = ParseVrcxProviderBody(body, name, cap, out var failed);
+            MarkIndexResult(indexResults, name, failed ? -1 : rows.Count);
+            return rows;
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine(ex);
+            MarkIndexResult(indexResults, name, -1);
             return new List<Avatar>();
         }
     }
@@ -1151,10 +1226,19 @@ public sealed class VrcApiClient : IDisposable
     /// cannot take the federated merge down with it.
     /// </summary>
     internal static List<Avatar> ParseVrcxProviderBody(string body, string name, int cap)
+        => ParseVrcxProviderBody(body, name, cap, out _);
+
+    internal static List<Avatar> ParseVrcxProviderBody(
+        string body,
+        string name,
+        int cap,
+        out bool failed)
     {
+        failed = false;
         var results = new List<Avatar>();
         if (string.IsNullOrWhiteSpace(body))
         {
+            failed = true;
             return results;
         }
 
@@ -1172,6 +1256,7 @@ public sealed class VrcApiClient : IDisposable
 
             if (root.ValueKind != System.Text.Json.JsonValueKind.Array)
             {
+                failed = true;
                 return results;
             }
 
@@ -1205,10 +1290,12 @@ public sealed class VrcApiClient : IDisposable
         catch (System.Text.Json.JsonException ex)
         {
             System.Diagnostics.Debug.WriteLine($"{name}: body is not JSON ({ex.Message})");
+            failed = true;
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine(ex);
+            failed = true;
         }
 
         return results;
@@ -1218,10 +1305,14 @@ public sealed class VrcApiClient : IDisposable
     public Task<List<Avatar>> GetCommunityLatestAsync(
         int limit = 50,
         int offset = 0,
+        IDictionary<string, int>? indexResults = null,
         CancellationToken cancellationToken = default)
-        => FetchCommunityAsync($"latest?limit={limit}&offset={offset}", cancellationToken);
+        => FetchCommunityAsync($"latest?limit={limit}&offset={offset}", cancellationToken, indexResults);
 
-    private async Task<List<Avatar>> FetchCommunityAsync(string path, CancellationToken cancellationToken)
+    internal async Task<List<Avatar>> FetchCommunityAsync(
+        string path,
+        CancellationToken cancellationToken,
+        IDictionary<string, int>? indexResults = null)
     {
         var results = new List<Avatar>();
         try
@@ -1232,15 +1323,23 @@ public sealed class VrcApiClient : IDisposable
             if (!response.IsSuccessStatusCode)
             {
                 System.Diagnostics.Debug.WriteLine($"avtr.icu {path}: {(int)response.StatusCode}");
+                MarkIndexResult(indexResults, "avtr.icu", -1);
                 return results;
             }
 
-            using var document = System.Text.Json.JsonDocument.Parse(
-                await ReadLimitedBodyAsync(response.Content, cancellationToken));
+            using var document = ParseJsonBodyOrNull(
+                await ReadLimitedBodyAsync(response.Content, cancellationToken),
+                "avtr.icu");
+            if (document is null)
+            {
+                MarkIndexResult(indexResults, "avtr.icu", -1);
+                return results;
+            }
 
             var root = document.RootElement;
             if (root.ValueKind != System.Text.Json.JsonValueKind.Array)
             {
+                MarkIndexResult(indexResults, "avtr.icu", -1);
                 return results;
             }
 
@@ -1268,8 +1367,11 @@ public sealed class VrcApiClient : IDisposable
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine(ex);
+            MarkIndexResult(indexResults, "avtr.icu", -1);
+            return results;
         }
 
+        MarkIndexResult(indexResults, "avtr.icu", results.Count);
         return results;
     }
 
