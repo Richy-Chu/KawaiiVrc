@@ -410,6 +410,47 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task Browse_AutoRetryShowsGenericLabelWhileFetching()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            Assert.Contains("retrying in 30s", vm.CommunityStatusText);
+
+            // Hold the page-1 retry open: with no pages loaded there is no page
+            // number to name, so the label must stay the generic one.
+            var pending = new TaskCompletionSource<List<Avatar>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            TestHooks.UseBrowseFetch(vm, (_, _) => pending.Task);
+            now = now.AddSeconds(30);
+            TestHooks.PumpBrowseBackoff(vm);
+
+            Assert.True(vm.IsGlobalBusy);
+            Assert.Contains("retrying now", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying page", vm.CommunityStatusText);
+            Assert.DoesNotContain("reloading page", vm.CommunityStatusText);
+
+            pending.SetResult(Enumerable.Range(1, 50)
+                .Select(i => new Avatar { Id = $"avtr_retry-{i}", Name = $"retry-{i}", SourceName = "avtr.icu" })
+                .ToList());
+            await WaitUntilIdle(vm);
+
+            Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task LoadMore_AutoRetryShowsInProgressStateWhileFetching()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
