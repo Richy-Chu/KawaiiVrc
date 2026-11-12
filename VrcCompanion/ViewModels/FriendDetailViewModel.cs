@@ -19,6 +19,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
     private readonly FriendNotesStore _notes;
     private FriendItem _friend;
     private string _noteText = string.Empty;
+    private string _savedNoteText = string.Empty;
     private string _noteStatusText = string.Empty;
     private VrcProfile? _profile;
     private VrcMutuals? _mutuals;
@@ -41,6 +42,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
         var stored = _notes.Get(_friend.Id);
         _noteText = stored?.Text ?? string.Empty;
+        _savedNoteText = _noteText;
         _noteStatusText = stored is null
             ? "Only you can see this; it stays on this PC."
             : $"Saved locally · {stored.UpdatedAt.ToLocalTime():g}";
@@ -54,7 +56,29 @@ public sealed class FriendDetailViewModel : ViewModelBase
     public string Note
     {
         get => _noteText;
-        set => SetProperty(ref _noteText, value);
+        set
+        {
+            if (SetProperty(ref _noteText, value))
+            {
+                OnPropertyChanged(nameof(HasUnsavedNote));
+            }
+        }
+    }
+
+    /// <summary>True when the draft differs from what is on disk (ignoring edge spaces).</summary>
+    public bool HasUnsavedNote
+        => !string.Equals((_noteText ?? string.Empty).Trim(), _savedNoteText, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Called when the profile pane closes or switches to someone else, so a
+    /// half-typed note is not lost without the user pressing Save.
+    /// </summary>
+    public void SavePendingNote()
+    {
+        if (HasUnsavedNote)
+        {
+            SaveNote();
+        }
     }
 
     public string NoteStatusText
@@ -71,7 +95,9 @@ public sealed class FriendDetailViewModel : ViewModelBase
     {
         var saved = _notes.Set(Friend.Id, _noteText);
         _noteText = saved?.Text ?? string.Empty;
+        _savedNoteText = _noteText;
         OnPropertyChanged(nameof(Note));
+        OnPropertyChanged(nameof(HasUnsavedNote));
         OnPropertyChanged(nameof(HasNote));
         NoteStatusText = saved is null
             ? "Note cleared."

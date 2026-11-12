@@ -1025,6 +1025,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         get => _friendDetail;
         private set
         {
+            // Closing or switching the profile commits a note that was typed but
+            // never saved, so navigating away cannot silently drop it.
+            if (!ReferenceEquals(_friendDetail, value))
+            {
+                _friendDetail?.SavePendingNote();
+            }
+
             if (SetProperty(ref _friendDetail, value))
             {
                 OnPropertyChanged(nameof(HasSelectedFriend));

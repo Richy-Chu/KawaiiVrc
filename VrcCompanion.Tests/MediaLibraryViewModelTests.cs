@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -35,6 +36,32 @@ public class MediaLibraryViewModelTests
 
         Assert.False(viewModel.IsBusy);
         Assert.True(viewModel.IsEmpty);
+    }
+
+    [Fact]
+    public async Task FailedScan_ShowsAnErrorAndRetryRecovers()
+    {
+        var shouldFail = true;
+        var viewModel = new MediaLibraryViewModel(
+            "C:\\pictures",
+            _ => shouldFail
+                ? throw new IOException("access denied")
+                : new[] { Group("Japan") });
+
+        await viewModel.LoadAsync(force: false);
+
+        Assert.True(viewModel.HasError);
+        Assert.False(viewModel.IsBusy);
+        Assert.False(viewModel.IsEmpty);
+        Assert.False(viewModel.HasPictures);
+        Assert.False(string.IsNullOrWhiteSpace(viewModel.ErrorMessage));
+
+        shouldFail = false;
+        await viewModel.LoadAsync(force: true);
+
+        Assert.False(viewModel.HasError);
+        Assert.False(viewModel.IsEmpty);
+        Assert.Equal(1, viewModel.PictureCount);
     }
 
     [Fact]

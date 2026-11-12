@@ -2629,6 +2629,29 @@
                            VerticalAlignment="Center"
                            Visibility="{Binding MediaViewModel.IsBusy, Converter={StaticResource BoolToVis}}" />
 
+                <StackPanel Grid.Row="1"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Visibility="{Binding MediaViewModel.HasError, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="&#xE7BA;"
+                               FontFamily="Segoe MDL2 Assets"
+                               FontSize="20"
+                               Foreground="{StaticResource ErrorTextBrush}"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="{Binding MediaViewModel.ErrorMessage}"
+                               Foreground="#C9CEDC"
+                               Margin="0,8,0,0"
+                               TextAlignment="Center"
+                               MaxWidth="420"
+                               TextWrapping="Wrap" />
+                    <Button Content="Retry"
+                            Style="{StaticResource SecondaryButton}"
+                            Padding="14,6"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Center"
+                            Command="{Binding MediaViewModel.RefreshCommand}" />
+                </StackPanel>
+
                 <TextBlock Grid.Row="1"
                            Text="{Binding MediaViewModel.EmptyMessage}"
                            Foreground="#8C93A6"

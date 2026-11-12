@@ -17,6 +17,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private readonly Func<string, IReadOnlyList<MediaGroup>> _scan;
     private bool _loaded;
     private bool _isBusy;
+    private string? _errorMessage;
 
     public MediaLibraryViewModel(
         string? root = null,
@@ -60,7 +61,22 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     /// Only true after a completed scan found nothing, so the empty message never
     /// flashes while the first scan is still running.
     /// </summary>
-    public bool IsEmpty => _loaded && !IsBusy && !HasPictures;
+    public bool IsEmpty => _loaded && !IsBusy && !HasError && !HasPictures;
+
+    public string? ErrorMessage
+    {
+        get => _errorMessage;
+        private set
+        {
+            if (SetProperty(ref _errorMessage, value))
+            {
+                OnPropertyChanged(nameof(HasError));
+                OnPropertyChanged(nameof(IsEmpty));
+            }
+        }
+    }
+
+    public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
 
     public string SummaryText => PictureCount == 0
         ? "No VRChat pictures yet"
@@ -80,6 +96,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         }
 
         IsBusy = true;
+        ErrorMessage = null;
         try
         {
             var groups = await Task.Run(() => _scan(RootPath));
@@ -99,6 +116,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
+            ErrorMessage = "Could not read the VRChat pictures folder. Check the path, then retry.";
         }
         finally
         {
