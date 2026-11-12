@@ -43,20 +43,19 @@ public class LaunchServiceTests
     }
 
     [Fact]
-    public void BuildLaunchUri_EscapesTheLocationAsAQueryValue()
+    public void BuildLaunchUri_KeepsTheLocationReadable()
     {
-        var location = WorldId + ":12345~region(us)";
+        var location = WorldId + ":12345~region(us)~private(usr_61cc28f3-76ea-41b4-a9da-ede327ef3703)";
 
         var uri = LaunchService.BuildLaunchUri(location);
 
-        Assert.StartsWith("vrchat://launch?ref=vrchat.com&id=", uri, StringComparison.Ordinal);
-        // The only '&' is the one the launcher expects between ref and id.
+        Assert.Equal($"vrchat://launch?ref=vrchat.com&id={location}", uri, StringComparer.Ordinal);
+        // Readable separators, no percent-encoding of the id.
+        Assert.Contains("wrld_4432ea9b", uri, StringComparison.Ordinal);
+        Assert.Contains("~region(us)", uri, StringComparison.Ordinal);
+        Assert.DoesNotContain("%", uri, StringComparison.Ordinal);
+        // Still exactly one '&': the ref/id separator the launcher expects.
         Assert.Equal(1, uri.Count(c => c == '&'));
-        Assert.DoesNotContain(" ", uri, StringComparison.Ordinal);
-        Assert.Equal(
-            "vrchat://launch?ref=vrchat.com&id=" + Uri.EscapeDataString(location),
-            uri,
-            StringComparer.Ordinal);
     }
 
     [Theory]

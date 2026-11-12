@@ -27,9 +27,13 @@ public static class LaunchService
         StartUri(BuildLaunchUri(location), mode);
     }
 
-    /// <summary>Builds the launch URI with the location escaped as a query value.</summary>
+    /// <summary>
+    /// Builds the launch URI with the location left readable. IsLocation guarantees
+    /// the instance charset has no &amp;, ?, #, quotes or whitespace, so the id cannot
+    /// rewrite this query; escaping it would only mangle the separators VRChat reads.
+    /// </summary>
     internal static string BuildLaunchUri(string location)
-        => $"vrchat://launch?ref=vrchat.com&id={Uri.EscapeDataString(location)}";
+        => $"vrchat://launch?ref=vrchat.com&id={location}";
 
     /// <summary>Opens VRChat without joining a world.</summary>
     public static void LaunchClient(LaunchMode mode = LaunchMode.Vr)
