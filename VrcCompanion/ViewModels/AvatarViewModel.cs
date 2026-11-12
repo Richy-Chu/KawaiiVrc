@@ -965,19 +965,39 @@ public sealed class AvatarViewModel : ViewModelBase
             {
                 Interval = TimeSpan.FromSeconds(1)
             };
-            _browseBackoffTimer.Tick += (_, _) =>
-            {
-                OnPropertyChanged(nameof(CommunityStatusText));
-                if (!BrowseBackoffActive)
-                {
-                    _browseBackoffTimer?.Stop();
-                }
-            };
+            _browseBackoffTimer.Tick += (_, _) => OnBrowseBackoffTick();
         }
 
         if (!_browseBackoffTimer.IsEnabled)
         {
             _browseBackoffTimer.Start();
+        }
+    }
+
+    /// <summary>
+    /// One tick of the cooldown countdown. When the window runs out browse retries
+    /// by itself, so the tab does not sit on a stale "failed" line until the user
+    /// happens to switch tabs. While a search owns the tab there is nothing to
+    /// retry into, so the retry waits for the next tick after the search clears.
+    /// </summary>
+    internal void OnBrowseBackoffTick()
+    {
+        OnPropertyChanged(nameof(CommunityStatusText));
+
+        if (BrowseBackoffActive)
+        {
+            return;
+        }
+
+        if (IsGlobalBusy || !string.IsNullOrWhiteSpace(GlobalSearchTerm))
+        {
+            return;
+        }
+
+        _browseBackoffTimer?.Stop();
+        if (!_communityLoaded)
+        {
+            _ = BrowseCommunityAsync();
         }
     }
 

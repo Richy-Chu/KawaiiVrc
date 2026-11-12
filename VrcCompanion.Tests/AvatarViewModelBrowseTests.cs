@@ -224,6 +224,101 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task FailedBrowse_RetriesItselfWhenCooldownExpires()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            Assert.Equal(1, handler.Requests);
+            Assert.Contains("retrying in 30s", vm.CommunityStatusText);
+
+            // No tab switch: the countdown reaching zero is what triggers the retry.
+            now = now.AddSeconds(30);
+            TestHooks.PumpBrowseBackoff(vm);
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(2, handler.Requests);
+            Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
+            Assert.Contains("retrying in 60s", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task FailedBrowse_CooldownExpiryRetryRestoresTheGrid()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            Assert.Empty(vm.GlobalResults);
+
+            handler.Html = false;
+            now = now.AddSeconds(30);
+            TestHooks.PumpBrowseBackoff(vm);
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(2, vm.GlobalResults.Count);
+            Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public async Task FailedBrowse_CooldownExpiryWaitsWhileSearchOwnsTheTab()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            Assert.Equal(1, handler.Requests);
+
+            // Search owns the tab: a browse retry would replace its results.
+            vm.GlobalSearchTerm = "cat";
+            now = now.AddSeconds(30);
+            TestHooks.PumpBrowseBackoff(vm);
+            await WaitUntilIdle(vm);
+            Assert.Equal(1, handler.Requests);
+
+            // Once the search is cleared the next tick catches up and retries.
+            vm.GlobalSearchTerm = string.Empty;
+            TestHooks.PumpBrowseBackoff(vm);
+            await WaitUntilIdle(vm);
+            Assert.Equal(2, handler.Requests);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task FailedBrowse_ExplicitRefreshBypassesBackoffAndSuccessClearsIt()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);

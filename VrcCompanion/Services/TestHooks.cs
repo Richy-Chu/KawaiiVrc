@@ -33,4 +33,8 @@ internal static class TestHooks
     public static Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
 
     public static void ResetClock() => UtcNow = () => DateTime.UtcNow;
+
+    /// <summary>Runs one cooldown tick; the dispatcher timer does not tick under xUnit.</summary>
+    public static void PumpBrowseBackoff(AvatarViewModel viewModel)
+        => viewModel.OnBrowseBackoffTick();
 }
