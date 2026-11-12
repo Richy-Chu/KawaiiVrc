@@ -1587,6 +1587,57 @@ public sealed class VrcApiClient : IDisposable
         return DeserializeList<Group>(body);
     }
 
+    public async Task<Group?> GetGroupAsync(
+        string groupId,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            $"groups/{Uri.EscapeDataString(groupId)}",
+            null,
+            cancellationToken);
+        return Deserialize<Group>(body);
+    }
+
+    /// <summary>Active instances the group is currently hosting.</summary>
+    public async Task<IReadOnlyList<GroupInstance>> GetGroupInstancesAsync(
+        string groupId,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            $"groups/{Uri.EscapeDataString(groupId)}/instances",
+            null,
+            cancellationToken);
+        return DeserializeList<GroupInstance>(body);
+    }
+
+    /// <summary>Joins a public group (POST groups/{id}/join).</summary>
+    public async Task JoinGroupAsync(
+        string groupId,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(new { });
+        await SendApiAsync(
+            HttpMethod.Post,
+            $"groups/{Uri.EscapeDataString(groupId)}/join",
+            content,
+            cancellationToken);
+    }
+
+    /// <summary>Leaves a group you belong to (POST groups/{id}/leave).</summary>
+    public async Task LeaveGroupAsync(
+        string groupId,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(new { });
+        await SendApiAsync(
+            HttpMethod.Post,
+            $"groups/{Uri.EscapeDataString(groupId)}/leave",
+            content,
+            cancellationToken);
+    }
+
     public async Task<IReadOnlyList<GroupMember>> GetGroupMembersAsync(
         string groupId,
         CancellationToken cancellationToken = default)

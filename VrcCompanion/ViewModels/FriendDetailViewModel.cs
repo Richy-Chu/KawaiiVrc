@@ -13,6 +13,11 @@ namespace VrcCompanion.ViewModels;
 public sealed class FriendDetailViewModel : ViewModelBase
 {
     private static readonly Brush DefaultBannerBrush = MakeBrush("#2A2145");
+    private static readonly Brush SelfOnlineBrush = MakeBrush("#3BD671");
+    private static readonly Brush SelfJoinMeBrush = MakeBrush("#4AA8FF");
+    private static readonly Brush SelfAskMeBrush = MakeBrush("#F5A623");
+    private static readonly Brush SelfBusyBrush = MakeBrush("#FF5A5A");
+    private static readonly Brush SelfOfflineBrush = MakeBrush("#6B7280");
 
     private readonly VrcApiClient _api;
     private readonly ImageLoader _images;
@@ -34,13 +39,23 @@ public sealed class FriendDetailViewModel : ViewModelBase
         VrcApiClient api,
         ImageLoader images,
         FriendNotesStore? notes = null,
-        bool isSelf = false)
+        bool isSelf = false,
+        Action<string>? openGroup = null)
     {
         _friend = friend;
         _api = api;
         _images = images;
         _notes = notes ?? FriendNotesStore.Shared;
         IsSelf = isSelf;
+        OpenGroupCommand = new RelayCommand<VrcProfileGroup>(
+            group =>
+            {
+                if (group is not null && openGroup is not null && !string.IsNullOrWhiteSpace(group.Id))
+                {
+                    openGroup(group.Id);
+                }
+            },
+            group => group is not null && !string.IsNullOrWhiteSpace(group.Id));
 
         var stored = _notes.Get(_friend.Id);
         _noteText = stored?.Text ?? string.Empty;
@@ -202,19 +217,56 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     public string Initial => _friend.Initial;
 
-    public bool IsOnline => _friend.IsOnline;
+    public bool IsOnline => IsSelf ? SelfPresenceStatus != "offline" && SelfPresenceStatus.Length > 0 : _friend.IsOnline;
 
-    public string StatusLabel => _friend.StatusLabel;
+    public string StatusLabel => IsSelf
+        ? SelfPresenceStatus switch
+        {
+            "active" => "Online",
+            "join me" => "Join Me",
+            "ask me" => "Ask Me",
+            "busy" => "Busy",
+            _ => "Offline"
+        }
+        : _friend.StatusLabel;
 
-    public Brush StatusBrush => _friend.StatusBrush;
+    public Brush StatusBrush => IsSelf
+        ? SelfPresenceStatus switch
+        {
+            "active" => SelfOnlineBrush,
+            "join me" => SelfJoinMeBrush,
+            "ask me" => SelfAskMeBrush,
+            "busy" => SelfBusyBrush,
+            _ => SelfOfflineBrush
+        }
+        : _friend.StatusBrush;
 
     public string StatusDescription => string.IsNullOrWhiteSpace(Profile?.StatusDescription)
         ? _friend.SubText
         : Profile!.StatusDescription!.Trim();
 
-    public string ActivityText => _friend.ActivityText;
+    public string ActivityText => IsSelf
+        ? (string.IsNullOrWhiteSpace(PlatformText) ? "Signed in" : $"Signed in · {PlatformText}")
+        : _friend.ActivityText;
 
-    public string PlatformText => _friend.PlatformText;
+    /// <summary>Your presence comes from the signed-in account, not the friend-list location rules.</summary>
+    private string SelfPresenceStatus => (_api.CurrentUser?.Status ?? string.Empty).Trim().ToLowerInvariant();
+
+    private static string PlatformLabel(VrcUser? user)
+    {
+        var platform = (user?.LastPlatform ?? user?.Platform ?? string.Empty).ToLowerInvariant();
+        return platform switch
+        {
+            "standalonewindows" or "standalonewindows64" => "PC",
+            "android" => "Quest",
+            "ios" => "iOS",
+            "web" => "Web",
+            "" => string.Empty,
+            _ => char.ToUpperInvariant(platform[0]) + platform[1..]
+        };
+    }
+
+    public string PlatformText => IsSelf ? PlatformLabel(_api.CurrentUser) : _friend.PlatformText;
 
     public string BioText => string.IsNullOrWhiteSpace(Profile?.Bio)
         ? "No bio set."
@@ -240,10 +292,13 @@ public sealed class FriendDetailViewModel : ViewModelBase
     public string PronounsText => Profile?.Pronouns?.Trim() ?? string.Empty;
 
     public IReadOnlyList<VrcProfileGroup> Groups
-        => Profile?.Groups?.List?.Where(group => !string.IsNullOrWhiteSpace(group.Name)).Take(8).ToList()
+        => Profile?.Groups?.List?.Where(group => !string.IsNullOrWhiteSpace(group.Name)).ToList()
            ?? (IReadOnlyList<VrcProfileGroup>)Array.Empty<VrcProfileGroup>();
 
     public bool HasGroups => Groups.Count > 0;
+
+    /// <summary>Opens a group chip in the group info popup (join/leave/details).</summary>
+    public RelayCommand<VrcProfileGroup> OpenGroupCommand { get; }
 
     public string GroupsSummary => Profile?.Groups is { Count: > 0 } groups
         ? $"{groups.Count} public group{(groups.Count == 1 ? string.Empty : "s")}"
@@ -290,6 +345,11 @@ public sealed class FriendDetailViewModel : ViewModelBase
     {
         get
         {
+            if (IsSelf)
+            {
+                return "You are signed in through VRChat Companion; status and platform come from your account.";
+            }
+
             if (!string.IsNullOrWhiteSpace(_worldName))
             {
                 return $"{_worldName} · {_friend.LocationAccessLabel}";

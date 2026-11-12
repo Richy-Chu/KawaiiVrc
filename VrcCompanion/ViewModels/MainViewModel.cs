@@ -303,6 +303,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ClearNotificationSelectionCommand = Track(new RelayCommand(ClearNotificationSelection));
         ChooseBackdropCommand = Track(new RelayCommand(ChooseBackdrop));
         ClearBackdropCommand = Track(new RelayCommand(ClearBackdrop, () => HasCustomBackdrop));
+        ChooseProfileBackdropCommand = Track(new RelayCommand(ChooseProfileBackdrop));
+        ClearProfileBackdropCommand = Track(new RelayCommand(ClearProfileBackdrop, () => HasProfileBackdrop));
         DownloadBackdropFromUrlCommand = Track(new AsyncRelayCommand(
             DownloadBackdropFromUrlAsync,
             () => !string.IsNullOrWhiteSpace(BackdropUrlInput) && !IsBusy));
@@ -1325,6 +1327,32 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    public string? ProfileBackdropPath
+    {
+        get => _settings.ProfileBackdropImagePath;
+        set
+        {
+            if (string.Equals(_settings.ProfileBackdropImagePath, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _settings.ProfileBackdropImagePath = value;
+            _settingsStore.Save();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasProfileBackdrop));
+            OnPropertyChanged(nameof(ProfileBackdropFileName));
+            ClearProfileBackdropCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool HasProfileBackdrop
+        => !string.IsNullOrWhiteSpace(ProfileBackdropPath) && File.Exists(ProfileBackdropPath);
+
+    public string ProfileBackdropFileName => HasProfileBackdrop
+        ? Path.GetFileName(ProfileBackdropPath) ?? string.Empty
+        : "No popup background";
+
     public bool HasCustomBackdrop
         => !string.IsNullOrWhiteSpace(CustomBackdropPath) && File.Exists(CustomBackdropPath);
 
@@ -1412,6 +1440,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand ClearNotificationSelectionCommand { get; }
     public RelayCommand ChooseBackdropCommand { get; }
     public RelayCommand ClearBackdropCommand { get; }
+    public RelayCommand ChooseProfileBackdropCommand { get; }
+    public RelayCommand ClearProfileBackdropCommand { get; }
     public AsyncRelayCommand DownloadBackdropFromUrlCommand { get; }
 
     // New feature commands
@@ -1431,7 +1461,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         // Initialize new feature view models on the signed-in client
         AvatarViewModel = new AvatarViewModel(_api);
-        GroupViewModel = new GroupViewModel(_api);
+        GroupViewModel = new GroupViewModel(
+            _api,
+            () => IsDesktopDefault ? LaunchMode.Desktop : LaunchMode.Vr);
         ActivityFeedViewModel = new ActivityFeedViewModel(_api);
         MultiAccountViewModel = new MultiAccountViewModel(_api);
         MultiAccountViewModel.SessionSwitched += OnAccountSessionSwitched;
@@ -2160,7 +2192,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Location = LaunchService.IsLocation(detail.UserLocation) ? detail.UserLocation : null
         };
 
-        var profile = new FriendDetailViewModel(new FriendItem(user), _api, _images);
+        var profile = new FriendDetailViewModel(
+            new FriendItem(user),
+            _api,
+            _images,
+            openGroup: OpenGroupInfoFromProfile);
 
         // One profile card for the whole app: the same view model and popup the
         // Friends tab uses, so the notification sender gets the identical card.
@@ -2468,7 +2504,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         var cancellation = new CancellationTokenSource();
         _friendDetailCancellation = cancellation;
-        var detail = new FriendDetailViewModel(friend, _api, _images);
+        var detail = new FriendDetailViewModel(
+            friend,
+            _api,
+            _images,
+            openGroup: OpenGroupInfoFromProfile);
         SelectedFriendDetail = detail;
         await detail.LoadAsync(forceRefresh: false, cancellation.Token);
     }
@@ -2511,7 +2551,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _api,
             _images,
             FriendNotesStore.Shared,
-            isSelf: true);
+            isSelf: true,
+            openGroup: OpenGroupInfoFromProfile);
         SelectedFriendDetail = profile;
         _ = profile.LoadAsync(forceRefresh: true, CancellationToken.None);
     }
@@ -2846,6 +2887,33 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ClearBackdropCommand.RaiseCanExecuteChanged();
         ShowInfo("Switched back to the animated built-in backdrop.");
     }
+
+    private void ChooseProfileBackdrop()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose a profile popup background",
+            Filter = "Images and GIFs|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*",
+            CheckFileExists = true
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        ProfileBackdropPath = dialog.FileName;
+        ShowInfo("Profile popup background updated.");
+    }
+
+    private void ClearProfileBackdrop()
+    {
+        ProfileBackdropPath = null;
+        ShowInfo("Profile popup uses the normal panel background.");
+    }
+
+    private void OpenGroupInfoFromProfile(string groupId)
+        => _ = GroupViewModel?.OpenGroupInfoAsync(groupId);
 
     private async Task DownloadBackdropFromUrlAsync()
     {

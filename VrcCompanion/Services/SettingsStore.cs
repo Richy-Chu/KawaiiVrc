@@ -47,6 +47,9 @@ public sealed class CompanionSettings
 
     [JsonPropertyName("launchMode")]
     public string LaunchMode { get; set; } = "vr";
+
+    [JsonPropertyName("profileBackdropImagePath")]
+    public string? ProfileBackdropImagePath { get; set; }
 }
 
 /// <summary>
