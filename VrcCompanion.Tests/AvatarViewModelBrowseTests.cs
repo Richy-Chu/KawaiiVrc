@@ -434,7 +434,8 @@ public class AvatarViewModelBrowseTests
             TestHooks.PumpBrowseBackoff(vm);
 
             Assert.True(vm.IsGlobalBusy);
-            Assert.Contains("retrying now", vm.CommunityStatusText);
+            Assert.Contains("retrying page 2", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
             Assert.DoesNotContain("retrying in", vm.CommunityStatusText);
 
             pending.SetResult(Enumerable.Range(1, 50)
@@ -444,6 +445,7 @@ public class AvatarViewModelBrowseTests
 
             Assert.Contains("page 2", vm.CommunityStatusText);
             Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
+            Assert.DoesNotContain("retrying page 2", vm.CommunityStatusText);
         }
         finally
         {
