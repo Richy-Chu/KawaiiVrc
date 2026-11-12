@@ -109,6 +109,12 @@ public static class LaunchService
         return separator > 0 && separator + 1 < location.Length ? location[(separator + 1)..] : null;
     }
 
+    /// <summary>Where a finished launch URI goes. Tests replace it to observe launches.</summary>
+    internal static Action<string> UriLauncher { get; set; } = DefaultUriLauncher;
+
+    internal static void DefaultUriLauncher(string uri)
+        => Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+
     private static void StartUri(string uri, LaunchMode mode)
     {
         // VRChat takes --no-vr to force desktop mode. Windows hands the vrchat://
@@ -133,7 +139,7 @@ public static class LaunchService
             return;
         }
 
-        Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        UriLauncher(uri);
     }
 
     /// <summary>Finds the executable Windows uses for vrchat:// links.</summary>

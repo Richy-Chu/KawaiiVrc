@@ -82,6 +82,31 @@ public class LaunchServiceTests
     }
 
     [Fact]
+    public void Launch_RejectsInvalidLocationBeforeStartingAnything()
+    {
+        var started = new System.Collections.Generic.List<string>();
+        TestHooks.UseUriLauncher(started.Add);
+        try
+        {
+            Assert.Throws<ArgumentException>(() => LaunchService.Launch(WorldId + ":12345&ref=evil"));
+            Assert.Throws<ArgumentException>(() => LaunchService.Launch("not-a-location"));
+            Assert.Throws<ArgumentException>(() => LaunchService.Launch(string.Empty));
+            Assert.Empty(started);
+
+            // A valid location reaches the launcher exactly once, unescaped.
+            var location = WorldId + ":12345~region(us)";
+            LaunchService.Launch(location);
+
+            var uri = Assert.Single(started);
+            Assert.Equal($"vrchat://launch?ref=vrchat.com&id={location}", uri, StringComparer.Ordinal);
+        }
+        finally
+        {
+            TestHooks.UseUriLauncher(null);
+        }
+    }
+
+    [Fact]
     public void OpenUrl_DoesNotLaunchNonWebSchemes()
     {
         Assert.False(LaunchService.OpenUrl("file:///C:/Windows/System32/calc.exe"));

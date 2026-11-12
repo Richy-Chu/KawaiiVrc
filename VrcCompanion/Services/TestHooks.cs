@@ -49,6 +49,10 @@ internal static class TestHooks
 
     public static void ResetClock() => UtcNow = () => DateTime.UtcNow;
 
+    /// <summary>Observes launch URIs instead of handing them to Windows; null restores.</summary>
+    public static void UseUriLauncher(Action<string>? launcher)
+        => LaunchService.UriLauncher = launcher ?? LaunchService.DefaultUriLauncher;
+
     /// <summary>Runs one cooldown tick; the dispatcher timer does not tick under xUnit.</summary>
     public static void PumpBrowseBackoff(AvatarViewModel viewModel)
         => viewModel.OnBrowseBackoffTick();
