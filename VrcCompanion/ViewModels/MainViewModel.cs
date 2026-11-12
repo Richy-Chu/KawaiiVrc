@@ -331,6 +331,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(SectionTitle));
             OnPropertyChanged(nameof(SectionSubtitle));
 
+            // Automatic browse retries only run while their tab is on screen.
+            if (AvatarViewModel is not null)
+            {
+                AvatarViewModel.IsBrowseTabActive = value.Key == "avatarsearch";
+            }
+
             if (!IsLoggedIn)
             {
                 return;

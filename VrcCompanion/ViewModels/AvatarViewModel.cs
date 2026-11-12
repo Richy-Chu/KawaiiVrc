@@ -1010,6 +1010,13 @@ public sealed class AvatarViewModel : ViewModelBase
             return;
         }
 
+        // Nothing to retry into while another tab is showing: keep the ticker alive
+        // and pick the retry up on the first tick after Avatar Search returns.
+        if (!IsBrowseTabActive)
+        {
+            return;
+        }
+
         if (IsGlobalBusy || !string.IsNullOrWhiteSpace(GlobalSearchTerm))
         {
             return;
@@ -1965,8 +1972,16 @@ public sealed class AvatarViewModel : ViewModelBase
     // cap reloading page 1, N = the automatic retry of page N.
     private int _browseRetryInFlightPage;
 
+    /// <summary>
+    /// True while the Avatar Search tab is the one on screen. The shell keeps this
+    /// in step; automatic retries must not fire behind another tab.
+    /// </summary>
+    public bool IsBrowseTabActive { get; set; }
+
     public void BrowseCatalog()
     {
+        IsBrowseTabActive = true;
+
         if (IsGlobalBusy)
         {
             return;

@@ -451,6 +451,57 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task AutoRetry_WaitsWhileAnotherTabIsOpen()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = false, Json = IdsJson(Ids(50, "bulk")) };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+
+            handler.Html = true;
+            vm.NextGlobalPageCommand.Execute(null);
+            await WaitUntilIdle(vm);
+            var afterFailure = handler.Requests;
+
+            // Leaving the tab before the cooldown expires must not retry behind it.
+            vm.IsBrowseTabActive = false;
+            now = now.AddSeconds(29);
+            TestHooks.PumpBrowseBackoff(vm);
+            await Task.Delay(30);
+
+            Assert.False(vm.IsGlobalBusy);
+            Assert.Equal(afterFailure, handler.Requests);
+            Assert.Contains("retrying in", vm.CommunityStatusText);
+
+            // Even with the window over, an inactive tab still defers the retry.
+            now = now.AddSeconds(1);
+            TestHooks.PumpBrowseBackoff(vm);
+            await Task.Delay(30);
+            Assert.Equal(afterFailure, handler.Requests);
+
+            // Returning to the tab picks the retry up on the next tick.
+            handler.Html = false;
+            handler.Json = IdsJson(Ids(50, "more"));
+            vm.IsBrowseTabActive = true;
+            TestHooks.PumpBrowseBackoff(vm);
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(afterFailure + 1, handler.Requests);
+            Assert.Contains("page 2", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task LoadMore_AutoRetryShowsInProgressStateWhileFetching()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
