@@ -14,12 +14,16 @@ namespace VrcCompanion.ViewModels;
 /// </summary>
 public sealed class MediaLibraryViewModel : ViewModelBase
 {
+    private readonly Func<string, IReadOnlyList<MediaGroup>> _scan;
     private bool _loaded;
     private bool _isBusy;
 
-    public MediaLibraryViewModel(string? root = null)
+    public MediaLibraryViewModel(
+        string? root = null,
+        Func<string, IReadOnlyList<MediaGroup>>? scan = null)
     {
         RootPath = string.IsNullOrWhiteSpace(root) ? MediaLibraryScanner.DefaultRoot : root;
+        _scan = scan ?? MediaLibraryScanner.Scan;
         RefreshCommand = new AsyncRelayCommand(() => LoadAsync(force: true), () => !IsBusy);
         OpenFileCommand = new RelayCommand<string>(OpenFile, path => !string.IsNullOrWhiteSpace(path));
         OpenFolderCommand = new RelayCommand(OpenFolder);
@@ -43,6 +47,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             if (SetProperty(ref _isBusy, value))
             {
                 RefreshCommand.RaiseCanExecuteChanged();
+                OnPropertyChanged(nameof(IsEmpty));
             }
         }
     }
@@ -50,6 +55,12 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public int PictureCount => Groups.Sum(group => group.Items.Count);
 
     public bool HasPictures => PictureCount > 0;
+
+    /// <summary>
+    /// Only true after a completed scan found nothing, so the empty message never
+    /// flashes while the first scan is still running.
+    /// </summary>
+    public bool IsEmpty => _loaded && !IsBusy && !HasPictures;
 
     public string SummaryText => PictureCount == 0
         ? "No VRChat pictures yet"
@@ -71,7 +82,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            var groups = await Task.Run(() => MediaLibraryScanner.Scan(RootPath));
+            var groups = await Task.Run(() => _scan(RootPath));
             Groups.Clear();
             foreach (var group in groups)
             {
@@ -81,6 +92,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             _loaded = true;
             OnPropertyChanged(nameof(PictureCount));
             OnPropertyChanged(nameof(HasPictures));
+            OnPropertyChanged(nameof(IsEmpty));
             OnPropertyChanged(nameof(SummaryText));
             OnPropertyChanged(nameof(EmptyMessage));
         }

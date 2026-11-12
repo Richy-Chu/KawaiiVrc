@@ -2623,11 +2623,18 @@
                 </ScrollViewer>
 
                 <TextBlock Grid.Row="1"
+                           Text="Scanning pictures…"
+                           Foreground="#8C93A6"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Visibility="{Binding MediaViewModel.IsBusy, Converter={StaticResource BoolToVis}}" />
+
+                <TextBlock Grid.Row="1"
                            Text="{Binding MediaViewModel.EmptyMessage}"
                            Foreground="#8C93A6"
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
-                           Visibility="{Binding MediaViewModel.HasPictures, Converter={StaticResource InverseBoolToVis}}" />
+                           Visibility="{Binding MediaViewModel.IsEmpty, Converter={StaticResource BoolToVis}}" />
             </Grid>
         </DataTemplate>
 
