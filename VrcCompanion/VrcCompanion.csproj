@@ -9,6 +9,7 @@
     <AssemblyName>VrcCompanion</AssemblyName>
     <RootNamespace>VrcCompanion</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <Version>1.0.0</Version>
     <Authors>VrcCompanion</Authors>
     <Description>An unofficial desktop companion for VRChat.</Description>
@@ -16,6 +17,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="VrcCompanion.Tests" />
+    <Resource Include="Assets\app-icon.png" />
   </ItemGroup>
 
   <ItemGroup>

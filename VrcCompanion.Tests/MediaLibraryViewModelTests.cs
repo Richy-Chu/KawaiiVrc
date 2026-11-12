@@ -10,6 +10,12 @@ namespace VrcCompanion.Tests;
 
 public class MediaLibraryViewModelTests
 {
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(),
+        "vrccompanion-media-vm-" + Guid.NewGuid().ToString("N"));
+
+    private string CachePath => Path.Combine(_root, "cache", "index.json");
+
     private static MediaGroup Group(string world) => new(
         $"{world} · June 2025",
         world,
@@ -23,7 +29,8 @@ public class MediaLibraryViewModelTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var viewModel = new MediaLibraryViewModel(
             "C:\\pictures",
-            _ => gate.Task.GetAwaiter().GetResult());
+            (_, _) => gate.Task.GetAwaiter().GetResult(),
+            cachePath: CachePath);
 
         var load = viewModel.LoadAsync(force: false);
 
@@ -45,9 +52,10 @@ public class MediaLibraryViewModelTests
         var shouldFail = true;
         var viewModel = new MediaLibraryViewModel(
             "C:\\pictures",
-            _ => shouldFail
+            (_, _) => shouldFail
                 ? throw new IOException("access denied")
-                : new[] { Group("Japan") });
+                : new[] { Group("Japan") },
+            cachePath: CachePath);
 
         await viewModel.LoadAsync(force: false);
 
@@ -71,12 +79,58 @@ public class MediaLibraryViewModelTests
     {
         var viewModel = new MediaLibraryViewModel(
             "C:\\pictures",
-            _ => new[] { Group("Japan") });
+            (_, _) => new[] { Group("Japan") },
+            cachePath: CachePath);
 
         await viewModel.LoadAsync(force: false);
 
         Assert.False(viewModel.IsEmpty);
         Assert.True(viewModel.HasPictures);
         Assert.Equal(1, viewModel.PictureCount);
+    }
+
+    [Fact]
+    public void OpenFolder_CreatesAMissingFolderAndOpensIt()
+    {
+        var missing = Path.Combine(_root, "VRChat");
+        string? opened = null;
+        var viewModel = new MediaLibraryViewModel(
+            missing,
+            (_, _) => Array.Empty<MediaGroup>(),
+            path => opened = path,
+            CachePath);
+
+        viewModel.OpenFolderCommand.Execute(null);
+
+        Assert.True(Directory.Exists(missing));
+        Assert.Equal(missing, opened);
+    }
+
+    [Fact]
+    public void Viewer_OpensPicturesAndMovesBetweenThem()
+    {
+        var first = new MediaItem(Path.Combine(_root, "a.png"), "VRChat", new DateTime(2025, 6, 1));
+        var second = new MediaItem(Path.Combine(_root, "b.png"), "VRChat", new DateTime(2025, 6, 2));
+        var viewModel = new MediaLibraryViewModel(
+            _root,
+            (_, _) => Array.Empty<MediaGroup>(),
+            _ => { },
+            CachePath);
+        viewModel.Groups.Add(new MediaGroup("VRChat · June 2025", "VRChat", new DateTime(2025, 6, 1),
+            new[] { second, first }));
+
+        viewModel.OpenViewer(second);
+
+        Assert.True(viewModel.IsViewerOpen);
+        Assert.Equal("b.png", viewModel.ViewerTitle);
+
+        viewModel.ShowRelative(1);
+        Assert.Equal("a.png", viewModel.ViewerTitle);
+
+        viewModel.ShowRelative(1);
+        Assert.Equal("b.png", viewModel.ViewerTitle); // wraps around
+
+        viewModel.CloseViewer();
+        Assert.False(viewModel.IsViewerOpen);
     }
 }

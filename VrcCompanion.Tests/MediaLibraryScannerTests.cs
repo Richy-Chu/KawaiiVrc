@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using VrcCompanion.Services;
@@ -23,6 +24,13 @@ public class MediaLibraryScannerTests : IDisposable
         catch (IOException)
         {
         }
+    }
+
+    private sealed class CollectingProgress : IProgress<int>
+    {
+        private readonly Action<int> _report;
+        public CollectingProgress(Action<int> report) => _report = report;
+        public void Report(int value) => _report(value);
     }
 
     private void Picture(string relativePath)
@@ -79,6 +87,21 @@ public class MediaLibraryScannerTests : IDisposable
         Assert.Equal(new DateTime(2025, 6, 15, 12, 0, 0), item.TakenAt);
         Assert.Equal("VRChat", group.WorldName);
         Assert.Equal("VRChat · June 2025", group.Title);
+    }
+
+    [Fact]
+    public void Scan_ReportsProgressCountsWhileWorking()
+    {
+        Picture("Japan/VRChat_2025-06-01_10-00-00.000_1920x1080.png");
+        Picture("Japan/VRChat_2025-06-20_11-00-00.000_1920x1080.png");
+        Picture("VRChat_2025-06-03_08-00-00.000_1920x1080.png");
+        var reports = new List<int>();
+        var progress = new CollectingProgress(reports.Add);
+
+        MediaLibraryScanner.Scan(_root, progress);
+
+        Assert.NotEmpty(reports);
+        Assert.Equal(3, reports[^1]);
     }
 
     [Fact]

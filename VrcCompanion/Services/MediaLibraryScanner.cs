@@ -21,17 +21,18 @@ public sealed class MediaItem
 
     public string Path { get; }
 
-    /// <summary>Folder under the pictures root, or "VRChat" for the flat layout.</summary>
+    /// <summary>Folder under the pictures root, or "VRChat" for the default layout.</summary>
     public string WorldName { get; }
 
     public DateTime TakenAt { get; }
 
     public string FileName => System.IO.Path.GetFileName(Path);
 
-    /// <summary>Decoded once, small enough for a grid; read lazily by the view.</summary>
-    public BitmapImage? Thumbnail => _thumbnail ??= LoadThumbnail();
+    /// <summary>Small decode for the grid; loaded lazily and frozen for reuse.</summary>
+    public BitmapImage? Thumbnail => _thumbnail ??= LoadBitmap(320);
 
-    private BitmapImage? LoadThumbnail()
+    /// <summary>Decodes this file at the requested width (frozen, safe across threads).</summary>
+    public BitmapImage? LoadBitmap(int decodeWidth)
     {
         try
         {
@@ -39,7 +40,7 @@ public sealed class MediaItem
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
-            image.DecodePixelWidth = 320;
+            image.DecodePixelWidth = decodeWidth;
             image.UriSource = new Uri(Path, UriKind.Absolute);
             image.EndInit();
             image.Freeze();
@@ -47,7 +48,7 @@ public sealed class MediaItem
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"media thumbnail {Path}: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"media bitmap {Path}: {ex.Message}");
             return null;
         }
     }
@@ -63,8 +64,8 @@ public sealed record MediaGroup(
 /// <summary>
 /// Reads the pictures VRChat writes to disk. Grouping uses the folder layout
 /// (a subfolder per world/collection) and the date in the file name; VRChat
-/// itself does not record the world in the image, so a flat folder groups as
-/// "VRChat" with dates only.
+/// itself does not record the world in the image, so its own date folders
+/// group as "VRChat" with dates only.
 /// </summary>
 public static class MediaLibraryScanner
 {
@@ -86,12 +87,17 @@ public static class MediaLibraryScanner
         Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
         "VRChat");
 
-    /// <summary>Groups every picture under <paramref name="root"/>, newest first.</summary>
-    public static IReadOnlyList<MediaGroup> Scan(string? root = null)
+    /// <summary>
+    /// Groups every picture under <paramref name="root"/>, newest first, and
+    /// reports how many have been found so a slow network folder can show
+    /// progress instead of looking stuck.
+    /// </summary>
+    public static IReadOnlyList<MediaGroup> Scan(string? root = null, IProgress<int>? progress = null)
     {
         root = string.IsNullOrWhiteSpace(root) ? DefaultRoot : root;
         if (!Directory.Exists(root))
         {
+            progress?.Report(0);
             return Array.Empty<MediaGroup>();
         }
 
@@ -103,6 +109,7 @@ public static class MediaLibraryScanner
         };
 
         var items = new List<MediaItem>();
+        var reported = 0;
         foreach (var file in Directory.EnumerateFiles(root, "*", options))
         {
             if (!ImageExtensions.Contains(Path.GetExtension(file)))
@@ -111,19 +118,30 @@ public static class MediaLibraryScanner
             }
 
             items.Add(new MediaItem(file, WorldOf(root, file), TakenAtOf(file)));
+
+            // Throttled so a 100k folder does not flood the UI thread.
+            if (progress is not null && items.Count - reported >= 25)
+            {
+                reported = items.Count;
+                progress.Report(reported);
+            }
         }
 
-        return items
-            .GroupBy(item => (item.WorldName, item.TakenAt.Year, item.TakenAt.Month))
-            .Select(group => new MediaGroup(
-                $"{group.Key.WorldName} · {new DateTime(group.Key.Year, group.Key.Month, 1):MMMM yyyy}",
-                group.Key.WorldName,
-                new DateTime(group.Key.Year, group.Key.Month, 1),
-                group.OrderByDescending(item => item.TakenAt).ToList()))
-            .OrderByDescending(group => group.Month)
-            .ThenBy(group => group.WorldName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        progress?.Report(items.Count);
+        return BuildGroups(items);
     }
+
+    /// <summary>Builds the world/month groups from a flat list (also used for the cache).</summary>
+    public static IReadOnlyList<MediaGroup> BuildGroups(IEnumerable<MediaItem> items) => items
+        .GroupBy(item => (item.WorldName, item.TakenAt.Year, item.TakenAt.Month))
+        .Select(group => new MediaGroup(
+            $"{group.Key.WorldName} · {new DateTime(group.Key.Year, group.Key.Month, 1):MMMM yyyy}",
+            group.Key.WorldName,
+            new DateTime(group.Key.Year, group.Key.Month, 1),
+            group.OrderByDescending(item => item.TakenAt).ToList()))
+        .OrderByDescending(group => group.Month)
+        .ThenBy(group => group.WorldName, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 
     /// <summary>
     /// First folder under the root, so pictures/VRChat/Japan/x.png is "Japan".

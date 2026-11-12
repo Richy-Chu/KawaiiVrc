@@ -34,6 +34,8 @@ public sealed class ImageLoader : IDisposable
     private readonly ConcurrentDictionary<string, MemoryEntry> _memory = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Task<ImageSource?>> _inflight = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _gate = new(4, 4);
+    private readonly SemaphoreSlim _fileGate = new(3, 3);
+    private readonly SemaphoreSlim _decodeGate = new(3, 3);
     private readonly string _cacheDirectory;
 
     public ImageLoader()
@@ -136,7 +138,19 @@ public sealed class ImageLoader : IDisposable
                 return LoadGifFromCache(url, bytes);
             }
 
-            var image = TryDecodeWpf(bytes, decodeWidth) ?? TryDecodeSkia(bytes, decodeWidth);
+            // Local libraries can queue hundreds of pictures at once; decode a few
+            // at a time so the UI thread and memory stay calm.
+            await _decodeGate.WaitAsync().ConfigureAwait(false);
+            ImageSource? image;
+            try
+            {
+                image = TryDecodeWpf(bytes, decodeWidth) ?? TryDecodeSkia(bytes, decodeWidth);
+            }
+            finally
+            {
+                _decodeGate.Release();
+            }
+
             if (image is null)
             {
                 return null;
@@ -251,13 +265,32 @@ public sealed class ImageLoader : IDisposable
         }
 
         byte[] bytes;
+        var isLocalFile = false;
         if (Uri.TryCreate(url, UriKind.Absolute, out var absolute) && absolute.IsFile)
         {
-            bytes = await File.ReadAllBytesAsync(absolute.LocalPath).ConfigureAwait(false);
+            isLocalFile = true;
+            await _fileGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                bytes = await File.ReadAllBytesAsync(absolute.LocalPath).ConfigureAwait(false);
+            }
+            finally
+            {
+                _fileGate.Release();
+            }
         }
         else if (Path.IsPathRooted(url) && File.Exists(url))
         {
-            bytes = await File.ReadAllBytesAsync(url).ConfigureAwait(false);
+            isLocalFile = true;
+            await _fileGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                bytes = await File.ReadAllBytesAsync(url).ConfigureAwait(false);
+            }
+            finally
+            {
+                _fileGate.Release();
+            }
         }
         else
         {
@@ -276,7 +309,9 @@ public sealed class ImageLoader : IDisposable
             }
         }
 
-        if (cachePath is not null && bytes.Length > 0)
+        // Pictures already live on this disk; copying them into the download cache
+        // would duplicate the whole library. Only network responses are cached.
+        if (!isLocalFile && cachePath is not null && bytes.Length > 0)
         {
             try
             {

@@ -627,6 +627,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public string ProfileStatusLabel => StatusLabel(CurrentUser?.Status);
 
+    public string ProfileStatusDescription => CurrentUser?.StatusDescription?.Trim() ?? string.Empty;
+
+    public bool HasProfileStatusDescription => !string.IsNullOrWhiteSpace(CurrentUser?.StatusDescription);
+
     public Brush ProfileStatusBrush
     {
         get

@@ -11,6 +11,7 @@
         mc:Ignorable="d"
         d:DesignWidth="1280" d:DesignHeight="840"
         Title="VRChat Companion"
+        Icon="Assets/app-icon.png"
         Width="1280" Height="840"
         MinWidth="1060" MinHeight="700"
         WindowStartupLocation="CenterScreen"
@@ -365,6 +366,14 @@
                                             <TextBlock Text="{Binding PronounsText}" Style="{StaticResource TagText}" />
                                         </Border>
                                     </WrapPanel>
+
+                                    <TextBlock Text="{Binding ProfileStatusDescription}"
+                                               MaxWidth="520"
+                                               Margin="0,9,0,0"
+                                               FontSize="11.5"
+                                               Foreground="{StaticResource MutedBrush}"
+                                               TextWrapping="Wrap"
+                                               Visibility="{Binding HasProfileStatusDescription, Converter={StaticResource BoolToVis}}" />
                                 </StackPanel>
                             </StackPanel>
                         </Grid>
@@ -2573,6 +2582,12 @@
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
+                        <Button Content="{Binding MediaViewModel.ShowAllText}"
+                                Style="{StaticResource SecondaryButton}"
+                                Command="{Binding MediaViewModel.ToggleShowAllCommand}"
+                                Padding="12,6" FontSize="11"
+                                Margin="0,0,8,0"
+                                Visibility="{Binding MediaViewModel.HasHiddenPictures, Converter={StaticResource BoolToVis}}" />
                         <Button Content="Open folder"
                                 Style="{StaticResource SecondaryButton}"
                                 Command="{Binding MediaViewModel.OpenFolderCommand}"
@@ -2586,7 +2601,7 @@
 
                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding MediaViewModel.Groups}">
+                    <ItemsControl ItemsSource="{Binding MediaViewModel.DisplayedGroups}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="0,0,0,20">
@@ -2606,8 +2621,8 @@
                                                         Margin="0,0,8,8"
                                                         Cursor="Hand"
                                                         ToolTip="{Binding FileName}"
-                                                        Command="{Binding DataContext.MediaViewModel.OpenFileCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                        CommandParameter="{Binding Path}">
+                                                        Command="{Binding DataContext.MediaViewModel.OpenViewerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}">
                                                     <Button.Template>
                                                         <ControlTemplate TargetType="Button">
                                                             <ContentPresenter x:Name="Card" />
@@ -2622,8 +2637,9 @@
                                                             CornerRadius="8"
                                                             ClipToBounds="True"
                                                             Background="#151A24">
-                                                        <Image Source="{Binding Thumbnail}"
-                                                               Stretch="UniformToFill" />
+                                                        <controls:AsyncImage SourceUrl="{Binding Path}"
+                                                                             DecodeWidth="320"
+                                                                             CornerRadius="8" />
                                                     </Border>
                                                 </Button>
                                             </DataTemplate>
@@ -2636,7 +2652,7 @@
                 </ScrollViewer>
 
                 <TextBlock Grid.Row="1"
-                           Text="Scanning pictures…"
+                           Text="{Binding MediaViewModel.LoadingText}"
                            Foreground="#8C93A6"
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
@@ -2671,6 +2687,81 @@
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
                            Visibility="{Binding MediaViewModel.IsEmpty, Converter={StaticResource BoolToVis}}" />
+
+                <!-- In-app picture viewer (popup instead of the Windows photo app) -->
+                <Grid Grid.RowSpan="2" Panel.ZIndex="10"
+                      Visibility="{Binding MediaViewModel.IsViewerOpen, Converter={StaticResource BoolToVis}}">
+                    <Button Command="{Binding MediaViewModel.CloseViewerCommand}"
+                            Focusable="False"
+                            Cursor="Arrow"
+                            ToolTip="Close picture">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#F2070910" />
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+
+                    <Grid Margin="26,18,26,22">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                            <TextBlock Text="{Binding MediaViewModel.ViewerTitle}"
+                                       FontSize="12.5"
+                                       FontWeight="SemiBold"
+                                       Foreground="#E6E9F0"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"
+                                       Margin="0,0,240,0" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="Open in Explorer"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="11,6"
+                                        FontSize="11"
+                                        Command="{Binding MediaViewModel.OpenSelectedInShellCommand}" />
+                                <Button Content="Close"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="11,6"
+                                        FontSize="11"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding MediaViewModel.CloseViewerCommand}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Border Grid.Row="1"
+                                Background="#0B0D12"
+                                BorderBrush="{StaticResource SoftBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="12"
+                                ClipToBounds="True">
+                            <Image Source="{Binding MediaViewModel.ViewerImage}"
+                                   Stretch="Uniform"
+                                   Margin="10" />
+                        </Border>
+
+                        <Button Grid.Row="1"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource GhostButton}"
+                                Padding="12,16"
+                                FontSize="16"
+                                Content="&#xE76B;"
+                                FontFamily="Segoe MDL2 Assets"
+                                Command="{Binding MediaViewModel.PreviousImageCommand}" />
+                        <Button Grid.Row="1"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource GhostButton}"
+                                Padding="12,16"
+                                FontSize="16"
+                                Content="&#xE76C;"
+                                FontFamily="Segoe MDL2 Assets"
+                                Command="{Binding MediaViewModel.NextImageCommand}" />
+                    </Grid>
+                </Grid>
             </Grid>
         </DataTemplate>
 
@@ -2776,16 +2867,9 @@
                     </Grid.RowDefinitions>
 
                     <StackPanel Orientation="Horizontal">
-                        <Border Width="38" Height="38"
-                                CornerRadius="11"
-                                Background="{StaticResource AccentGradient}">
-                            <TextBlock Text="&#xE909;"
-                                       FontFamily="Segoe MDL2 Assets"
-                                       FontSize="18"
-                                       Foreground="{StaticResource WhiteBrush}"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center" />
-                        </Border>
+                        <Image Source="Assets/app-icon.png"
+                               Width="38" Height="38"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
                         <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
                             <TextBlock Text="VRChat" FontSize="14" FontWeight="SemiBold" />
                             <TextBlock Text="Companion" FontSize="10" Foreground="{StaticResource MutedBrush}" />
@@ -2802,6 +2886,14 @@
                     </StackPanel>
 
                     <StackPanel Grid.Row="2">
+                        <Button Content="Open VRChat"
+                                Style="{StaticResource PrimaryButton}"
+                                Padding="12,8"
+                                Margin="0,0,0,10"
+                                FontSize="11"
+                                Command="{Binding OpenVrChatCommand}"
+                                ToolTip="Start VRChat with the saved launch mode" />
+
                         <Border Background="{StaticResource PanelBrush}"
                                 BorderBrush="{StaticResource SoftBorderBrush}"
                                 BorderThickness="1"

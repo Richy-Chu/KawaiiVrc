@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using WpfAnimatedGif;
 
 namespace VrcCompanion.Controls;
 
@@ -72,12 +73,13 @@ public sealed class ImageBackdrop : Image
 
             if (isGif && Animate)
             {
-                // OnLoad closes the frame stream, which leaves a GIF stuck on its
-                // first frame. The URI overload keeps WPF's animation metadata alive.
-                Source = new BitmapImage(new Uri(path, UriKind.Absolute));
+                // WPF's BitmapImage alone renders only the first GIF frame.
+                // ImageBehavior drives the frames, so the setting really animates.
+                ImageBehavior.SetAnimatedSource(this, new BitmapImage(new Uri(path, UriKind.Absolute)));
                 return;
             }
 
+            ImageBehavior.SetAnimatedSource(this, null);
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
