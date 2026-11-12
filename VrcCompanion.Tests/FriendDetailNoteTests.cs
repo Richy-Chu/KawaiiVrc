@@ -40,6 +40,21 @@ public class FriendDetailNoteTests : IDisposable
         store);
 
     [Fact]
+    public void OwnProfile_IsMarkedAsSelfAndKeepsTheNoteEditorOutOfThePopup()
+    {
+        var store = new FriendNotesStore(NotesPath);
+        var profile = new FriendDetailViewModel(
+            new FriendItem(new VrcUser { Id = "usr_me", DisplayName = "Me", Username = "me" }),
+            new VrcApiClient(),
+            ImageLoader.Shared,
+            store,
+            isSelf: true);
+
+        Assert.True(profile.IsSelf);
+        Assert.Equal("usr_me", profile.Id);
+    }
+
+    [Fact]
     public void SavePendingNote_PersistsTypedTextWhenTheProfileCloses()
     {
         var store = new FriendNotesStore(NotesPath);

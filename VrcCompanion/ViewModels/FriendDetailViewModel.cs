@@ -33,12 +33,14 @@ public sealed class FriendDetailViewModel : ViewModelBase
         FriendItem friend,
         VrcApiClient api,
         ImageLoader images,
-        FriendNotesStore? notes = null)
+        FriendNotesStore? notes = null,
+        bool isSelf = false)
     {
         _friend = friend;
         _api = api;
         _images = images;
         _notes = notes ?? FriendNotesStore.Shared;
+        IsSelf = isSelf;
 
         var stored = _notes.Get(_friend.Id);
         _noteText = stored?.Text ?? string.Empty;
@@ -105,6 +107,9 @@ public sealed class FriendDetailViewModel : ViewModelBase
     }
 
     public FriendItem Friend => _friend;
+
+    /// <summary>True when this popup is showing the signed-in account itself.</summary>
+    public bool IsSelf { get; }
 
     /// <summary>
     /// Dev-only: pretend this person is standing in a public world, so the Join

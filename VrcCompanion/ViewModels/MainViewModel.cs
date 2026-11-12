@@ -217,6 +217,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _ => IsLoggedIn && !IsBusy));
         OpenWorldCommand = Track(new RelayCommand<WorldItem>(OpenWorld, world => world is not null));
         CloseFriendDetailCommand = Track(new RelayCommand(ClearFriendSelection));
+        OpenOwnProfileCommand = Track(new RelayCommand(OpenOwnProfile, () => CurrentUser is not null));
         ChooseLaunchModeCommand = Track(new RelayCommand<string>(
             ChooseLaunchMode,
             key => IsLaunchChooserOpen && !string.IsNullOrWhiteSpace(key)));
@@ -1381,6 +1382,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public AsyncRelayCommand<string> SearchSuggestionCommand { get; }
     public RelayCommand<WorldItem> OpenWorldCommand { get; }
     public RelayCommand CloseFriendDetailCommand { get; }
+
+    public RelayCommand OpenOwnProfileCommand { get; }
     public AsyncRelayCommand RefreshFriendProfileCommand { get; }
     public AsyncRelayCommand<FriendItem> JoinFriendCommand { get; }
     public AsyncRelayCommand<FriendItem> InviteFriendCommand { get; }
@@ -2489,6 +2492,28 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         SelectedFriend = null;
         SelectedFriendDetail = null;
+    }
+
+    /// <summary>
+    /// Opens the signed-in account in the same popup the friend profiles use,
+    /// so the sidebar card is a shortcut to the full profile instead of nothing.
+    /// </summary>
+    private void OpenOwnProfile()
+    {
+        if (CurrentUser is null)
+        {
+            return;
+        }
+
+        SelectedFriend = null;
+        var profile = new FriendDetailViewModel(
+            new FriendItem(CurrentUser),
+            _api,
+            _images,
+            FriendNotesStore.Shared,
+            isSelf: true);
+        SelectedFriendDetail = profile;
+        _ = profile.LoadAsync(forceRefresh: true, CancellationToken.None);
     }
 
     private async Task JoinFriendAsync(FriendItem? friend)
