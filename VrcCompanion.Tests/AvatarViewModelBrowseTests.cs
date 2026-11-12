@@ -502,6 +502,49 @@ public class AvatarViewModelBrowseTests
     }
 
     [Fact]
+    public async Task BackoffTickerStopsAwayFromTheTabAndResumesOnReturn()
+    {
+        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var handler = new ToggleHandler { Html = true };
+        TestHooks.UseCommunityHandler(handler);
+        TestHooks.UtcNow = () => now;
+        try
+        {
+            var vm = new AvatarViewModel(new VrcApiClient());
+            vm.BrowseCatalog();
+            await WaitUntilIdle(vm);
+            var afterFailure = handler.Requests;
+            Assert.True(vm.IsBrowseBackoffTickerRunning);
+
+            // Leaving the tab stops the once-a-second work entirely.
+            vm.IsBrowseTabActive = false;
+            Assert.False(vm.IsBrowseBackoffTickerRunning);
+
+            // Returning mid-window only restarts the countdown, not the fetch.
+            now = now.AddSeconds(10);
+            vm.IsBrowseTabActive = true;
+            Assert.True(vm.IsBrowseBackoffTickerRunning);
+            Assert.Equal(afterFailure, handler.Requests);
+            Assert.Contains("retrying in", vm.CommunityStatusText);
+
+            // Leaving again past the deadline fires nothing; returning retries at once.
+            vm.IsBrowseTabActive = false;
+            now = now.AddSeconds(30);
+            Assert.Equal(afterFailure, handler.Requests);
+            vm.IsBrowseTabActive = true;
+            await WaitUntilIdle(vm);
+
+            Assert.Equal(afterFailure + 1, handler.Requests);
+            Assert.Contains("retrying in 60s", vm.CommunityStatusText);
+        }
+        finally
+        {
+            TestHooks.ResetClock();
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public async Task LoadMore_AutoRetryShowsInProgressStateWhileFetching()
     {
         var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);

@@ -1010,8 +1010,8 @@ public sealed class AvatarViewModel : ViewModelBase
             return;
         }
 
-        // Nothing to retry into while another tab is showing: keep the ticker alive
-        // and pick the retry up on the first tick after Avatar Search returns.
+        // Nothing to retry into while another tab is showing. The setter restarts
+        // the ticker (or runs the retry) when Avatar Search comes back.
         if (!IsBrowseTabActive)
         {
             return;
@@ -1972,11 +1972,48 @@ public sealed class AvatarViewModel : ViewModelBase
     // cap reloading page 1, N = the automatic retry of page N.
     private int _browseRetryInFlightPage;
 
+    private bool _isBrowseTabActive;
+
     /// <summary>
     /// True while the Avatar Search tab is the one on screen. The shell keeps this
-    /// in step; automatic retries must not fire behind another tab.
+    /// in step. Leaving the tab stops the cooldown ticker; returning restarts the
+    /// countdown, or runs the pending retry straight away if the window is over.
     /// </summary>
-    public bool IsBrowseTabActive { get; set; }
+    public bool IsBrowseTabActive
+    {
+        get => _isBrowseTabActive;
+        set
+        {
+            if (_isBrowseTabActive == value)
+            {
+                return;
+            }
+
+            _isBrowseTabActive = value;
+            if (!value)
+            {
+                _browseBackoffTimer?.Stop();
+                return;
+            }
+
+            if (_browseFailureStreak == 0)
+            {
+                return;
+            }
+
+            if (BrowseBackoffActive)
+            {
+                EnsureBrowseBackoffTicker();
+            }
+            else
+            {
+                // Window already ran out while the tab was away: retry now.
+                OnBrowseBackoffTick();
+            }
+        }
+    }
+
+    internal bool IsBrowseBackoffTickerRunning => _browseBackoffTimer?.IsEnabled == true;
 
     public void BrowseCatalog()
     {
