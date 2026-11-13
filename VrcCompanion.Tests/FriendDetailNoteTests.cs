@@ -80,6 +80,24 @@ public class FriendDetailNoteTests : IDisposable
     }
 
     [Fact]
+    public void SharedRepresentedGroupChipShowsMutual()
+    {
+        var profile = CreateProfile(new FriendNotesStore(NotesPath));
+        profile.Profile = new VrcProfile
+        {
+            RepresentedGroup = new VrcProfileGroup { Id = "grp_shared", Name = "Shared" }
+        };
+
+        profile.AnnotateRepresentedGroup(new[]
+        {
+            new Group { Id = "grp_shared", Name = "Shared" }
+        });
+
+        Assert.Equal("Mutual", profile.RepresentedGroup?.MembershipLabel);
+        Assert.True(profile.RepresentedGroup?.HasMembershipLabel);
+    }
+
+    [Fact]
     public void RepresentedGroupIsIncludedOnce()
     {
         var profile = new VrcProfile

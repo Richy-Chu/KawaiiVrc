@@ -325,6 +325,22 @@ public sealed class FriendDetailViewModel : ViewModelBase
     /// VRChat may leave the represented group out of the payload's short list.
     /// It still belongs in the profile's groups so its chip is always shown.
     /// </summary>
+    /// <summary>
+    /// The represented group is displayed from its own payload object, not the
+    /// full group list, so it needs the same Joined/Mutual pass separately.
+    /// </summary>
+    internal void AnnotateRepresentedGroup(IReadOnlyList<Group> mine)
+    {
+        if (Profile?.RepresentedGroup is not { } represented)
+        {
+            return;
+        }
+
+        represented.IsMine = mine.Any(group =>
+            string.Equals(group.EffectiveId, represented.Id, StringComparison.Ordinal));
+        represented.IsMutual = !IsSelf && represented.IsMine;
+    }
+
     internal static bool IncludeRepresentedGroup(VrcProfile? profile)
     {
         if (profile?.RepresentedGroup is not { } represented || string.IsNullOrWhiteSpace(represented.Id))
@@ -773,12 +789,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
             IncludeRepresentedGroup(Profile);
 
             var groups = Groups;
-            if (Profile?.RepresentedGroup is { } represented)
-            {
-                represented.IsMine = mine.Any(group =>
-                    string.Equals(group.EffectiveId, represented.Id, StringComparison.Ordinal));
-                represented.IsMutual = !IsSelf && represented.IsMine;
-            }
+            AnnotateRepresentedGroup(mine);
             var ids = mine.Select(group => group.EffectiveId).ToHashSet(StringComparer.Ordinal);
             var profileIds = groups.Select(group => group.Id).ToHashSet(StringComparer.Ordinal);
 
