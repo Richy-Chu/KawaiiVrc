@@ -142,7 +142,11 @@ public sealed class LyricsDocument
     }
 }
 
-public sealed record LyricsLookupResult(LyricsDocument? Lyrics, string Status, bool TemporaryFailure = false);
+public sealed record LyricsLookupResult(
+    LyricsDocument? Lyrics,
+    string Status,
+    bool TemporaryFailure = false,
+    string? Match = null);
 
 /// <summary>Formats a VRChat chatbox line containing the song and, if present, a lyric.</summary>
 public static class ChatboxLyrics
@@ -307,7 +311,8 @@ public sealed class LyricsService
                 ? new LyricsLookupResult(null, "No free lyrics found for this track.")
                 : new LyricsLookupResult(
                     lyrics,
-                    lyrics.IsSynced ? "Synced lyrics · LRCLIB" : "Plain lyrics · LRCLIB");
+                    lyrics.IsSynced ? "Synced lyrics · LRCLIB" : "Plain lyrics · LRCLIB",
+                    Match: DescribeMatch(record, title, artist));
         }
         catch (OperationCanceledException)
         {
@@ -330,6 +335,19 @@ public sealed class LyricsService
     private static bool DurationMatches(LrcLibRecord record, TimeSpan duration) =>
         duration <= TimeSpan.Zero ||
         (record.Duration > 0 && Math.Abs(record.Duration - duration.TotalSeconds) <= 15);
+
+    private static string DescribeMatch(LrcLibRecord record, string title, string artist)
+    {
+        var matchTitle = string.IsNullOrWhiteSpace(record.TrackName) ? title : record.TrackName.Trim();
+        var matchArtist = string.IsNullOrWhiteSpace(record.ArtistName) ? artist.Trim() : record.ArtistName.Trim();
+        var name = string.IsNullOrWhiteSpace(matchArtist) ? matchTitle : $"{matchArtist} — {matchTitle}";
+        if (record.Duration > 0)
+        {
+            name += $" ({TimeSpan.FromSeconds(record.Duration):m\\:ss})";
+        }
+
+        return name;
+    }
 
     internal static IEnumerable<(string Title, string Artist)> BuildCandidates(string title, string artist)
     {

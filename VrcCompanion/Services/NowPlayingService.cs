@@ -113,15 +113,37 @@ public sealed record NowPlayingInfo(
         var clean = LyricsService.CleanTrackTitle(title, artist ?? string.Empty);
         if (!string.IsNullOrWhiteSpace(artist))
         {
-            var remainder = clean.Split(" - ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (remainder.Length == 2 &&
-                (remainder[1].Contains("VEVO", StringComparison.OrdinalIgnoreCase) ||
-                 remainder[1].EndsWith(" - Topic", StringComparison.OrdinalIgnoreCase)))
+            var artistKey = NormaliseForMatch(artist);
+            var remainder = clean
+                .Split(" - ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(part => NormaliseForMatch(part) != artistKey)
+                .ToArray();
+
+            if (remainder.Length == 0)
             {
-                clean = remainder[0];
+                return (clean, artist);
             }
 
-            return (clean, artist);
+            if (remainder.Length == 1)
+            {
+                return (remainder[0], artist);
+            }
+
+            var last = remainder[^1];
+            var isVersion = last.Contains("live", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("remix", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("acoustic", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("version", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("mix", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("instrumental", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("extended", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("demo", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("sped up", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("slowed", StringComparison.OrdinalIgnoreCase) ||
+                            last.Contains("nightcore", StringComparison.OrdinalIgnoreCase);
+            return isVersion
+                ? (string.Join(" - ", remainder), artist)
+                : (remainder[0], artist);
         }
 
         var parts = clean.Split(" - ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -132,6 +154,12 @@ public sealed record NowPlayingInfo(
             _ => (clean, string.Empty)
         };
     }
+
+    private static string NormaliseForMatch(string value) =>
+        new string(value
+            .ToLowerInvariant()
+            .Where(char.IsLetterOrDigit)
+            .ToArray());
 
     private static string StripYouTubeSuffix(string title)
     {

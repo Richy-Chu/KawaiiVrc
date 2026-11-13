@@ -104,6 +104,34 @@ public class NowPlayingTests
         Assert.DoesNotContain("freebuff", info.ChatboxText, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("Zara Larsson - Ain't My Fault (Official Video) - ZaraLarssonMusicVEVO")]
+    [InlineData("Ain't My Fault - Zara Larsson")]
+    [InlineData("Ain't My Fault - ZaraLarssonMusicVEVO")]
+    [InlineData("Ain't My Fault - Zara Larsson - ZaraLarssonMusicVEVO")]
+    public void SuppliedArtistIsNotRepeatedAndChannelsAreDropped(string title)
+    {
+        var info = NowPlayingInfo.FromSession("chrome.exe", title, "Zara Larsson");
+
+        Assert.NotNull(info);
+        Assert.Equal("Zara Larsson", info.Artist);
+        Assert.Equal("Ain't My Fault", info.Title);
+        Assert.Equal("Zara Larsson — Ain't My Fault", info.DisplayText);
+    }
+
+    [Fact]
+    public void BrowserVersionSuffixIsKeptWhenTheArtistIsSupplied()
+    {
+        var info = NowPlayingInfo.FromSession(
+            "chrome.exe",
+            "Ain't My Fault - Live",
+            "Zara Larsson");
+
+        Assert.NotNull(info);
+        Assert.Equal("Ain't My Fault - Live", info.Title);
+        Assert.Equal("Zara Larsson — Ain't My Fault - Live", info.DisplayText);
+    }
+
     [Fact]
     public void OtherPlayersKeepTheirRealName()
     {

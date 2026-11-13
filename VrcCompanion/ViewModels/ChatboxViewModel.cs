@@ -32,6 +32,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private readonly LyricsPausePolicy _lyricsPause = new();
     private readonly PlaybackPositionEstimator _position = new();
     private string _lyricsStatusText = "Play a track to look for free lyrics.";
+    private string _lyricsMatchText = string.Empty;
+    private Task? _lyricsLoadTask;
     private int _plainLyricIndex;
     private string? _lastVrchatLyric;
     private DateTime _lastOscSend = DateTime.MinValue;
@@ -437,6 +439,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         private set => SetProperty(ref _lyricsStatusText, value);
     }
 
+    public string LyricsMatchText => _lyricsMatchText;
+
+    public bool HasLyricsMatch => _lyricsMatchText.Length > 0;
+
     public bool HasLyrics => _lyrics?.HasLyrics == true;
 
     public int RotationSeconds
@@ -657,6 +663,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             _lyricsCancellation?.Cancel();
             _lyrics = null;
             _lyricsTrackKey = null;
+            _lyricsLoadTask = null;
+            SetLyricsMatch(null);
             LyricsStatusText = "Play a track to look for free lyrics.";
             OnPropertyChanged(nameof(LyricsText));
             OnPropertyChanged(nameof(HasLyrics));
@@ -674,7 +682,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _lyricsCancellation?.Cancel();
         _lyricsTrackKey = key;
         _lastVrchatLyric = null;
-        _ = LoadLyricsAsync(track, key);
+        _lyricsLoadTask = LoadLyricsAsync(track, key);
     }
 
     private async Task LoadLyricsAsync(NowPlayingInfo track, string key)
@@ -682,6 +690,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         var cancellation = new CancellationTokenSource();
         _lyricsCancellation = cancellation;
         _lyrics = null;
+        SetLyricsMatch(null);
         LyricsStatusText = "Looking for free lyrics…";
         OnPropertyChanged(nameof(LyricsText));
         OnPropertyChanged(nameof(HasLyrics));
@@ -702,6 +711,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
             _lyrics = result.Lyrics;
             _lastVrchatLyric = null;
+            SetLyricsMatch(result.Match);
             LyricsStatusText = result.Status;
             OnPropertyChanged(nameof(LyricsText));
             OnPropertyChanged(nameof(HasLyrics));
@@ -760,6 +770,17 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     /// <summary>Runs one real rotation tick (for tests).</summary>
     internal void RotateNextForTest() => RotateNext();
+
+    internal void SetTrackForTest(NowPlayingInfo? track) => CurrentTrack = track;
+
+    internal Task? LyricsLoadTaskForTest => _lyricsLoadTask;
+
+    private void SetLyricsMatch(string? match)
+    {
+        _lyricsMatchText = string.IsNullOrWhiteSpace(match) ? string.Empty : $"Matched: {match}";
+        OnPropertyChanged(nameof(LyricsMatchText));
+        OnPropertyChanged(nameof(HasLyricsMatch));
+    }
 
     private void RemoveMessage(string? message)
     {
