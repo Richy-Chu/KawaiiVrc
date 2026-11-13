@@ -20,11 +20,11 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private readonly Func<string, IProgress<int>?, IReadOnlyList<MediaGroup>> _scan;
     private readonly Action<string> _openPath;
     private readonly string _cachePath;
-    private const int DisplayLimit = 48;
+    private const int PageSize = 48;
 
     private bool _loaded;
     private bool _isBusy;
-    private bool _showAll;
+    private int _pageIndex;
     private int _foundCount;
     private string? _errorMessage;
     private MediaItem? _selectedMedia;
@@ -50,30 +50,33 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         OpenSelectedInShellCommand = new RelayCommand(
             () => OpenFile(SelectedMedia?.Path),
             () => SelectedMedia is not null);
-        ToggleShowAllCommand = new RelayCommand(() =>
-        {
-            _showAll = !_showAll;
-            RebuildDisplayedGroups();
-        });
+        PreviousPageCommand = new RelayCommand(PreviousPage, () => HasPreviousPage);
+        NextPageCommand = new RelayCommand(NextPage, () => HasNextPage);
     }
 
     public ObservableCollection<MediaGroup> Groups { get; } = new();
 
     /// <summary>
-    /// What the grid renders. A large OneDrive library is capped at 48 pictures
-    /// so opening the tab never queues hundreds of decodes; "Show all" lifts it.
+    /// What the current page renders. Only this page's cards are created, so a
+    /// large library never loads every picture at once.
     /// </summary>
     public ObservableCollection<MediaGroup> DisplayedGroups { get; } = new();
 
-    public RelayCommand ToggleShowAllCommand { get; }
+    public RelayCommand PreviousPageCommand { get; }
 
-    public bool IsShowingAll => _showAll;
+    public RelayCommand NextPageCommand { get; }
 
-    public bool HasHiddenPictures => PictureCount > DisplayLimit;
+    public int PageCount => (PictureCount + PageSize - 1) / PageSize;
 
-    public string ShowAllText => _showAll
-        ? "Show recent"
-        : $"Show all {PictureCount}";
+    public int CurrentPage => PageCount == 0 ? 0 : _pageIndex + 1;
+
+    public string PageText => PageCount == 0
+        ? string.Empty
+        : $"Page {CurrentPage} of {PageCount}";
+
+    public bool HasPreviousPage => _pageIndex > 0;
+
+    public bool HasNextPage => PageCount > 0 && _pageIndex < PageCount - 1;
 
     public string RootPath { get; }
 
@@ -288,38 +291,72 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(SummaryText));
         OnPropertyChanged(nameof(EmptyMessage));
-        OnPropertyChanged(nameof(HasHiddenPictures));
-        OnPropertyChanged(nameof(IsShowingAll));
-        OnPropertyChanged(nameof(ShowAllText));
+        _pageIndex = 0;
+        RebuildDisplayedGroups();
+    }
+
+    private void PreviousPage()
+    {
+        if (!HasPreviousPage)
+        {
+            return;
+        }
+
+        _pageIndex--;
+        RebuildDisplayedGroups();
+    }
+
+    private void NextPage()
+    {
+        if (!HasNextPage)
+        {
+            return;
+        }
+
+        _pageIndex++;
         RebuildDisplayedGroups();
     }
 
     private void RebuildDisplayedGroups()
     {
         DisplayedGroups.Clear();
-        var remaining = DisplayLimit;
+        var skip = _pageIndex * PageSize;
+        var take = PageSize;
 
         foreach (var group in Groups)
         {
-            if (!_showAll && remaining <= 0)
+            if (take <= 0)
             {
                 break;
             }
 
-            if (_showAll || group.Items.Count <= remaining)
+            if (skip >= group.Items.Count)
             {
-                DisplayedGroups.Add(group);
-            }
-            else
-            {
-                DisplayedGroups.Add(group with { Items = group.Items.Take(remaining).ToList() });
+                skip -= group.Items.Count;
+                continue;
             }
 
-            remaining -= group.Items.Count;
+            var items = group.Items.Skip(skip).Take(take).ToList();
+            if (items.Count > 0)
+            {
+                DisplayedGroups.Add(group with { Items = items });
+                take -= items.Count;
+            }
+
+            skip = 0;
         }
 
-        OnPropertyChanged(nameof(IsShowingAll));
-        OnPropertyChanged(nameof(ShowAllText));
+        OnPropertyChanged(nameof(PageCount));
+        OnPropertyChanged(nameof(CurrentPage));
+        OnPropertyChanged(nameof(PageText));
+        OnPropertyChanged(nameof(HasPreviousPage));
+        OnPropertyChanged(nameof(HasNextPage));
+        PreviousPageCommand.RaiseCanExecuteChanged();
+        NextPageCommand.RaiseCanExecuteChanged();
+
+        // Each page releases up to PageSize decoded bitmaps. Collecting here
+        // keeps page flips from accumulating WPF image memory until shutdown.
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
     }
 
     // ------------------------------------------------------------- actions

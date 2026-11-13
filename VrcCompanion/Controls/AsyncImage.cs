@@ -120,6 +120,7 @@ public sealed class AsyncImage : FrameworkElement
     {
         _isLoaded = false;
         CancelLoad();
+        ReleaseImage();
     }
 
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -131,7 +132,19 @@ public sealed class AsyncImage : FrameworkElement
         else
         {
             CancelLoad();
+            ReleaseImage();
         }
+    }
+
+    private void ReleaseImage()
+    {
+        if (_image is null)
+        {
+            return;
+        }
+
+        _image = null;
+        InvalidateVisual();
     }
 
     private async void RestartLoad()

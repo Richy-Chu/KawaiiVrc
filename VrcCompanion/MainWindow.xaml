@@ -3201,12 +3201,22 @@
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
-                        <Button Content="{Binding MediaViewModel.ShowAllText}"
+                        <Button Content="Previous"
                                 Style="{StaticResource SecondaryButton}"
-                                Command="{Binding MediaViewModel.ToggleShowAllCommand}"
+                                Command="{Binding MediaViewModel.PreviousPageCommand}"
+                                IsEnabled="{Binding MediaViewModel.HasPreviousPage}"
+                                Padding="12,6" FontSize="11" />
+                        <TextBlock Text="{Binding MediaViewModel.PageText}"
+                                   Foreground="#8C93A6"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   Margin="10,0" />
+                        <Button Content="Next"
+                                Style="{StaticResource SecondaryButton}"
+                                Command="{Binding MediaViewModel.NextPageCommand}"
+                                IsEnabled="{Binding MediaViewModel.HasNextPage}"
                                 Padding="12,6" FontSize="11"
-                                Margin="0,0,8,0"
-                                Visibility="{Binding MediaViewModel.HasHiddenPictures, Converter={StaticResource BoolToVis}}" />
+                                Margin="10,0,8,0" />
                         <Button Content="Open folder"
                                 Style="{StaticResource SecondaryButton}"
                                 Command="{Binding MediaViewModel.OpenFolderCommand}"
