@@ -15,21 +15,30 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private readonly SettingsStore _store;
     private readonly CompanionSettings _settings;
     private readonly OscChatboxService _osc;
+    private readonly NowPlayingService _nowPlaying;
     private readonly DispatcherTimer _timer;
+    private readonly DispatcherTimer _nowPlayingTimer;
+    private NowPlayingInfo? _currentTrack;
+    private bool _pollingNowPlaying;
     private string _messageText = string.Empty;
     private string _statusText;
     private bool _isRotating;
+    private bool _includeNowPlaying;
     private int _rotationSeconds;
     private string _host;
     private int _port;
     private int _rotationIndex;
     private bool _disposed;
 
-    public ChatboxViewModel(SettingsStore? store = null, OscChatboxService? osc = null)
+    public ChatboxViewModel(
+        SettingsStore? store = null,
+        OscChatboxService? osc = null,
+        NowPlayingService? nowPlaying = null)
     {
         _store = store ?? SettingsStore.Shared;
         _settings = _store.Settings;
         _osc = osc ?? new OscChatboxService();
+        _nowPlaying = nowPlaying ?? new NowPlayingService();
         _host = string.IsNullOrWhiteSpace(_settings.OscHost) ? "127.0.0.1" : _settings.OscHost;
         _port = Math.Clamp(_settings.OscPort, 1, 65535);
         _rotationSeconds = Math.Clamp(_settings.ChatboxRotationSeconds, MinimumRotationSeconds, 600);
@@ -45,13 +54,26 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
                 .Distinct(StringComparer.Ordinal)
                 .Take(25));
 
+        _includeNowPlaying = _settings.ChatboxIncludeNowPlaying;
+        if (_includeNowPlaying && !RotationMessages.Contains("{music}", StringComparer.OrdinalIgnoreCase))
+        {
+            RotationMessages.Add("{music}");
+        }
+
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(_rotationSeconds) };
         _timer.Tick += (_, _) => RotateNext();
+        _nowPlayingTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _nowPlayingTimer.Tick += (_, _) => _ = PollNowPlayingAsync();
         _statusText = "Ready. Enable OSC in VRChat: Action Menu → Options → OSC.";
 
         SendCommand = new RelayCommand(Send, () => !string.IsNullOrWhiteSpace(MessageText));
         AddToRotationCommand = new RelayCommand(AddToRotation, () => !string.IsNullOrWhiteSpace(MessageText));
         RemoveMessageCommand = new RelayCommand<string>(RemoveMessage, message => message is not null);
+        UseNowPlayingCommand = new RelayCommand(UseNowPlaying, () => CurrentTrack is not null);
+        AddNowPlayingToRotationCommand = new RelayCommand(AddNowPlayingToRotation, () => CurrentTrack is not null);
+
+        _nowPlayingTimer.Start();
+        _ = PollNowPlayingAsync();
 
         if (_settings.ChatboxRotateEnabled && RotationMessages.Count > 0)
         {
@@ -68,6 +90,37 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     public RelayCommand AddToRotationCommand { get; }
 
     public RelayCommand<string> RemoveMessageCommand { get; }
+
+    public RelayCommand UseNowPlayingCommand { get; }
+
+    public RelayCommand AddNowPlayingToRotationCommand { get; }
+
+    public NowPlayingInfo? CurrentTrack
+    {
+        get => _currentTrack;
+        private set
+        {
+            if (!SetProperty(ref _currentTrack, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(NowPlayingText));
+            OnPropertyChanged(nameof(NowPlayingSource));
+            OnPropertyChanged(nameof(HasNowPlaying));
+            OnPropertyChanged(nameof(HasNothingPlaying));
+            UseNowPlayingCommand.RaiseCanExecuteChanged();
+            AddNowPlayingToRotationCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public string NowPlayingText => CurrentTrack?.DisplayText ?? "Nothing playing right now.";
+
+    public string NowPlayingSource => CurrentTrack?.Source ?? string.Empty;
+
+    public bool HasNowPlaying => CurrentTrack is not null;
+
+    public bool HasNothingPlaying => CurrentTrack is null;
 
     public string MessageText
     {
@@ -122,6 +175,45 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     }
 
     public string RotationButtonText => IsRotating ? "Stop rotation" : "Start rotation";
+
+    /// <summary>Keeps a {music} entry in rotation so the track updates by itself.</summary>
+    public bool IncludeNowPlayingInRotation
+    {
+        get => _includeNowPlaying;
+        set
+        {
+            if (!SetProperty(ref _includeNowPlaying, value))
+            {
+                return;
+            }
+
+            if (value)
+            {
+                if (!RotationMessages.Contains("{music}", StringComparer.OrdinalIgnoreCase))
+                {
+                    RotationMessages.Add("{music}");
+                }
+            }
+            else
+            {
+                for (var i = RotationMessages.Count - 1; i >= 0; i--)
+                {
+                    if (RotationMessages[i].Equals("{music}", StringComparison.OrdinalIgnoreCase))
+                    {
+                        RotationMessages.RemoveAt(i);
+                    }
+                }
+            }
+
+            SaveMessages();
+            OnPropertyChanged(nameof(HasRotationMessages));
+            OnPropertyChanged(nameof(HasNoRotationMessages));
+            if (RotationMessages.Count == 0)
+            {
+                IsRotating = false;
+            }
+        }
+    }
 
     public int RotationSeconds
     {
@@ -200,6 +292,32 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        AddRotationText(text);
+    }
+
+    private void UseNowPlaying()
+    {
+        if (CurrentTrack is null)
+        {
+            return;
+        }
+
+        MessageText = CurrentTrack.ChatboxText;
+        StatusText = "Now playing placed in the message box.";
+    }
+
+    private void AddNowPlayingToRotation()
+    {
+        if (CurrentTrack is null)
+        {
+            return;
+        }
+
+        AddRotationText(CurrentTrack.ChatboxText);
+    }
+
+    private void AddRotationText(string text)
+    {
         if (text.Length > OscMessage.ChatboxLimit)
         {
             text = text[..OscMessage.ChatboxLimit];
@@ -216,6 +334,24 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         else
         {
             StatusText = "That message is already in the rotation.";
+        }
+    }
+
+    private async Task PollNowPlayingAsync()
+    {
+        if (_pollingNowPlaying)
+        {
+            return;
+        }
+
+        _pollingNowPlaying = true;
+        try
+        {
+            CurrentTrack = await _nowPlaying.GetCurrentAsync();
+        }
+        finally
+        {
+            _pollingNowPlaying = false;
         }
     }
 
@@ -253,6 +389,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     private void SendText(string text, bool rotating = false)
     {
+        text = ExpandMusicToken(text);
         try
         {
             _osc.SendChatbox(text);
@@ -265,6 +402,17 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         {
             StatusText = $"Could not send OSC: {ex.Message}";
         }
+    }
+
+    private string ExpandMusicToken(string text)
+    {
+        if (!text.Contains("{music}", StringComparison.OrdinalIgnoreCase))
+        {
+            return text;
+        }
+
+        var track = CurrentTrack?.ChatboxText ?? "♪ Nothing playing";
+        return text.Replace("{music}", track, StringComparison.OrdinalIgnoreCase);
     }
 
     private void SaveMessages()
@@ -283,6 +431,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
         _disposed = true;
         _timer.Stop();
+        _nowPlayingTimer.Stop();
         _osc.Dispose();
     }
 }

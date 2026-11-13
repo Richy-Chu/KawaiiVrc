@@ -65,6 +65,9 @@ public sealed class CompanionSettings
 
     [JsonPropertyName("chatboxMessages")]
     public List<string> ChatboxMessages { get; set; } = new();
+
+    [JsonPropertyName("chatboxIncludeNowPlaying")]
+    public bool ChatboxIncludeNowPlaying { get; set; }
 }
 
 /// <summary>

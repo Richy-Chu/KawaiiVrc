@@ -2889,6 +2889,56 @@
 
                     <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                         <StackPanel>
+                            <Grid>
+                                <StackPanel>
+                                    <TextBlock Text="Now playing" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="{Binding ChatboxViewModel.NowPlayingText}"
+                                               Foreground="{StaticResource TextBrush}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="0,5,90,0" />
+                                    <TextBlock Text="Detected from Windows media sessions, including Spotify and YouTube in your browser."
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,4,0,0" />
+                                </StackPanel>
+                                <Border Background="#2A1E4A"
+                                        CornerRadius="5"
+                                        Padding="7,2"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Top"
+                                        Visibility="{Binding ChatboxViewModel.HasNowPlaying, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding ChatboxViewModel.NowPlayingSource}"
+                                               FontSize="9"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource AccentHoverBrush}" />
+                                </Border>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                <Button Content="Use now playing"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="12,6"
+                                        FontSize="11"
+                                        Margin="0,0,8,0"
+                                        Command="{Binding ChatboxViewModel.UseNowPlayingCommand}" />
+                                <Button Content="Add now playing to rotation"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="12,6"
+                                        FontSize="11"
+                                        Command="{Binding ChatboxViewModel.AddNowPlayingToRotationCommand}" />
+                            </StackPanel>
+                            <TextBlock Text="Tip: put {music} in any message and it is replaced with the current track when sent."
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,8,0,0" />
+                            <CheckBox Content="Keep the current track in rotation ({music})"
+                                      Style="{StaticResource FriendlyCheckBox}"
+                                      IsChecked="{Binding ChatboxViewModel.IncludeNowPlayingInRotation, Mode=TwoWay}"
+                                      Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
                             <TextBlock Text="Rotation" Style="{StaticResource SectionTitle}" />
                             <TextBlock Text="Cycle through these lines so the chatbox keeps changing."
                                        Style="{StaticResource MutedText}"
