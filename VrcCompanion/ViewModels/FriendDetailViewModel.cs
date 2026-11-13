@@ -368,6 +368,53 @@ public sealed class FriendDetailViewModel : ViewModelBase
         ? "No groups in common"
         : $"{MutualGroupCount} group{(MutualGroupCount == 1 ? string.Empty : "s")} in common";
 
+    /// <summary>
+    /// Keeps the open profile in step with a join or leave made in the group
+    /// popup: the My groups list and any matching profile chips change at once.
+    /// </summary>
+    internal void ApplyGroupMembership(Group group, bool isMember)
+    {
+        var id = group.EffectiveId;
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return;
+        }
+
+        var mine = _myGroups.Where(existing => !string.Equals(existing.Id, id, StringComparison.Ordinal)).ToList();
+        if (isMember)
+        {
+            mine.Add(new VrcProfileGroup
+            {
+                Id = id,
+                Name = group.Name,
+                IconUrl = group.IconUrl,
+                IsMine = true,
+                IsMutual = !IsSelf && Groups.Any(profileGroup => string.Equals(profileGroup.Id, id, StringComparison.Ordinal))
+            });
+            mine.Sort((left, right) => string.Compare(left.Name, right.Name, StringComparison.CurrentCultureIgnoreCase));
+        }
+
+        _myGroups = mine;
+
+        foreach (var profileGroup in Groups.Where(profileGroup => string.Equals(profileGroup.Id, id, StringComparison.Ordinal)))
+        {
+            profileGroup.IsMine = isMember;
+            profileGroup.IsMutual = isMember && !IsSelf;
+        }
+
+        OnPropertyChanged(nameof(Groups));
+        OnPropertyChanged(nameof(MyGroups));
+        OnPropertyChanged(nameof(VisibleGroups));
+        OnPropertyChanged(nameof(MyGroupsTabText));
+        OnPropertyChanged(nameof(TheirGroupsTabText));
+        OnPropertyChanged(nameof(MutualGroupsTabText));
+        OnPropertyChanged(nameof(ProfileGroupsTabText));
+        OnPropertyChanged(nameof(GroupsSummary));
+        OnPropertyChanged(nameof(MutualGroupCount));
+        OnPropertyChanged(nameof(HasMutualGroups));
+        OnPropertyChanged(nameof(MutualGroupsText));
+    }
+
     /// <summary>Opens a group chip in the group info popup (join/leave/details).</summary>
     public RelayCommand<VrcProfileGroup> OpenGroupCommand { get; }
 

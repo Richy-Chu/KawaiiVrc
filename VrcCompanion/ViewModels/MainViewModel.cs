@@ -1464,6 +1464,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         GroupViewModel = new GroupViewModel(
             _api,
             () => IsDesktopDefault ? LaunchMode.Desktop : LaunchMode.Vr);
+        GroupViewModel.MembershipChanged += (group, isMember) =>
+            SelectedFriendDetail?.ApplyGroupMembership(group, isMember);
         ActivityFeedViewModel = new ActivityFeedViewModel(_api);
         MultiAccountViewModel = new MultiAccountViewModel(_api);
         MultiAccountViewModel.SessionSwitched += OnAccountSessionSwitched;

@@ -42,6 +42,9 @@ public sealed class GroupViewModel : ViewModelBase
     private bool _isLoadingGroupInfoInstances;
     private bool _groupInstancesHidden;
 
+    /// <summary>Raised after a successful join or leave, with the affected group.</summary>
+    public event Action<Group, bool>? MembershipChanged;
+
     public GroupViewModel(VrcApiClient api, Func<LaunchMode>? launchMode = null)
     {
         _api = api;
@@ -622,6 +625,7 @@ public sealed class GroupViewModel : ViewModelBase
             GroupInfo.MembershipStatus = "member";
             OnPropertyChanged(nameof(GroupInfoMemberText));
             OnPropertyChanged(nameof(GroupInfoMembershipLabel));
+            MembershipChanged?.Invoke(GroupInfo, true);
             GroupInstancesHidden = false;
             await LoadGroupInfoInstancesAsync(GroupInfo.EffectiveId);
             // Refresh the cached membership list in the background; the popup
@@ -663,6 +667,7 @@ public sealed class GroupViewModel : ViewModelBase
             GroupInfo.MembershipStatus = "inactive";
             OnPropertyChanged(nameof(GroupInfoMemberText));
             OnPropertyChanged(nameof(GroupInfoMembershipLabel));
+            MembershipChanged?.Invoke(GroupInfo, false);
             IsLeaveGroupConfirmOpen = false;
             GroupInfoInstances = new ObservableCollection<GroupInstance>();
             GroupInstancesHidden = true;

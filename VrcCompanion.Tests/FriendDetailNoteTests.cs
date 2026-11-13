@@ -40,6 +40,29 @@ public class FriendDetailNoteTests : IDisposable
         store);
 
     [Fact]
+    public void JoinAndLeaveUpdateMyGroupsWithoutReopeningTheProfile()
+    {
+        var profile = CreateProfile(new FriendNotesStore(NotesPath));
+        profile.GroupsTab = FriendDetailViewModel.ProfileGroupsTab.Mine;
+        var group = new Group { Id = "grp_after_dark", Name = "After Dark" };
+
+        Assert.Empty(profile.MyGroups);
+        Assert.Empty(profile.VisibleGroups);
+
+        profile.ApplyGroupMembership(group, isMember: true);
+        var joined = Assert.Single(profile.MyGroups);
+        Assert.Same(joined, Assert.Single(profile.VisibleGroups));
+        Assert.Equal("My groups (1)", profile.MyGroupsTabText);
+        Assert.Equal("grp_after_dark", joined.Id);
+        Assert.Equal("After Dark", joined.Name);
+        Assert.Equal("Joined", joined.MembershipLabel);
+
+        profile.ApplyGroupMembership(group, isMember: false);
+        Assert.Empty(profile.MyGroups);
+        Assert.Empty(profile.VisibleGroups);
+    }
+
+    [Fact]
     public void OwnProfile_IsMarkedAsSelfAndKeepsTheNoteEditorOutOfThePopup()
     {
         var store = new FriendNotesStore(NotesPath);
