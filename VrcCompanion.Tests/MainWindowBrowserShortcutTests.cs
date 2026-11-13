@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
@@ -86,11 +87,11 @@ public class MainWindowBrowserShortcutTests
                 Assert.True(browser.CanGoBack, "The second page should have Back history.");
 
                 await NavigateAsync(() =>
-                    Assert.True(window.TryHandleBrowserFocusShortcut(Key.Left, ModifierKeys.Alt)));
+                    RaiseFocusShortcut(window, Key.Left, ModifierKeys.Alt));
                 Assert.True(browser.CanGoForward, "Alt+Left should leave Forward history.");
 
                 await NavigateAsync(() =>
-                    Assert.True(window.TryHandleBrowserFocusShortcut(Key.Right, ModifierKeys.Alt)));
+                    RaiseFocusShortcut(window, Key.Right, ModifierKeys.Alt));
                 Assert.True(browser.CanGoBack, "Alt+Right should restore Back history.");
 
                 await NavigateAsync(() =>
@@ -107,18 +108,50 @@ public class MainWindowBrowserShortcutTests
                     Assert.True(f5.Handled, "F5 should be handled by the window shortcut path.");
                 });
                 await NavigateAsync(() =>
-                    Assert.True(window.TryHandleBrowserFocusShortcut(Key.R, ModifierKeys.Control)));
+                    RaiseFocusShortcut(window, Key.R, ModifierKeys.Control));
 
                 shell.BraveBrowserViewModel.IsFocusMode = false;
-                Assert.False(
-                    window.TryHandleBrowserFocusShortcut(Key.Left, ModifierKeys.Alt),
-                    "Shortcuts should be ignored when no browser is focused.");
+                var ignored = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window)!,
+                    0,
+                    Key.Left)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent
+                };
+                using (KeyboardModifierState.Apply(ModifierKeys.Alt))
+                {
+                    window.RaiseEvent(ignored);
+                }
+
+                Assert.False(ignored.Handled, "Shortcuts should be ignored when no browser is focused.");
             }
             finally
             {
                 window.Close();
             }
         });
+    }
+
+    private static void RaiseFocusShortcut(Window window, Key key, ModifierKeys modifiers)
+    {
+        var keyEvent = new KeyEventArgs(
+            Keyboard.PrimaryDevice,
+            PresentationSource.FromVisual(window)!,
+            0,
+            key)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent
+        };
+
+        using (KeyboardModifierState.Apply(modifiers))
+        {
+            window.RaiseEvent(keyEvent);
+        }
+
+        Assert.True(
+            keyEvent.Handled,
+            $"{modifiers}+{key} should be handled by the window preview-key path.");
     }
 
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
@@ -136,5 +169,74 @@ public class MainWindowBrowserShortcutTests
                 yield return child;
             }
         }
+    }
+
+    /// <summary>
+    /// WPF reads modifier state from the thread keyboard state, not from
+    /// KeyEventArgs. Set and restore it around each synthetic preview-key event.
+    /// </summary>
+    private sealed class KeyboardModifierState : IDisposable
+    {
+        private const int VkShift = 0x10;
+        private const int VkControl = 0x11;
+        private const int VkAlt = 0x12;
+        private const int VkLeftShift = 0xA0;
+        private const int VkLeftControl = 0xA2;
+        private const int VkLeftAlt = 0xA4;
+        private const int VkLeftWindows = 0x5B;
+
+        private readonly byte[] _previous;
+
+        private KeyboardModifierState(byte[] previous)
+        {
+            _previous = previous;
+        }
+
+        public static KeyboardModifierState Apply(ModifierKeys modifiers)
+        {
+            var previous = new byte[256];
+            if (!GetKeyboardState(previous))
+            {
+                throw new InvalidOperationException(
+                    $"Could not read keyboard state: {Marshal.GetLastWin32Error()}.");
+            }
+
+            var state = (byte[])previous.Clone();
+            SetKeyState(state, VkShift, modifiers.HasFlag(ModifierKeys.Shift));
+            SetKeyState(state, VkLeftShift, modifiers.HasFlag(ModifierKeys.Shift));
+            SetKeyState(state, VkControl, modifiers.HasFlag(ModifierKeys.Control));
+            SetKeyState(state, VkLeftControl, modifiers.HasFlag(ModifierKeys.Control));
+            SetKeyState(state, VkAlt, modifiers.HasFlag(ModifierKeys.Alt));
+            SetKeyState(state, VkLeftAlt, modifiers.HasFlag(ModifierKeys.Alt));
+            SetKeyState(state, VkLeftWindows, modifiers.HasFlag(ModifierKeys.Windows));
+
+            if (!SetKeyboardState(state))
+            {
+                throw new InvalidOperationException(
+                    $"Could not set keyboard state: {Marshal.GetLastWin32Error()}.");
+            }
+
+            return new KeyboardModifierState(previous);
+        }
+
+        public void Dispose()
+        {
+            if (!SetKeyboardState(_previous))
+            {
+                throw new InvalidOperationException(
+                    $"Could not restore keyboard state: {Marshal.GetLastWin32Error()}.");
+            }
+        }
+
+        private static void SetKeyState(byte[] state, int virtualKey, bool pressed)
+            => state[virtualKey] = (byte)((state[virtualKey] & 0x7F) | (pressed ? 0x80 : 0));
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetKeyboardState(byte[] keyState);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetKeyboardState(byte[] keyState);
     }
 }

@@ -13,7 +13,7 @@ public class CreatorResourcesTests
     {
         var vm = new CreatorResourcesViewModel();
 
-        Assert.Equal(8, vm.Resources.Count);
+        Assert.Equal(9, vm.Resources.Count);
         Assert.Equal(
             "https://vrmodels.store/?do=search&subaction=search&story=cat%20ears",
             Resource(vm, "VRModels").BuildSearchUrl("cat ears"));
@@ -38,13 +38,17 @@ public class CreatorResourcesTests
     public void OpenOnlyToolsHaveNoSearchPage()
     {
         var vm = new CreatorResourcesViewModel();
+        var kawaii = Resource(vm, "Kawaii Studio");
         var vcc = Resource(vm, "VRChat Creator Companion");
         var alcom = Resource(vm, "ALCOM");
 
+        Assert.False(kawaii.CanSearch);
         Assert.False(vcc.CanSearch);
         Assert.False(alcom.CanSearch);
+        Assert.Null(kawaii.BuildSearchUrl("avatar"));
         Assert.Null(vcc.BuildSearchUrl("avatar"));
         Assert.Null(alcom.BuildSearchUrl("avatar"));
+        Assert.Equal("https://archive.kawaiistudio.org/login", kawaii.SiteUrl);
         Assert.StartsWith("https://", vcc.SiteUrl, StringComparison.Ordinal);
         Assert.StartsWith("https://", alcom.SiteUrl, StringComparison.Ordinal);
     }
@@ -81,6 +85,21 @@ public class CreatorResourcesTests
     }
 
     [Fact]
+    public void KawaiiStudioLoginOpensInTheEmbeddedBrowser()
+    {
+        var vm = new CreatorResourcesViewModel();
+        string? navigatedUrl = null;
+        vm.BrowserNavigationRequested += url => navigatedUrl = url;
+
+        vm.BrowseCommand.Execute(Resource(vm, "Kawaii Studio"));
+
+        Assert.True(vm.IsBrowserOpen);
+        Assert.Equal("Kawaii Studio", vm.BrowserTitle);
+        Assert.Equal("https://archive.kawaiistudio.org/login", vm.BrowserUrl);
+        Assert.Equal(vm.BrowserUrl, navigatedUrl);
+    }
+
+    [Fact]
     public void ClosingTheBrowserKeepsResourcesAvailable()
     {
         var vm = new CreatorResourcesViewModel();
@@ -90,7 +109,7 @@ public class CreatorResourcesTests
 
         Assert.False(vm.IsBrowserOpen);
         Assert.Empty(vm.BrowserError);
-        Assert.Equal(8, vm.Resources.Count);
+        Assert.Equal(9, vm.Resources.Count);
     }
 
     [Fact]

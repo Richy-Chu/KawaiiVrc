@@ -68,6 +68,12 @@ public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserH
                 "https://gumroad.com/",
                 "https://gumroad.com/discover?query={0}"),
             new(
+                "Kawaii Studio",
+                "Avatar archive",
+                "K",
+                "Archive of Kawaii Studio avatar assets and creator resources. Sign in on the site to browse the archive.",
+                "https://archive.kawaiistudio.org/login"),
+            new(
                 "VRChat Creator Companion",
                 "Official VRChat tool",
                 "VCC",

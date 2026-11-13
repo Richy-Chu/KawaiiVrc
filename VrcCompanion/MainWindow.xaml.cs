@@ -129,7 +129,7 @@ public partial class MainWindow : Window
             e.Key == Key.System ? e.SystemKey : e.Key,
             Keyboard.Modifiers);
 
-    internal bool TryHandleBrowserFocusShortcut(Key key, ModifierKeys modifiers)
+    private bool TryHandleBrowserFocusShortcut(Key key, ModifierKeys modifiers)
     {
         if (!_viewModel.IsAnyBrowserFocused)
         {
