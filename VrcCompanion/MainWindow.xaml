@@ -2538,6 +2538,105 @@
             </Grid>
         </DataTemplate>
 
+        <DataTemplate x:Key="CreatorResourcesTemplate">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="26,2,18,18">
+                <StackPanel>
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="SEARCH CREATOR SITES" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding CreatorResourcesViewModel.SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource InputBox}"
+                                     Tag="Search avatars, outfits, models, shaders, or tools..." />
+                            <TextBlock Text="Type a term, then choose Search on a site below. Links open in your browser; sign in and download on the site itself."
+                                       Style="{StaticResource MutedText}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="MARKETPLACES &amp; TOOLS"
+                               Style="{StaticResource FieldLabel}"
+                               Margin="0,0,0,10" />
+
+                    <ItemsControl ItemsSource="{Binding CreatorResourcesViewModel.Resources}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource Card}"
+                                        Width="370"
+                                        Margin="0,0,14,14">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="42" Height="42"
+                                                    CornerRadius="12"
+                                                    Background="{StaticResource InputBrush}"
+                                                    Margin="0,0,12,0">
+                                                <TextBlock Text="{Binding Initial}"
+                                                           FontSize="14"
+                                                           FontWeight="Bold"
+                                                           Foreground="{StaticResource AccentHoverBrush}"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}"
+                                                           FontSize="15"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{StaticResource TextBrush}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Category}"
+                                                           Style="{StaticResource MutedText}"
+                                                           Margin="0,3,0,0" />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <TextBlock Text="{Binding Description}"
+                                                   Style="{StaticResource MutedText}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,12,0,16" />
+
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="Open site"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Padding="12,6"
+                                                    FontSize="11"
+                                                    Margin="0,0,8,0"
+                                                    ToolTip="Opens in your default browser"
+                                                    Command="{Binding DataContext.CreatorResourcesViewModel.OpenCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="Search"
+                                                    Style="{StaticResource SecondaryButton}"
+                                                    Padding="12,6"
+                                                    FontSize="11"
+                                                    ToolTip="Searches this site in your default browser"
+                                                    Visibility="{Binding CanSearch, Converter={StaticResource BoolToVis}}"
+                                                    Command="{Binding DataContext.CreatorResourcesViewModel.SearchCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="Creator Resources only opens these sites. It does not store logins, bypass site checks, or download files."
+                               Style="{StaticResource MutedText}"
+                               TextWrapping="Wrap"
+                               Margin="0,4,0,0" />
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
         <DataTemplate x:Key="ActivityTemplate">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
@@ -3330,6 +3429,9 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding SelectedSection.Key}" Value="groups">
                     <Setter Property="ContentTemplate" Value="{StaticResource GroupsTemplate}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="resources">
+                    <Setter Property="ContentTemplate" Value="{StaticResource CreatorResourcesTemplate}" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding SelectedSection.Key}" Value="activity">
                     <Setter Property="ContentTemplate" Value="{StaticResource ActivityTemplate}" />

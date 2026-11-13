@@ -85,6 +85,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public ChatboxViewModel ChatboxViewModel { get; }
 
+    public CreatorResourcesViewModel CreatorResourcesViewModel { get; }
+
     public GroupViewModel? GroupViewModel
     {
         get => _groupViewModel;
@@ -149,6 +151,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             new("favorites", "Favourites", "\uE735"),
             new("avatarsearch", "Avatar Search", "\uE721"),
             new("groups", "Groups", "\uE70E"),
+            new("resources", "Creator Resources", "\uE719"),
             new("chatbox", "Chatbox", "\uE8BD"),
             new("media", "Media", "\uEB9F"),
             new("accounts", "Accounts", "\uE716"),
@@ -157,6 +160,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _selectedSection = Sections[0];
         MediaViewModel = new MediaLibraryViewModel();
         ChatboxViewModel = new ChatboxViewModel();
+        CreatorResourcesViewModel = new CreatorResourcesViewModel();
 
         Statuses = new ObservableCollection<StatusOption>
         {
@@ -463,6 +467,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         "favorites" => "The avatars you have favourited in VRChat, slot by slot.",
         "avatarsearch" => "Search every avatar VRChat knows about and wear or save it.",
         "groups" => "Manage your VRChat groups, roles, and members.",
+        "resources" => "Open external creator marketplaces and official VRChat tools.",
         "activity" => "See what your friends have been up to.",
         "chatbox" => "Send and rotate VRChat chatbox messages over OSC.",
         "media" => "Your in-game pictures, grouped by world and month.",
