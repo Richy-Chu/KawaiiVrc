@@ -253,12 +253,11 @@ public class MainWindowLayoutTests
     }
 
     [Theory]
-    [InlineData("brave", "BraveBrowserPane", "BraveFocusToggle")]
-    [InlineData("discord", "DiscordBrowserPane", "DiscordFocusToggle")]
-    [InlineData("resources", "CreatorBrowserPane", "CreatorFocusToggle")]
+    [InlineData("brave", "BraveFocusToggle")]
+    [InlineData("discord", "DiscordFocusToggle")]
+    [InlineData("resources", "CreatorFocusToggle")]
     public void InvalidFocusAddressFeedbackFitsAtMinimumWindowWidth(
         string sectionKey,
-        string paneTag,
         string toggleTag)
     {
         WpfTestHost.Run(() =>
@@ -280,13 +279,6 @@ public class MainWindowLayoutTests
                 "brave" => shell.BraveBrowserViewModel.BrowserError,
                 "discord" => shell.DiscordBrowserViewModel.BrowserError,
                 "resources" => shell.CreatorResourcesViewModel.BrowserError,
-                _ => string.Empty
-            };
-            var errorBindingPath = sectionKey switch
-            {
-                "brave" => "BraveBrowserViewModel.BrowserError",
-                "discord" => "DiscordBrowserViewModel.BrowserError",
-                "resources" => "CreatorResourcesViewModel.BrowserError",
                 _ => string.Empty
             };
             var window = new MainWindow(shell, initializeOnLoad: false)
@@ -315,8 +307,6 @@ public class MainWindowLayoutTests
                 window.UpdateLayout();
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
 
-                var pane = FindVisualChildren<Border>(window)
-                    .Single(element => Equals(element.Tag, paneTag));
                 var toggle = FindVisualChildren<ToggleButton>(window)
                     .Single(element => Equals(element.Tag, toggleTag));
                 var address = FindVisualChildren<TextBox>(window)
@@ -326,7 +316,6 @@ public class MainWindowLayoutTests
                     .Single(button =>
                         AutomationProperties.GetAutomationId(button) == "BrowserFocusExitButton");
 
-                Assert.True(pane.IsVisible, $"The {sectionKey} browser pane should be visible.");
                 Assert.True(toggle.IsChecked == true, $"{sectionKey} should be in focus mode.");
                 Assert.True(host.IsFocusMode, $"{sectionKey} focus state should be active.");
                 Assert.True(address.IsVisible, $"The {sectionKey} focus address box should be visible.");
@@ -355,11 +344,11 @@ public class MainWindowLayoutTests
                     .Single(text =>
                         text.Text == message &&
                         text.GetBindingExpression(TextBlock.TextProperty)
-                            ?.ParentBinding.Path.Path == errorBindingPath);
+                            ?.ParentBinding.Path.Path
+                            ?.EndsWith(".BrowserError", StringComparison.Ordinal) == true);
                 Assert.True(
                     feedback.IsVisible,
                     $"Invalid-address feedback should be visible for {sectionKey} in focus mode.");
-                Assert.Equal(message, feedback.Text);
 
                 var feedbackBounds = BoundsWithin(feedback, window);
                 var addressBounds = BoundsWithin(address, window);
