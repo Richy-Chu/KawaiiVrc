@@ -202,6 +202,23 @@
             <Setter Property="MaxWidth" Value="380" />
         </Style>
 
+        <Style x:Key="BrowserFocusToggle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="{StaticResource InputBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="ToolTip" Value="Hide the search controls and give this browser the whole pane." />
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Foreground" Value="#0B0D12" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="ChoiceListItem" TargetType="ListBoxItem">
             <Setter Property="Margin" Value="0,0,0,4" />
             <Setter Property="Padding" Value="0" />
@@ -2657,7 +2674,9 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                <Border Style="{StaticResource Card}"
+                        Margin="0,0,0,12"
+                        Visibility="{Binding IsChecked, ElementName=CreatorFocusToggle, Converter={StaticResource InverseBoolToVis}}">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -2687,6 +2706,7 @@
                 </Border>
 
                 <Border Grid.Row="1"
+                        Tag="CreatorBrowserPane"
                         Style="{StaticResource Card}"
                         Padding="0"
                         ClipToBounds="True">
@@ -2694,6 +2714,23 @@
                 </Border>
 
                 <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                    <ToggleButton x:Name="CreatorFocusToggle"
+                                  Tag="CreatorFocusToggle"
+                                  Checked="BrowserFocusToggle_Checked"
+                                  Unchecked="BrowserFocusToggle_Unchecked"
+                                  HorizontalAlignment="Left"
+                                  Margin="0,0,0,6">
+                        <ToggleButton.Style>
+                            <Style TargetType="ToggleButton" BasedOn="{StaticResource BrowserFocusToggle}">
+                                <Setter Property="Content" Value="Focus browser" />
+                                <Style.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter Property="Content" Value="Exit focus" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ToggleButton.Style>
+                    </ToggleButton>
                     <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserError}"
                                Foreground="{StaticResource ErrorTextBrush}"
                                TextWrapping="Wrap" />
@@ -2725,6 +2762,7 @@
                           IsExpanded="True"
                           HorizontalContentAlignment="Stretch"
                           Margin="0,0,0,12"
+                          Visibility="{Binding IsChecked, ElementName=BraveFocusToggle, Converter={StaticResource InverseBoolToVis}}"
                           ToolTip="Collapse these controls to give the browser more room.">
                     <Expander.Header>
                         <TextBlock Text="SEARCH &amp; CONTROLS"
@@ -2771,14 +2809,17 @@
                     </Border>
                 </Expander>
 
-                <Border Grid.Row="1" Style="{StaticResource Card}">
+                <Border Grid.Row="1"
+                        Tag="BraveBrowserPane"
+                        Style="{StaticResource Card}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <Grid Margin="0,0,0,8">
+                        <Grid Margin="0,0,0,8"
+                              Visibility="{Binding IsChecked, ElementName=BraveFocusToggle, Converter={StaticResource InverseBoolToVis}}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -2824,6 +2865,23 @@
                             </Border>
                         </Grid>
                         <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                            <ToggleButton x:Name="BraveFocusToggle"
+                                          Tag="BraveFocusToggle"
+                                          Checked="BrowserFocusToggle_Checked"
+                                          Unchecked="BrowserFocusToggle_Unchecked"
+                                          HorizontalAlignment="Left"
+                                          Margin="0,0,0,6">
+                                <ToggleButton.Style>
+                                    <Style TargetType="ToggleButton" BasedOn="{StaticResource BrowserFocusToggle}">
+                                        <Setter Property="Content" Value="Focus browser" />
+                                        <Style.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter Property="Content" Value="Exit focus" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ToggleButton.Style>
+                            </ToggleButton>
                             <TextBlock Text="{Binding BraveBrowserViewModel.BrowserError}"
                                        Foreground="{StaticResource ErrorTextBrush}"
                                        TextWrapping="Wrap" />
@@ -2856,6 +2914,7 @@
                           IsExpanded="True"
                           HorizontalContentAlignment="Stretch"
                           Margin="0,0,0,12"
+                          Visibility="{Binding IsChecked, ElementName=DiscordFocusToggle, Converter={StaticResource InverseBoolToVis}}"
                           ToolTip="Collapse these controls to give the browser more room.">
                     <Expander.Header>
                         <TextBlock Text="SEARCH &amp; CONTROLS"
@@ -2933,14 +2992,17 @@
                     </Border>
                 </Expander>
 
-                <Border Grid.Row="1" Style="{StaticResource Card}">
+                <Border Grid.Row="1"
+                        Tag="DiscordBrowserPane"
+                        Style="{StaticResource Card}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <Grid Margin="0,0,0,8">
+                        <Grid Margin="0,0,0,8"
+                              Visibility="{Binding IsChecked, ElementName=DiscordFocusToggle, Converter={StaticResource InverseBoolToVis}}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -2964,6 +3026,23 @@
                         <controls:EmbeddedBrowser Grid.Row="1"
                                                   DataContext="{Binding DiscordBrowserViewModel}" />
                         <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                            <ToggleButton x:Name="DiscordFocusToggle"
+                                          Tag="DiscordFocusToggle"
+                                          Checked="BrowserFocusToggle_Checked"
+                                          Unchecked="BrowserFocusToggle_Unchecked"
+                                          HorizontalAlignment="Left"
+                                          Margin="0,0,0,6">
+                                <ToggleButton.Style>
+                                    <Style TargetType="ToggleButton" BasedOn="{StaticResource BrowserFocusToggle}">
+                                        <Setter Property="Content" Value="Focus browser" />
+                                        <Style.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter Property="Content" Value="Exit focus" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ToggleButton.Style>
+                            </ToggleButton>
                             <TextBlock Text="{Binding DiscordBrowserViewModel.BrowserError}"
                                        Foreground="{StaticResource ErrorTextBrush}"
                                        TextWrapping="Wrap" />
@@ -3876,7 +3955,8 @@
                 </Grid.RowDefinitions>
 
                 <!-- Header -->
-                <Border BorderBrush="{StaticResource SoftBorderBrush}"
+                <Border x:Name="AppHeader"
+                        BorderBrush="{StaticResource SoftBorderBrush}"
                         BorderThickness="0,0,0,1"
                         Padding="26,18,26,14">
                     <Grid>
@@ -4039,7 +4119,8 @@
                       ClipToBounds="True" />
 
                 <!-- Footer -->
-                <Border Grid.Row="3"
+                <Border x:Name="AppFooter"
+                        Grid.Row="3"
                         BorderBrush="{StaticResource SoftBorderBrush}"
                         BorderThickness="0,1,0,0"
                         Padding="26,8">

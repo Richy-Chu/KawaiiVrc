@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -62,6 +63,76 @@ public class MainWindowLayoutTests
                     $"Settings should be fully visible after scrolling the sidebar. " +
                     $"Bounds={bounds}, actual={scroll.ActualHeight}, viewport={scroll.ViewportHeight}, " +
                     $"offset={scroll.VerticalOffset}, scrollable={scroll.ScrollableHeight}.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData("brave", "BraveBrowserPane", "BraveFocusToggle")]
+    [InlineData("discord", "DiscordBrowserPane", "DiscordFocusToggle")]
+    public void FocusModeGivesTheBrowserTheWholePane(
+        string sectionKey,
+        string paneTag,
+        string toggleTag)
+    {
+        WpfTestHost.Run(() =>
+        {
+            var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            var window = new MainWindow(shell, initializeOnLoad: false)
+            {
+                Width = 1100,
+                Height = 720,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = 100,
+                Top = 100
+            };
+
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == sectionKey);
+                window.UpdateLayout();
+
+                var pane = FindVisualChildren<Border>(window)
+                    .Single(element => Equals(element.Tag, paneTag));
+                var toggle = FindVisualChildren<ToggleButton>(window)
+                    .Single(element => Equals(element.Tag, toggleTag));
+                var expander = FindVisualChildren<Expander>(window).Single();
+
+                var normalHeight = pane.ActualHeight;
+                toggle.IsChecked = true;
+                window.UpdateLayout();
+
+                Assert.True(
+                    pane.ActualHeight > normalHeight + 20,
+                    $"Focus mode should give {sectionKey} more height. " +
+                    $"Before={normalHeight:F1}, after={pane.ActualHeight:F1}.");
+                Assert.Equal(Visibility.Collapsed, expander.Visibility);
+                Assert.Equal(
+                    Visibility.Collapsed,
+                    ((Border)window.FindName("AppHeader")).Visibility);
+                Assert.Equal(
+                    Visibility.Collapsed,
+                    ((Border)window.FindName("AppFooter")).Visibility);
+
+                toggle.IsChecked = false;
+                window.UpdateLayout();
+                Assert.Equal(
+                    Visibility.Visible,
+                    ((Border)window.FindName("AppHeader")).Visibility);
+                Assert.Equal(
+                    Visibility.Visible,
+                    ((Border)window.FindName("AppFooter")).Visibility);
             }
             finally
             {
