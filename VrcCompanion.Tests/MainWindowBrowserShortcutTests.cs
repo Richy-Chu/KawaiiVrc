@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
@@ -227,6 +228,55 @@ public class MainWindowBrowserShortcutTests
         });
     }
 
+    [Theory]
+    [InlineData("brave")]
+    [InlineData("discord")]
+    [InlineData("resources")]
+    public void FocusModeRaisesLiveRegionChangedForBrowserErrors(string sectionKey)
+    {
+        WithFocusWindowAsync(sectionKey, async (window, host, browser, _) =>
+        {
+            const string message = "The in-app browser could not start.";
+            var feedback = browser.FindName("FocusAddressError") as TextBlock
+                ?? throw new InvalidOperationException("Focus address error was not found.");
+            var automationId = AutomationProperties.GetAutomationId(feedback);
+            var root = AutomationElement.FromHandle(new WindowInteropHelper(window).Handle);
+            var announcement = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            AutomationEventHandler handler = (sender, _) =>
+            {
+                if (sender is AutomationElement element &&
+                    element.Current.AutomationId == automationId)
+                {
+                    announcement.TrySetResult(true);
+                }
+            };
+
+            Automation.AddAutomationEventHandler(
+                AutomationElementIdentifiers.LiveRegionChangedEvent,
+                root,
+                TreeScope.Subtree,
+                handler);
+            try
+            {
+                host.SetBrowserError(message);
+                window.UpdateLayout();
+
+                await Task.WhenAny(announcement.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+                Assert.True(
+                    announcement.Task.IsCompletedSuccessfully,
+                    $"Changing the {sectionKey} focus-mode browser error should raise LiveRegionChanged.");
+            }
+            finally
+            {
+                Automation.RemoveAutomationEventHandler(
+                    AutomationElementIdentifiers.LiveRegionChangedEvent,
+                    root,
+                    handler);
+            }
+        });
+    }
+
     private const string FocusUrl = "https://example.com/focus";
     private const string FocusTitle = "Focus page";
 
@@ -236,48 +286,9 @@ public class MainWindowBrowserShortcutTests
     {
         WpfTestHost.Run(() =>
         {
-            var shell = new MainViewModel();
-            TestHooks.SetLoggedIn(shell);
-            var browserSection = shell.Sections.Single(section => section.Key == sectionKey);
-            IEmbeddedBrowserHost host = sectionKey switch
-            {
-                "brave" => shell.BraveBrowserViewModel,
-                "discord" => shell.DiscordBrowserViewModel,
-                "resources" => shell.CreatorResourcesViewModel,
-                _ => throw new ArgumentOutOfRangeException(nameof(sectionKey), sectionKey, null)
-            };
-            var window = new MainWindow(shell, initializeOnLoad: false)
-            {
-                Width = 1100,
-                Height = 720,
-                WindowStyle = WindowStyle.None,
-                ShowInTaskbar = false,
-                ShowActivated = false,
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                Left = 100,
-                Top = 100
-            };
-
+            var (window, host, browser, address) = CreateFocusWindow(sectionKey);
             try
             {
-                window.Show();
-                window.Activate();
-                shell.SelectedSection = browserSection;
-                if (host is CreatorResourcesViewModel creatorResources)
-                {
-                    creatorResources.ShowBrowserForLayoutTest();
-                }
-
-                host.SetBrowserLocation(FocusUrl, FocusTitle);
-                host.IsFocusMode = true;
-                window.UpdateLayout();
-                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-
-                var browser = FindVisualChildren<EmbeddedBrowser>(window)
-                    .Single(element => element.IsVisible);
-                var address = browser.FindName("FocusAddressBox") as TextBox
-                    ?? throw new InvalidOperationException("Focus address box was not found.");
-
                 test(window, host, browser, address);
             }
             finally
@@ -285,6 +296,81 @@ public class MainWindowBrowserShortcutTests
                 window.Close();
             }
         });
+    }
+
+    private static void WithFocusWindowAsync(
+        string sectionKey,
+        Func<MainWindow, IEmbeddedBrowserHost, EmbeddedBrowser, TextBox, Task> test)
+    {
+        WpfTestHost.RunAsync(async () =>
+        {
+            var (window, host, browser, address) = CreateFocusWindow(sectionKey);
+            try
+            {
+                await test(window, host, browser, address);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    private static (
+        MainWindow Window,
+        IEmbeddedBrowserHost Host,
+        EmbeddedBrowser Browser,
+        TextBox Address) CreateFocusWindow(string sectionKey)
+    {
+        var shell = new MainViewModel();
+        TestHooks.SetLoggedIn(shell);
+        var browserSection = shell.Sections.Single(section => section.Key == sectionKey);
+        IEmbeddedBrowserHost host = sectionKey switch
+        {
+            "brave" => shell.BraveBrowserViewModel,
+            "discord" => shell.DiscordBrowserViewModel,
+            "resources" => shell.CreatorResourcesViewModel,
+            _ => throw new ArgumentOutOfRangeException(nameof(sectionKey), sectionKey, null)
+        };
+        var window = new MainWindow(shell, initializeOnLoad: false)
+        {
+            Width = 1100,
+            Height = 720,
+            WindowStyle = WindowStyle.None,
+            ShowInTaskbar = false,
+            ShowActivated = false,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = 100,
+            Top = 100
+        };
+
+        try
+        {
+            window.Show();
+            window.Activate();
+            shell.SelectedSection = browserSection;
+            if (host is CreatorResourcesViewModel creatorResources)
+            {
+                creatorResources.ShowBrowserForLayoutTest();
+            }
+
+            host.SetBrowserLocation(FocusUrl, FocusTitle);
+            host.IsFocusMode = true;
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+            var browser = FindVisualChildren<EmbeddedBrowser>(window)
+                .Single(element => element.IsVisible);
+            var address = browser.FindName("FocusAddressBox") as TextBox
+                ?? throw new InvalidOperationException("Focus address box was not found.");
+
+            return (window, host, browser, address);
+        }
+        catch
+        {
+            window.Close();
+            throw;
+        }
     }
 
     private static void RaiseFocusShortcut(
