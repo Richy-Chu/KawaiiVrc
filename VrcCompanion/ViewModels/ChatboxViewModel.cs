@@ -27,6 +27,9 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private CancellationTokenSource? _lyricsCancellation;
     private bool _showLyrics;
     private bool _showLyricsOnVrchat;
+    private bool _pauseLyricsAfterMessage;
+    private int _lyricsPauseSeconds;
+    private DateTime _lyricsPausedUntil = DateTime.MinValue;
     private string _lyricsStatusText = "Play a track to look for free lyrics.";
     private int _plainLyricIndex;
     private string? _lastVrchatLyric;
@@ -80,6 +83,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
 
         _showLyricsOnVrchat = _settings.ChatboxLyricsOnVrchat;
+        _pauseLyricsAfterMessage = _settings.ChatboxPauseLyricsAfterMessage;
+        _lyricsPauseSeconds = _settings.ChatboxLyricsPauseSeconds <= 0
+            ? 30
+            : Math.Clamp(_settings.ChatboxLyricsPauseSeconds, 5, 3600);
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(_rotationSeconds) };
         _timer.Tick += (_, _) => RotateNext();
@@ -264,6 +271,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             _settings.ChatboxLyricsOnVrchat = value;
             _store.Save();
             _lastVrchatLyric = null;
+            _lyricsPausedUntil = DateTime.MinValue;
 
             if (value)
             {
@@ -284,6 +292,38 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
                 _lyricsDisplayTimer.Stop();
                 StatusText = "VRChat lyrics display stopped.";
             }
+        }
+    }
+
+    /// <summary>Holds automatic lyrics for a while after a typed chatbox message.</summary>
+    public bool PauseLyricsAfterMessage
+    {
+        get => _pauseLyricsAfterMessage;
+        set
+        {
+            if (!SetProperty(ref _pauseLyricsAfterMessage, value))
+            {
+                return;
+            }
+
+            _settings.ChatboxPauseLyricsAfterMessage = value;
+            _store.Save();
+        }
+    }
+
+    public int LyricsPauseSeconds
+    {
+        get => _lyricsPauseSeconds;
+        set
+        {
+            var clamped = Math.Clamp(value, 5, 3600);
+            if (!SetProperty(ref _lyricsPauseSeconds, clamped))
+            {
+                return;
+            }
+
+            _settings.ChatboxLyricsPauseSeconds = clamped;
+            _store.Save();
         }
     }
 
@@ -487,7 +527,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
 
         var now = DateTime.UtcNow;
-        if (now - _lastOscSend < TimeSpan.FromSeconds(5))
+        if (now < _lyricsPausedUntil || now - _lastOscSend < TimeSpan.FromSeconds(5))
         {
             return;
         }
@@ -529,7 +569,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        SendText(line);
+        SendText(line, pauseLyrics: false);
         StatusText = "Sent lyric line.";
     }
 
@@ -671,10 +711,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
         var text = RotationMessages[_rotationIndex % RotationMessages.Count];
         _rotationIndex++;
-        SendText(text, rotating: true);
+        SendText(text, rotating: true, pauseLyrics: false);
     }
 
-    private void SendText(string text, bool rotating = false)
+    private void SendText(string text, bool rotating = false, bool pauseLyrics = true)
     {
         text = ExpandTokens(text);
         try
@@ -686,6 +726,12 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             StatusText = rotating
                 ? $"Sent rotation message: {preview}"
                 : $"Sent: {preview}";
+
+            if (pauseLyrics && !rotating && _showLyricsOnVrchat && _pauseLyricsAfterMessage)
+            {
+                _lyricsPausedUntil = DateTime.UtcNow.AddSeconds(_lyricsPauseSeconds);
+                StatusText += $" Lyrics paused for {_lyricsPauseSeconds}s.";
+            }
         }
         catch (Exception ex)
         {

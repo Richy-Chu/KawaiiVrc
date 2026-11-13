@@ -74,6 +74,12 @@ public sealed class CompanionSettings
 
     [JsonPropertyName("chatboxLyricsOnVrchat")]
     public bool ChatboxLyricsOnVrchat { get; set; }
+
+    [JsonPropertyName("chatboxPauseLyricsAfterMessage")]
+    public bool ChatboxPauseLyricsAfterMessage { get; set; } = true;
+
+    [JsonPropertyName("chatboxLyricsPauseSeconds")]
+    public int ChatboxLyricsPauseSeconds { get; set; } = 30;
 }
 
 /// <summary>

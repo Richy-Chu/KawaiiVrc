@@ -2962,11 +2962,30 @@
                                         Margin="0,0,8,0"
                                         Command="{Binding ChatboxViewModel.SendLyricCommand}" />
                             </StackPanel>
+                            <WrapPanel Margin="0,8,0,0">
+                                <CheckBox Content="Pause lyrics after my message"
+                                          Style="{StaticResource FriendlyCheckBox}"
+                                          IsChecked="{Binding ChatboxViewModel.PauseLyricsAfterMessage, Mode=TwoWay}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,8,0" />
+                                <TextBlock Text="for"
+                                           Style="{StaticResource MutedText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Width="54"
+                                         Style="{StaticResource InputBox}"
+                                         Text="{Binding ChatboxViewModel.LyricsPauseSeconds, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                         VerticalAlignment="Center"
+                                         Margin="0,0,6,0" />
+                                <TextBlock Text="seconds"
+                                           Style="{StaticResource MutedText}"
+                                           VerticalAlignment="Center" />
+                            </WrapPanel>
                             <CheckBox Content="Show lyrics in rotation ({lyrics})"
                                       Style="{StaticResource FriendlyCheckBox}"
                                       IsChecked="{Binding ChatboxViewModel.ShowLyricsInRotation, Mode=TwoWay}"
                                       Margin="0,8,0,0" />
-                            <TextBlock Text="Shows the song on the VRChat chatbox and adds the current lyric when free lyrics are available. Updates automatically; typed messages still send and stay visible for at least 5 seconds. Lyrics come from LRCLIB."
+                            <TextBlock Text="Shows the song on the VRChat chatbox and adds the current lyric when free lyrics are available. A typed message pauses automatic lyrics for the time above. Lyrics come from LRCLIB."
                                        TextWrapping="Wrap"
                                        Style="{StaticResource MutedText}"
                                        Margin="0,6,0,0" />
