@@ -190,6 +190,79 @@ public class MainWindowBrowserShortcutTests
         });
     }
 
+    [Theory]
+    [InlineData("brave")]
+    [InlineData("discord")]
+    [InlineData("resources")]
+    public void EscapeCancelsAddressEditBeforeExitingFocus(string sectionKey)
+    {
+        WpfTestHost.Run(() =>
+        {
+            var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            var browserSection = shell.Sections.Single(section => section.Key == sectionKey);
+            IEmbeddedBrowserHost host = sectionKey switch
+            {
+                "brave" => shell.BraveBrowserViewModel,
+                "discord" => shell.DiscordBrowserViewModel,
+                "resources" => shell.CreatorResourcesViewModel,
+                _ => throw new ArgumentOutOfRangeException(nameof(sectionKey), sectionKey, null)
+            };
+            var window = new MainWindow(shell, initializeOnLoad: false)
+            {
+                Width = 1100,
+                Height = 720,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = 100,
+                Top = 100
+            };
+
+            try
+            {
+                window.Show();
+                window.Activate();
+                shell.SelectedSection = browserSection;
+                if (host is CreatorResourcesViewModel creatorResources)
+                {
+                    creatorResources.ShowBrowserForLayoutTest();
+                }
+
+                host.SetBrowserLocation("https://example.com/focus", "Focus page");
+                host.IsFocusMode = true;
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                var browser = FindVisualChildren<EmbeddedBrowser>(window)
+                    .Single(element => element.IsVisible);
+                var address = browser.FindName("FocusAddressBox") as TextBox
+                    ?? throw new InvalidOperationException("Focus address box was not found.");
+
+                address.Focus();
+                Keyboard.Focus(address);
+                Assert.True(address.IsKeyboardFocusWithin, "The address box should be focused.");
+                address.Text = "https://example.com/edited";
+
+                var firstEscape = CreatePreviewKeyEvent(window, Key.Escape);
+                RaisePreviewKey(window, firstEscape, ModifierKeys.None);
+                Assert.True(firstEscape.Handled, "The first Escape should cancel the address edit.");
+                Assert.Equal("https://example.com/focus", address.Text);
+                Assert.True(host.IsFocusMode, "The first Escape should keep focus mode active.");
+
+                var secondEscape = CreatePreviewKeyEvent(window, Key.Escape);
+                RaisePreviewKey(window, secondEscape, ModifierKeys.None);
+                Assert.True(secondEscape.Handled, "The second Escape should exit focus mode.");
+                Assert.False(host.IsFocusMode, "The second Escape should leave focus mode.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     private static void RaiseFocusShortcut(
         Window window,
         Key key,

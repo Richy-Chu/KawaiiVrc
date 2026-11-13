@@ -647,6 +647,26 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         FocusAddressBox.SelectAll();
     }
 
+    public bool TryCancelAddressEdit()
+    {
+        if (_viewModel?.IsFocusMode != true ||
+            !FocusAddressBox.IsKeyboardFocusWithin)
+        {
+            return false;
+        }
+
+        var currentUrl = _viewModel.BrowserUrl;
+        if (string.Equals(FocusAddressBox.Text, currentUrl, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        FocusAddressBox.Text = currentUrl;
+        FocusAddressBox.SelectAll();
+        _viewModel.SetBrowserError(string.Empty);
+        return true;
+    }
+
     public void GoBack()
     {
         if (Browser.CoreWebView2?.CanGoBack == true)

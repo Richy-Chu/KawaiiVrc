@@ -114,6 +114,14 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (_viewModel.IsAnyBrowserFocused &&
+                FindVisibleBrowser() is { } focusedBrowser &&
+                focusedBrowser.TryCancelAddressEdit())
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (_viewModel.ExitBrowserFocus())
             {
                 e.Handled = true;
