@@ -50,6 +50,7 @@ public sealed class ActivityFeedService
                         UserName = friend.Username,
                         DisplayName = friend.DisplayName,
                         AvatarUrl = AvatarThumbnailUrl(friend),
+                        Location = location ?? string.Empty,
                         Timestamp = DateTimeOffset.UtcNow,
                         IsOnline = true,
                         Details = bio.Length == 0
@@ -70,6 +71,7 @@ public sealed class ActivityFeedService
                         DisplayName = friend.DisplayName,
                         AvatarUrl = AvatarThumbnailUrl(friend),
                         AvatarId = friend.CurrentAvatar!,
+                        Location = location ?? string.Empty,
                         Timestamp = DateTimeOffset.UtcNow,
                         IsOnline = true,
                         Details = "changed avatar"
@@ -154,6 +156,7 @@ public sealed class ActivityFeedService
                     UserName = friend.Username,
                     DisplayName = friend.DisplayName,
                     AvatarUrl = AvatarThumbnailUrl(friend),
+                    Location = WorldLocation(friend.Location) ?? string.Empty,
                     Timestamp = DateTimeOffset.UtcNow,
                     IsOnline = true,
                     Details = "friended you"
@@ -170,6 +173,7 @@ public sealed class ActivityFeedService
                     UserName = friend.Username,
                     DisplayName = friend.DisplayName,
                     AvatarUrl = AvatarThumbnailUrl(friend),
+                    Location = WorldLocation(friend.Location) ?? string.Empty,
                     Timestamp = DateTimeOffset.UtcNow,
                     IsOnline = false,
                     Details = "unfriended you"

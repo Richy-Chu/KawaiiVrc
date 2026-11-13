@@ -2653,7 +2653,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     // --------------------------------------------------------- friend detail
 
-    private async Task LoadFriendDetailAsync(FriendItem? friend)
+    private async Task LoadFriendDetailAsync(FriendItem? friend, bool forceRefresh = false)
     {
         _friendDetailCancellation?.Cancel();
         _friendDetailCancellation?.Dispose();
@@ -2673,7 +2673,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _images,
             openGroup: OpenGroupInfoFromProfile);
         SelectedFriendDetail = detail;
-        await detail.LoadAsync(forceRefresh: false, cancellation.Token);
+        await detail.LoadAsync(forceRefresh, cancellation.Token);
     }
 
     private async Task RefreshFriendProfileAsync()
@@ -3271,45 +3271,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        PushBusy("Loading that VRChat profile…");
-        try
+        var friend = new FriendItem(new VrcUser
         {
-            // Activity rows only carry an id. Resolve the live user first, then
-            // let the profile popup fetch the full public profile itself.
-            var user = await _api.GetUserAsync(entry.UserId, forceRefresh: true);
-            if (user is null)
-            {
-                ShowError("VRChat did not return that profile.");
-                return;
-            }
+            Id = entry.UserId,
+            DisplayName = entry.DisplayName,
+            Username = entry.UserName,
+            Location = LaunchService.IsLocation(entry.Location) ? entry.Location : null
+        });
 
-            var detail = new FriendDetailViewModel(
-                new FriendItem(user),
-                _api,
-                _images,
-                openGroup: OpenGroupInfoFromProfile);
-
-            SelectedFriend = null;
-            SelectedFriendDetail = detail;
-            await detail.LoadAsync(forceRefresh: true, CancellationToken.None);
-        }
-        catch (VrcApiException ex)
-        {
-            ShowError(ex.Message);
-        }
-        catch (HttpRequestException)
-        {
-            ShowError("Could not reach VRChat to load that profile.");
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine(ex);
-            ShowError("Could not load that VRChat profile.");
-        }
-        finally
-        {
-            PopBusy();
-        }
+        SelectedFriend = null;
+        await LoadFriendDetailAsync(friend, forceRefresh: true);
     }
 
     // -------------------------------------------------------------- updating
