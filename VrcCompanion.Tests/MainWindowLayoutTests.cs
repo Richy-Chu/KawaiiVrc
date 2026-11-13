@@ -115,6 +115,8 @@ public class MainWindowLayoutTests
                 var toggle = FindVisualChildren<ToggleButton>(window)
                     .Single(element => Equals(element.Tag, toggleTag));
                 var expander = FindVisualChildren<Expander>(window).SingleOrDefault();
+                var appHeader = (Border)window.FindName("AppHeader");
+                var appFooter = (Border)window.FindName("AppFooter");
 
                 var normalHeight = pane.ActualHeight;
                 toggle.IsChecked = true;
@@ -128,21 +130,24 @@ public class MainWindowLayoutTests
                 {
                     Assert.Equal(Visibility.Collapsed, expander.Visibility);
                 }
-                Assert.Equal(
-                    Visibility.Collapsed,
-                    ((Border)window.FindName("AppHeader")).Visibility);
-                Assert.Equal(
-                    Visibility.Collapsed,
-                    ((Border)window.FindName("AppFooter")).Visibility);
+                Assert.Equal(Visibility.Collapsed, appHeader.Visibility);
+                Assert.Equal(Visibility.Collapsed, appFooter.Visibility);
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "profile");
+                window.UpdateLayout();
+                Assert.Equal(Visibility.Visible, appHeader.Visibility);
+                Assert.Equal(Visibility.Visible, appFooter.Visibility);
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == sectionKey);
+                window.UpdateLayout();
+                Assert.True(toggle.IsChecked == true, "Focus should remain checked when returning to the browser.");
+                Assert.Equal(Visibility.Collapsed, appHeader.Visibility);
+                Assert.Equal(Visibility.Collapsed, appFooter.Visibility);
 
                 toggle.IsChecked = false;
                 window.UpdateLayout();
-                Assert.Equal(
-                    Visibility.Visible,
-                    ((Border)window.FindName("AppHeader")).Visibility);
-                Assert.Equal(
-                    Visibility.Visible,
-                    ((Border)window.FindName("AppFooter")).Visibility);
+                Assert.Equal(Visibility.Visible, appHeader.Visibility);
+                Assert.Equal(Visibility.Visible, appFooter.Visibility);
             }
             finally
             {
