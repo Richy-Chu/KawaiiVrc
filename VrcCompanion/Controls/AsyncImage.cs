@@ -150,6 +150,7 @@ public sealed class AsyncImage : FrameworkElement
     private async void RestartLoad()
     {
         CancelLoad();
+        ReleaseImage();
 
         var url = SourceUrl;
         if (!_isLoaded || !IsVisible || string.IsNullOrWhiteSpace(url))

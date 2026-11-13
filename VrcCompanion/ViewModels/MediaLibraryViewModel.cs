@@ -57,10 +57,11 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public ObservableCollection<MediaGroup> Groups { get; } = new();
 
     /// <summary>
-    /// What the current page renders. Only this page's cards are created, so a
-    /// large library never loads every picture at once.
+    /// The fixed 48 card slots used by the page. Cards are reused across pages
+    /// so a page flip never builds or abandons a visual tree of decoded images.
     /// </summary>
-    public ObservableCollection<MediaGroup> DisplayedGroups { get; } = new();
+    public ObservableCollection<MediaCard> PageCards { get; } = new(
+        Enumerable.Range(0, PageSize).Select(_ => new MediaCard()));
 
     public RelayCommand PreviousPageCommand { get; }
 
@@ -292,7 +293,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(SummaryText));
         OnPropertyChanged(nameof(EmptyMessage));
         _pageIndex = 0;
-        RebuildDisplayedGroups();
+        RebuildPage();
     }
 
     private void PreviousPage()
@@ -303,7 +304,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         }
 
         _pageIndex--;
-        RebuildDisplayedGroups();
+        RebuildPage();
     }
 
     private void NextPage()
@@ -314,12 +315,12 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         }
 
         _pageIndex++;
-        RebuildDisplayedGroups();
+        RebuildPage();
     }
 
-    private void RebuildDisplayedGroups()
+    private void RebuildPage()
     {
-        DisplayedGroups.Clear();
+        var pageItems = new List<(MediaItem Item, string GroupTitle)>(PageSize);
         var skip = _pageIndex * PageSize;
         var take = PageSize;
 
@@ -336,14 +337,30 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                 continue;
             }
 
-            var items = group.Items.Skip(skip).Take(take).ToList();
-            if (items.Count > 0)
+            foreach (var item in group.Items.Skip(skip).Take(take))
             {
-                DisplayedGroups.Add(group with { Items = items });
-                take -= items.Count;
+                pageItems.Add((item, group.Title));
+                take--;
             }
 
             skip = 0;
+        }
+
+        for (var i = 0; i < PageCards.Count; i++)
+        {
+            if (i >= pageItems.Count)
+            {
+                PageCards[i].Set(null, null);
+                continue;
+            }
+
+            // A group heading labels the first card in that group on this page;
+            // the rest of the row stays visually compact.
+            var groupTitle = i == 0 ||
+                             !string.Equals(pageItems[i].GroupTitle, pageItems[i - 1].GroupTitle, StringComparison.Ordinal)
+                ? pageItems[i].GroupTitle
+                : null;
+            PageCards[i].Set(pageItems[i].Item, groupTitle);
         }
 
         OnPropertyChanged(nameof(PageCount));
@@ -353,10 +370,6 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasNextPage));
         PreviousPageCommand.RaiseCanExecuteChanged();
         NextPageCommand.RaiseCanExecuteChanged();
-
-        // Each page releases up to PageSize decoded bitmaps. Collecting here
-        // keeps page flips from accumulating WPF image memory until shutdown.
-        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
     }
 
     // ------------------------------------------------------------- actions
@@ -393,4 +406,54 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     private static void DefaultOpenPath(string path)
         => Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+}
+
+/// <summary>
+/// One reusable media card. The same 48 card objects are updated when the page
+/// changes, so the visual tree and its AsyncImage controls are not recreated.
+/// </summary>
+public sealed class MediaCard : ViewModelBase
+{
+    private MediaItem? _item;
+    private string? _groupTitle;
+
+    public MediaItem? Item
+    {
+        get => _item;
+        private set
+        {
+            if (SetProperty(ref _item, value))
+            {
+                OnPropertyChanged(nameof(Path));
+                OnPropertyChanged(nameof(FileName));
+                OnPropertyChanged(nameof(HasItem));
+            }
+        }
+    }
+
+    public string? Path => _item?.Path;
+
+    public string FileName => _item?.FileName ?? string.Empty;
+
+    public bool HasItem => _item is not null;
+
+    public string? GroupTitle
+    {
+        get => _groupTitle;
+        private set
+        {
+            if (SetProperty(ref _groupTitle, value))
+            {
+                OnPropertyChanged(nameof(HasGroupTitle));
+            }
+        }
+    }
+
+    public bool HasGroupTitle => !string.IsNullOrWhiteSpace(GroupTitle);
+
+    internal void Set(MediaItem? item, string? groupTitle)
+    {
+        Item = item;
+        GroupTitle = groupTitle;
+    }
 }
