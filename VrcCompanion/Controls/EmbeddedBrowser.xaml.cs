@@ -556,9 +556,8 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
     private void AnnounceFocusAddressError()
     {
-        Dispatcher.BeginInvoke(
-            DispatcherPriority.Background,
-            new Action(() =>
+        Dispatcher.InvokeAsync(
+            () =>
             {
                 if (FocusAddressError.Text.Length == 0)
                 {
@@ -567,7 +566,8 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
                 var peer = UIElementAutomationPeer.CreatePeerForElement(FocusAddressError);
                 peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
-            }));
+            },
+            DispatcherPriority.Background);
     }
 
     internal static bool TryBuildAddressUri(string? input, out Uri uri)
