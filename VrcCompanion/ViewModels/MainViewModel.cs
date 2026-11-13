@@ -87,6 +87,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public CreatorResourcesViewModel CreatorResourcesViewModel { get; }
 
+    public BraveBrowserViewModel BraveBrowserViewModel { get; }
+
+    public DiscordBrowserViewModel DiscordBrowserViewModel { get; }
+
     public GroupViewModel? GroupViewModel
     {
         get => _groupViewModel;
@@ -152,6 +156,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             new("avatarsearch", "Avatar Search", "\uE721"),
             new("groups", "Groups", "\uE70E"),
             new("resources", "Creator Resources", "\uE719"),
+            new("brave", "Brave Browser", "\uE774"),
+            new("discord", "Discord", "\uE8BD"),
             new("chatbox", "Chatbox", "\uE8BD"),
             new("media", "Media", "\uEB9F"),
             new("accounts", "Accounts", "\uE716"),
@@ -161,6 +167,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         MediaViewModel = new MediaLibraryViewModel();
         ChatboxViewModel = new ChatboxViewModel();
         CreatorResourcesViewModel = new CreatorResourcesViewModel();
+        BraveBrowserViewModel = new BraveBrowserViewModel();
+        DiscordBrowserViewModel = new DiscordBrowserViewModel();
 
         Statuses = new ObservableCollection<StatusOption>
         {
@@ -468,6 +476,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         "avatarsearch" => "Search every avatar VRChat knows about and wear or save it.",
         "groups" => "Manage your VRChat groups, roles, and members.",
         "resources" => "Open external creator marketplaces and official VRChat tools.",
+        "brave" => "Search the web and open Spotify, YouTube, or any site in the app.",
+        "discord" => "Sign in to Discord and search friends, servers, or settings.",
         "activity" => "See what your friends have been up to.",
         "chatbox" => "Send and rotate VRChat chatbox messages over OSC.",
         "media" => "Your in-game pictures, grouped by world and month.",

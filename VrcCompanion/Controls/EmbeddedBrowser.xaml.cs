@@ -1,9 +1,11 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
 using VrcCompanion.ViewModels;
@@ -11,51 +13,72 @@ using VrcCompanion.ViewModels;
 namespace VrcCompanion.Controls;
 
 /// <summary>
-/// Hosts WebView2 lazily. Downloads open a Save As dialog so the user chooses
-/// each destination, while sign-in stays on the site.
+/// Hosts WebView2 lazily. The owner keeps one cached instance per tab, so the
+/// page and any active call stay alive while the tab is hidden.
 /// </summary>
-public partial class CreatorBrowser : UserControl
+public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 {
-    private CreatorResourcesViewModel? _viewModel;
+    private IEmbeddedBrowserHost? _viewModel;
     private Task? _initialization;
     private string? _pendingUrl;
+    private Window? _window;
+    private bool _disposed;
 
-    public CreatorBrowser()
+    public EmbeddedBrowser()
     {
         InitializeComponent();
         Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _viewModel = DataContext as CreatorResourcesViewModel;
+        if (_disposed)
+        {
+            return;
+        }
+
+        _viewModel = DataContext as IEmbeddedBrowserHost;
         if (_viewModel is not null)
         {
             _viewModel.BrowserNavigationRequested += OnBrowserNavigationRequested;
+            if (_viewModel is IEmbeddedBrowserAutomationHost automationHost)
+            {
+                automationHost.Automation = this;
+            }
+
             if (_viewModel.IsBrowserOpen)
             {
                 _pendingUrl = _viewModel.BrowserUrl;
             }
         }
 
+        if (_window is null)
+        {
+            _window = Window.GetWindow(this);
+            if (_window is not null)
+            {
+                _window.Closed += OnWindowClosed;
+            }
+        }
+
         _ = NavigatePendingAsync();
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e)
+    private void OnWindowClosed(object? sender, EventArgs e)
     {
-        if (_viewModel is not null)
+        if (_window is not null)
         {
-            _viewModel.BrowserNavigationRequested -= OnBrowserNavigationRequested;
+            _window.Closed -= OnWindowClosed;
+            _window = null;
         }
 
-        _viewModel = null;
+        DisposeBrowser();
     }
 
     private void OnBrowserNavigationRequested(string url)
     {
         _pendingUrl = url;
-        if (IsLoaded)
+        if (IsLoaded && !_disposed)
         {
             _ = NavigatePendingAsync();
         }
@@ -73,7 +96,8 @@ public partial class CreatorBrowser : UserControl
         try
         {
             await EnsureBrowserAsync();
-            if (!string.Equals(_pendingUrl, url, StringComparison.Ordinal))
+            if (_disposed || !IsLoaded ||
+                !string.Equals(_pendingUrl, url, StringComparison.Ordinal))
             {
                 return;
             }
@@ -92,6 +116,124 @@ public partial class CreatorBrowser : UserControl
     private Task EnsureBrowserAsync()
         => _initialization ??= InitializeBrowserAsync();
 
+    private async Task<CoreWebView2?> GetCoreAsync()
+    {
+        if (_disposed)
+        {
+            return null;
+        }
+
+        await EnsureBrowserAsync();
+        return _disposed ? null : Browser.CoreWebView2;
+    }
+
+    public async Task SendKeyAsync(
+        string key,
+        string code,
+        int virtualKeyCode,
+        bool control = false,
+        bool shift = false)
+    {
+        if (await GetCoreAsync() is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            Browser.Focus();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+
+        var modifiers = (control ? 2 : 0) | (shift ? 8 : 0);
+        await core.CallDevToolsProtocolMethodAsync(
+            "Input.dispatchKeyEvent",
+            BuildKeyEvent("keyDown", key, code, virtualKeyCode, modifiers));
+        await core.CallDevToolsProtocolMethodAsync(
+            "Input.dispatchKeyEvent",
+            BuildKeyEvent("keyUp", key, code, virtualKeyCode, modifiers));
+    }
+
+    public async Task InsertTextAsync(string text)
+    {
+        if (await GetCoreAsync() is not { } core)
+        {
+            return;
+        }
+
+        await core.CallDevToolsProtocolMethodAsync(
+            "Input.insertText",
+            JsonSerializer.Serialize(new { text }));
+    }
+
+    public async Task<string> ExecuteScriptAsync(string script)
+    {
+        if (await GetCoreAsync() is not { } core)
+        {
+            return string.Empty;
+        }
+
+        return await core.ExecuteScriptAsync(script);
+    }
+
+    private static string BuildKeyEvent(
+        string type,
+        string key,
+        string code,
+        int virtualKeyCode,
+        int modifiers)
+        => JsonSerializer.Serialize(new
+        {
+            type,
+            modifiers,
+            key,
+            code,
+            windowsVirtualKeyCode = virtualKeyCode,
+            nativeVirtualKeyCode = virtualKeyCode
+        });
+
+    private void DisposeBrowser()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _initialization = null;
+
+        if (_viewModel is not null)
+        {
+            _viewModel.BrowserNavigationRequested -= OnBrowserNavigationRequested;
+            if (_viewModel is IEmbeddedBrowserAutomationHost automationHost)
+            {
+                automationHost.Automation = null;
+            }
+
+            _viewModel = null;
+        }
+
+        try
+        {
+            if (Browser.CoreWebView2 is { } core)
+            {
+                core.NewWindowRequested -= OnNewWindowRequested;
+                core.DownloadStarting -= OnDownloadStarting;
+                core.SourceChanged -= OnSourceChanged;
+                core.DocumentTitleChanged -= OnDocumentTitleChanged;
+            }
+
+            Browser.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
     private async Task InitializeBrowserAsync()
     {
         await Browser.EnsureCoreWebView2Async();
@@ -105,6 +247,22 @@ public partial class CreatorBrowser : UserControl
         core.Settings.IsStatusBarEnabled = false;
         core.NewWindowRequested += OnNewWindowRequested;
         core.DownloadStarting += OnDownloadStarting;
+        core.SourceChanged += OnSourceChanged;
+        core.DocumentTitleChanged += OnDocumentTitleChanged;
+    }
+
+    private void OnSourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
+        => RememberCurrentLocation();
+
+    private void OnDocumentTitleChanged(object? sender, object e)
+        => RememberCurrentLocation();
+
+    private void RememberCurrentLocation()
+    {
+        if (Browser.CoreWebView2 is { Source: { Length: > 0 } source } core)
+        {
+            _viewModel?.SetBrowserLocation(source, core.DocumentTitle);
+        }
     }
 
     private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)

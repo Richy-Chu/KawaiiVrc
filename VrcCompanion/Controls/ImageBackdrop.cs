@@ -17,6 +17,9 @@ namespace VrcCompanion.Controls;
 /// </summary>
 public sealed class ImageBackdrop : Image
 {
+    private Window? _window;
+    private bool _isActive = true;
+
     public static readonly DependencyProperty SourcePathProperty = DependencyProperty.Register(
         nameof(SourcePath),
         typeof(string),
@@ -41,6 +44,9 @@ public sealed class ImageBackdrop : Image
     {
         IsHitTestVisible = false;
         ClipToBounds = true;
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+        IsVisibleChanged += OnIsVisibleChanged;
     }
 
     public string? SourcePath
@@ -63,6 +69,7 @@ public sealed class ImageBackdrop : Image
         var path = SourcePath;
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
+            ImageBehavior.SetAnimatedSource(this, null);
             Source = null;
             return;
         }
@@ -76,6 +83,7 @@ public sealed class ImageBackdrop : Image
                 // WPF's BitmapImage alone renders only the first GIF frame.
                 // ImageBehavior drives the frames, so the setting really animates.
                 ImageBehavior.SetAnimatedSource(this, new BitmapImage(new Uri(path, UriKind.Absolute)));
+                QueueAnimationStateUpdate();
                 return;
             }
 
@@ -90,10 +98,78 @@ public sealed class ImageBackdrop : Image
             // A frozen bitmap only ever shows the first frame.
             image.Freeze();
             Source = image;
+            UpdateAnimationState();
         }
         catch
         {
+            ImageBehavior.SetAnimatedSource(this, null);
             Source = null;
+        }
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        _window = Window.GetWindow(this);
+        if (_window is not null)
+        {
+            _window.Activated += OnWindowActivated;
+            _window.Deactivated += OnWindowDeactivated;
+            _window.StateChanged += OnWindowStateChanged;
+            _isActive = _window.IsActive;
+        }
+
+        UpdateAnimationState();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (_window is not null)
+        {
+            _window.Activated -= OnWindowActivated;
+            _window.Deactivated -= OnWindowDeactivated;
+            _window.StateChanged -= OnWindowStateChanged;
+            _window = null;
+        }
+
+        ImageBehavior.GetAnimationController(this)?.Pause();
+    }
+
+    private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+        => UpdateAnimationState();
+
+    private void OnWindowActivated(object? sender, EventArgs e)
+    {
+        _isActive = true;
+        UpdateAnimationState();
+    }
+
+    private void OnWindowDeactivated(object? sender, EventArgs e)
+    {
+        _isActive = false;
+        UpdateAnimationState();
+    }
+
+    private void OnWindowStateChanged(object? sender, EventArgs e)
+        => UpdateAnimationState();
+
+    private void QueueAnimationStateUpdate()
+        => Dispatcher.BeginInvoke(new Action(UpdateAnimationState));
+
+    private void UpdateAnimationState()
+    {
+        var controller = ImageBehavior.GetAnimationController(this);
+        if (controller is null)
+        {
+            return;
+        }
+
+        if (Animate && _isActive && IsVisible && _window?.WindowState != WindowState.Minimized)
+        {
+            controller.Play();
+        }
+        else
+        {
+            controller.Pause();
         }
     }
 }

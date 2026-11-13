@@ -9,11 +9,11 @@
         xmlns:m="clr-namespace:VrcCompanion.Models"
         xmlns:sys="clr-namespace:System"
         mc:Ignorable="d"
-        d:DesignWidth="1280" d:DesignHeight="840"
+        d:DesignWidth="1440" d:DesignHeight="900"
         Title="VRChat Companion"
         Icon="Assets/app-icon.png"
-        Width="1280" Height="840"
-        MinWidth="1060" MinHeight="700"
+        Width="1440" Height="900"
+        MinWidth="1100" MinHeight="720"
         WindowStartupLocation="CenterScreen"
         Foreground="{StaticResource TextBrush}"
         FontFamily="Segoe UI"
@@ -290,7 +290,7 @@
         <DataTemplate x:Key="ProfileTemplate">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18">
+                          Padding="16,2,12,12">
                 <StackPanel>
 
                     <!-- Identity card -->
@@ -1335,7 +1335,7 @@
         <DataTemplate x:Key="SettingsTemplate">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18">
+                          Padding="16,2,12,12">
                 <StackPanel>
 
                     <!-- Backdrop / appearance -->
@@ -1584,7 +1584,7 @@
             <Grid>
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18"
+                          Padding="16,2,12,12"
                           Visibility="{Binding AvatarViewModel.IsAvatarDetailsOpen, Converter={StaticResource InverseBoolToVis}}">
                 <StackPanel>
                     <!-- Search bar -->
@@ -1775,7 +1775,7 @@
             <Grid>
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled"
-                              Padding="26,2,18,18"
+                              Padding="16,2,12,12"
                               behaviors:ScrollViewerBehavior.PageToken="{Binding AvatarViewModel.ResultsPageToken}">
                     <StackPanel>
                         <Border Style="{StaticResource Card}" Margin="0,0,0,16">
@@ -1953,7 +1953,7 @@
         <DataTemplate x:Key="FavoritesTemplate">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18">
+                          Padding="16,2,12,12">
                 <StackPanel>
                     <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                         <StackPanel>
@@ -2165,7 +2165,7 @@
             <Grid>
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18">
+                          Padding="16,2,12,12">
                 <StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                         <Button Style="{StaticResource PrimaryButton}"
@@ -2541,7 +2541,7 @@
         <DataTemplate x:Key="CreatorResourcesTemplate">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18">
+                          Padding="16,2,12,12">
                 <StackPanel>
                     <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                         <StackPanel>
@@ -2580,8 +2580,8 @@
                                         VerticalAlignment="Center"
                                         Command="{Binding CreatorResourcesViewModel.CloseBrowserCommand}" />
                             </Grid>
-                            <controls:CreatorBrowser Height="520"
-                                                     DataContext="{Binding CreatorResourcesViewModel}" />
+                            <controls:EmbeddedBrowser Height="520"
+                                                      DataContext="{Binding CreatorResourcesViewModel}" />
                             <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserError}"
                                        Foreground="{StaticResource ErrorTextBrush}"
                                        TextWrapping="Wrap"
@@ -2708,10 +2708,257 @@
             </ScrollViewer>
         </DataTemplate>
 
+        <DataTemplate x:Key="BraveBrowserTemplate">
+            <Grid Margin="16,2,12,12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="SEARCH THE WEB" Style="{StaticResource FieldLabel}" />
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox Text="{Binding BraveBrowserViewModel.SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.AutomationId="BraveSearchBox"
+                                     Style="{StaticResource InputBox}"
+                                     Tag="Search for Spotify, YouTube, a site, or anything else..."
+                                     KeyDown="BraveSearchBox_KeyDown" />
+                            <Button Grid.Column="1"
+                                    Content="Search"
+                                    AutomationProperties.AutomationId="BraveSearchButton"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Padding="14,6"
+                                    FontSize="11"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BraveBrowserViewModel.SearchCommand}" />
+                            <Button Grid.Column="2"
+                                    Content="Home"
+                                    AutomationProperties.AutomationId="BraveHomeButton"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Padding="12,6"
+                                    FontSize="11"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BraveBrowserViewModel.HomeCommand}" />
+                        </Grid>
+                        <TextBlock Text="Search with Brave, then open any result in this pane. Type a full site address (spotify.com or youtube.com) to go straight there. Sign in with the site's own form; the app never sees your password."
+                                   Style="{StaticResource MutedText}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,8,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1" Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="IN-APP BROWSER" Style="{StaticResource FieldLabel}" Margin="0" />
+                                <TextBlock Text="{Binding BraveBrowserViewModel.BrowserTitle}"
+                                           FontSize="15"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0,3,0,0" />
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Content="Open folder"
+                                    Style="{StaticResource SmallButton}"
+                                    VerticalAlignment="Center"
+                                    Visibility="{Binding BraveBrowserViewModel.CanOpenDownloadFolder, Converter={StaticResource BoolToVis}}"
+                                    Command="{Binding BraveBrowserViewModel.OpenDownloadFolderCommand}" />
+                        </Grid>
+                        <Grid Grid.Row="1">
+                            <controls:EmbeddedBrowser
+                                DataContext="{Binding BraveBrowserViewModel}"
+                                Visibility="{Binding BraveBrowserViewModel.IsBrowserOpen, Converter={StaticResource BoolToVis}}" />
+                            <Border Background="{StaticResource InputBrush}"
+                                    CornerRadius="8"
+                                    Visibility="{Binding BraveBrowserViewModel.IsBrowserOpen, Converter={StaticResource InverseBoolToVis}}">
+                                <StackPanel HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            MaxWidth="440">
+                                    <TextBlock Text="Search or enter a site to open the browser."
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="Spotify, YouTube, and other sites open here. The browser starts only when you need it."
+                                               Style="{StaticResource MutedText}"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                        <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                            <TextBlock Text="{Binding BraveBrowserViewModel.BrowserError}"
+                                       Foreground="{StaticResource ErrorTextBrush}"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding BraveBrowserViewModel.DownloadStatus}"
+                                       TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding BraveBrowserViewModel.DownloadStatusIsError}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource ErrorTextBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="DiscordBrowserTemplate">
+            <Grid Margin="16,2,12,12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Grid>
+                            <TextBlock Text="DISCORD" Style="{StaticResource FieldLabel}" />
+                            <TextBlock Text="SIGN IN, THEN SEARCH"
+                                       Style="{StaticResource FieldLabel}"
+                                       HorizontalAlignment="Right" />
+                        </Grid>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox Text="{Binding DiscordBrowserViewModel.SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.AutomationId="DiscordSearchBox"
+                                     Style="{StaticResource InputBox}"
+                                     Tag="Search friends, servers, or settings..."
+                                     KeyDown="DiscordSearchBox_KeyDown" />
+                            <Button Grid.Column="1"
+                                    Content="Search"
+                                    AutomationProperties.AutomationId="DiscordSearchButton"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Padding="14,6"
+                                    FontSize="11"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding DiscordBrowserViewModel.SearchCommand}" />
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button Content="Friends"
+                                    AutomationProperties.AutomationId="DiscordFriendsButton"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Padding="12,6"
+                                    FontSize="11"
+                                    Margin="0,0,8,0"
+                                    Command="{Binding DiscordBrowserViewModel.FriendsCommand}" />
+                            <Button Content="Add friend"
+                                    AutomationProperties.AutomationId="DiscordAddFriendButton"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Padding="12,6"
+                                    FontSize="11"
+                                    Margin="0,0,8,0"
+                                    Command="{Binding DiscordBrowserViewModel.AddFriendCommand}" />
+                            <Button Content="Settings"
+                                    AutomationProperties.AutomationId="DiscordSettingsButton"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Padding="12,6"
+                                    FontSize="11"
+                                    Command="{Binding DiscordBrowserViewModel.SettingsCommand}" />
+                        </StackPanel>
+                        <TextBlock Text="Sign in on Discord's own page. After sign-in, Search opens Discord's Quick Switcher for friends, servers, and channels. Add friend and Settings use Discord's own interface; the app never sees your password."
+                                   Style="{StaticResource MutedText}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,8,0,0" />
+                        <TextBlock Text="{Binding DiscordBrowserViewModel.ActionStatus}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,6,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DiscordBrowserViewModel.ActionStatusIsError}" Value="True">
+                                            <Setter Property="Foreground" Value="{StaticResource ErrorTextBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1" Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="DISCORD WEB APP" Style="{StaticResource FieldLabel}" Margin="0" />
+                                <TextBlock Text="{Binding DiscordBrowserViewModel.BrowserTitle}"
+                                           FontSize="15"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0,3,0,0" />
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Content="Open folder"
+                                    Style="{StaticResource SmallButton}"
+                                    VerticalAlignment="Center"
+                                    Visibility="{Binding DiscordBrowserViewModel.CanOpenDownloadFolder, Converter={StaticResource BoolToVis}}"
+                                    Command="{Binding DiscordBrowserViewModel.OpenDownloadFolderCommand}" />
+                        </Grid>
+                        <controls:EmbeddedBrowser Grid.Row="1"
+                                                  DataContext="{Binding DiscordBrowserViewModel}" />
+                        <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                            <TextBlock Text="{Binding DiscordBrowserViewModel.BrowserError}"
+                                       Foreground="{StaticResource ErrorTextBrush}"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding DiscordBrowserViewModel.DownloadStatus}"
+                                       TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DiscordBrowserViewModel.DownloadStatusIsError}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource ErrorTextBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </DataTemplate>
+
         <DataTemplate x:Key="ActivityTemplate">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18">
+                          Padding="16,2,12,12">
                 <StackPanel>
                     <!-- Filter chips -->
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
@@ -2839,7 +3086,7 @@
         <DataTemplate x:Key="AccountsTemplate">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18">
+                          Padding="16,2,12,12">
                 <StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                         <TextBlock Text="Accounts" Style="{StaticResource PageTitle}" />
@@ -3140,7 +3387,7 @@
         <DataTemplate x:Key="ChatboxTemplate">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18">
+                          Padding="16,2,12,12">
                 <StackPanel MaxWidth="780" HorizontalAlignment="Left">
 
                     <Border Style="{StaticResource Card}" Margin="0,0,0,16">
@@ -3465,60 +3712,6 @@
             </ScrollViewer>
         </DataTemplate>
 
-        <!-- Section switching swaps ContentTemplate, which rebuilds each tab's visual
-             tree; that recreation is what returns a tab to the top. Checked on
-             friends (29 rows), notifications (24 items / 65 texts) and worlds (35
-             rows) with the offset going 100 -> 0 and the same row counts, plus an
-             active Avatar Search (50 cards, same status line). If these hosts are ever cached to keep tabs alive, each
-             tab will need its own scroll reset or the offset will persist. -->
-        <Style x:Key="SectionSwitcher" TargetType="ContentControl">
-            <Setter Property="ContentTemplate" Value="{StaticResource ProfileTemplate}" />
-            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-            <Setter Property="VerticalContentAlignment" Value="Stretch" />
-            <Setter Property="Focusable" Value="False" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="friends">
-                    <Setter Property="ContentTemplate" Value="{StaticResource FriendsTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="notifications">
-                    <Setter Property="ContentTemplate" Value="{StaticResource NotificationsTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="worlds">
-                    <Setter Property="ContentTemplate" Value="{StaticResource WorldsTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="settings">
-                    <Setter Property="ContentTemplate" Value="{StaticResource SettingsTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="avatars">
-                    <Setter Property="ContentTemplate" Value="{StaticResource AvatarsTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="favorites">
-                    <Setter Property="ContentTemplate" Value="{StaticResource FavoritesTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="avatarsearch">
-                    <Setter Property="ContentTemplate" Value="{StaticResource AvatarSearchTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="groups">
-                    <Setter Property="ContentTemplate" Value="{StaticResource GroupsTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="resources">
-                    <Setter Property="ContentTemplate" Value="{StaticResource CreatorResourcesTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="activity">
-                    <Setter Property="ContentTemplate" Value="{StaticResource ActivityTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="accounts">
-                    <Setter Property="ContentTemplate" Value="{StaticResource AccountsTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="media">
-                    <Setter Property="ContentTemplate" Value="{StaticResource MediaTemplate}" />
-                </DataTrigger>
-                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="chatbox">
-                    <Setter Property="ContentTemplate" Value="{StaticResource ChatboxTemplate}" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
     </Window.Resources>
 
     <!-- ============================================================= -->
@@ -3832,11 +4025,11 @@
                     </Border>
                 </StackPanel>
 
-                <!-- Active section -->
-                <ContentControl Grid.Row="2"
-                                Content="{Binding}"
-                                Style="{StaticResource SectionSwitcher}"
-                                Margin="0,8,0,0" />
+                <!-- Active section. Visited views stay alive so page state, calls, and scroll position survive tab switches. -->
+                <Grid x:Name="SectionHost"
+                      Grid.Row="2"
+                      Margin="0,8,0,0"
+                      ClipToBounds="True" />
 
                 <!-- Footer -->
                 <Border Grid.Row="3"
@@ -5302,7 +5495,7 @@
             <!-- Avatar detail view: opens in its own page when a card is clicked -->
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="26,2,18,18"
+                          Padding="16,2,12,12"
                           MaxHeight="760">
                 <StackPanel>
                     <Button Style="{StaticResource GhostButton}"

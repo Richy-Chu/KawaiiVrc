@@ -1,7 +1,9 @@
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -20,6 +22,7 @@ public partial class MainWindow : Window
 
     private readonly MainViewModel _viewModel;
     private readonly DispatcherTimer _refreshTimer;
+    private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
 
     public MainWindow()
     {
@@ -28,6 +31,7 @@ public partial class MainWindow : Window
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        ShowSelectedSection();
 
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -148,6 +152,34 @@ public partial class MainWindow : Window
         _viewModel.VerifyTwoFactorCommand.Execute(null);
     }
 
+    private void BraveSearchBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (_viewModel.BraveBrowserViewModel.SearchCommand.CanExecute(null))
+        {
+            _viewModel.BraveBrowserViewModel.SearchCommand.Execute(null);
+        }
+    }
+
+    private void DiscordSearchBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (_viewModel.DiscordBrowserViewModel.SearchCommand.CanExecute(null))
+        {
+            _viewModel.DiscordBrowserViewModel.SearchCommand.Execute(null);
+        }
+    }
+
     private void WorldSearchBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter || !_viewModel.SearchWorldsCommand.CanExecute(null))
@@ -187,6 +219,12 @@ public partial class MainWindow : Window
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.SelectedSection))
+        {
+            ShowSelectedSection();
+            return;
+        }
+
         if (e.PropertyName != nameof(MainViewModel.IsTwoFactorRequired) || !_viewModel.IsTwoFactorRequired)
         {
             return;
@@ -198,6 +236,62 @@ public partial class MainWindow : Window
             Keyboard.Focus(TwoFactorBox);
         }));
     }
+
+    /// <summary>
+    /// Builds a section once and keeps it in the visual tree. Hiding a cached
+    /// view instead of swapping the ContentTemplate preserves WebView pages,
+    /// active calls, search text, and scroll position across tab changes.
+    /// </summary>
+    private void ShowSelectedSection()
+    {
+        var key = _viewModel.SelectedSection.Key;
+        if (!_sectionViews.TryGetValue(key, out var view))
+        {
+            var template = FindResource(TemplateKeyFor(key)) as DataTemplate
+                ?? throw new InvalidOperationException($"No section template for '{key}'.");
+
+            view = new ContentControl
+            {
+                Content = _viewModel,
+                ContentTemplate = template,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
+                Focusable = false,
+                Visibility = Visibility.Collapsed
+            };
+
+            _sectionViews.Add(key, view);
+            SectionHost.Children.Add(view);
+        }
+
+        foreach (var section in _sectionViews)
+        {
+            section.Value.Visibility = string.Equals(section.Key, key, StringComparison.Ordinal)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+    }
+
+    private static string TemplateKeyFor(string key)
+        => key switch
+        {
+            "friends" => "FriendsTemplate",
+            "notifications" => "NotificationsTemplate",
+            "worlds" => "WorldsTemplate",
+            "settings" => "SettingsTemplate",
+            "avatars" => "AvatarsTemplate",
+            "favorites" => "FavoritesTemplate",
+            "avatarsearch" => "AvatarSearchTemplate",
+            "groups" => "GroupsTemplate",
+            "resources" => "CreatorResourcesTemplate",
+            "brave" => "BraveBrowserTemplate",
+            "discord" => "DiscordBrowserTemplate",
+            "activity" => "ActivityTemplate",
+            "accounts" => "AccountsTemplate",
+            "media" => "MediaTemplate",
+            "chatbox" => "ChatboxTemplate",
+            _ => "ProfileTemplate"
+        };
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {

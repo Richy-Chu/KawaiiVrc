@@ -9,7 +9,7 @@ namespace VrcCompanion.ViewModels;
 /// tool pages can optionally use the embedded browser. Sign-in and downloads
 /// stay on the site itself.
 /// </summary>
-public sealed class CreatorResourcesViewModel : ViewModelBase
+public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserHost
 {
     private string _searchQuery = string.Empty;
     private bool _isBrowserOpen;
@@ -145,6 +145,14 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
     public RelayCommand CloseBrowserCommand { get; }
 
     public RelayCommand OpenDownloadFolderCommand { get; }
+
+    public void SetBrowserLocation(string url, string title)
+    {
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            BrowserUrl = url;
+        }
+    }
 
     public void SetBrowserError(string message)
         => BrowserError = message;

@@ -29,6 +29,7 @@ public sealed class AuroraBackdrop : FrameworkElement
     private Window? _window;
     private bool _isHooked;
     private bool _isVisible = true;
+    private bool _isActive = true;
     private long _lastFrameTicks;
 
     private readonly SolidColorBrush _starBrush = FrozenBrush("#B3FFFFFF");
@@ -207,6 +208,9 @@ public sealed class AuroraBackdrop : FrameworkElement
         if (_window is not null)
         {
             _window.StateChanged += OnWindowStateChanged;
+            _window.Activated += OnWindowActivated;
+            _window.Deactivated += OnWindowDeactivated;
+            _isActive = _window.IsActive;
         }
         UpdateAnimationHook();
         InvalidateVisual();
@@ -217,6 +221,8 @@ public sealed class AuroraBackdrop : FrameworkElement
         if (_window is not null)
         {
             _window.StateChanged -= OnWindowStateChanged;
+            _window.Activated -= OnWindowActivated;
+            _window.Deactivated -= OnWindowDeactivated;
             _window = null;
         }
         UnhookAnimation();
@@ -231,13 +237,27 @@ public sealed class AuroraBackdrop : FrameworkElement
     private void OnWindowStateChanged(object? sender, EventArgs e)
     {
         _isVisible = IsVisible && _window?.WindowState != WindowState.Minimized;
+        _isActive = _window?.IsActive == true;
         UpdateAnimationHook();
         InvalidateVisual();
     }
 
+    private void OnWindowActivated(object? sender, EventArgs e)
+    {
+        _isActive = true;
+        UpdateAnimationHook();
+    }
+
+    private void OnWindowDeactivated(object? sender, EventArgs e)
+    {
+        _isActive = false;
+        UpdateAnimationHook();
+    }
+
     private void UpdateAnimationHook()
     {
-        var shouldAnimate = Animate && _isVisible && IsLoaded && _window?.WindowState != WindowState.Minimized;
+        var shouldAnimate = Animate && _isVisible && _isActive && IsLoaded &&
+                            _window?.WindowState != WindowState.Minimized;
         if (shouldAnimate && !_isHooked)
         {
             CompositionTarget.Rendering += OnRendering;
