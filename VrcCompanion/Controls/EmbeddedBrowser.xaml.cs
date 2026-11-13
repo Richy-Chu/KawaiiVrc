@@ -64,6 +64,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     private string? _pendingUrl;
     private Window? _window;
     private bool _disposed;
+    private bool _focusErrorAnnouncementScheduled;
 
     public EmbeddedBrowser()
     {
@@ -124,6 +125,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         }
 
         _ = NavigatePendingAsync();
+        AnnounceFocusBrowserError();
     }
 
     private void OnWindowClosed(object? sender, EventArgs e)
@@ -380,6 +382,11 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         if (e.PropertyName == nameof(IEmbeddedBrowserHost.IsFocusMode))
         {
             _ = SetPageFocusModeAsync(_viewModel?.IsFocusMode == true);
+            AnnounceFocusBrowserError();
+        }
+        else if (e.PropertyName == nameof(IEmbeddedBrowserHost.BrowserError))
+        {
+            AnnounceFocusBrowserError();
         }
     }
 
@@ -535,7 +542,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         if (!TryBuildAddressUri(FocusAddressBox.Text, out var uri))
         {
             _viewModel?.SetBrowserError("Enter a valid http or https address.");
-            AnnounceFocusAddressError();
+            AnnounceFocusBrowserError();
             return;
         }
 
@@ -595,12 +602,22 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             DispatcherPriority.Input);
     }
 
-    private void AnnounceFocusAddressError()
+    private void AnnounceFocusBrowserError()
     {
+        if (_viewModel?.IsFocusMode != true ||
+            string.IsNullOrEmpty(_viewModel.BrowserError) ||
+            _focusErrorAnnouncementScheduled)
+        {
+            return;
+        }
+
+        _focusErrorAnnouncementScheduled = true;
         Dispatcher.InvokeAsync(
             () =>
             {
-                if (FocusAddressError.Text.Length == 0)
+                _focusErrorAnnouncementScheduled = false;
+                if (_viewModel?.IsFocusMode != true ||
+                    FocusAddressError.Text.Length == 0)
                 {
                     return;
                 }

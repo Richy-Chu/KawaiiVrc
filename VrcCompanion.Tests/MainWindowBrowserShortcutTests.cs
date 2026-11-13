@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -198,6 +199,31 @@ public class MainWindowBrowserShortcutTests
             Assert.Equal(FocusUrl, address.Text);
             Assert.True(host.IsFocusMode, "Canceling the edit should keep focus mode active.");
             Assert.False(feedback.IsVisible, "Canceling the edit should clear the inline error.");
+        });
+    }
+
+    [Theory]
+    [InlineData("brave")]
+    [InlineData("discord")]
+    [InlineData("resources")]
+    public void FocusModeAnnouncesAllBrowserErrors(string sectionKey)
+    {
+        WithFocusWindow(sectionKey, (window, host, browser, _) =>
+        {
+            const string message = "The in-app browser could not start.";
+            var feedback = browser.FindName("FocusAddressError") as TextBlock
+                ?? throw new InvalidOperationException("Focus address error was not found.");
+
+            host.SetBrowserError(message);
+            window.UpdateLayout();
+
+            Assert.Equal(message, feedback.Text);
+            Assert.True(
+                feedback.IsVisible,
+                $"Browser errors should be visible in the {sectionKey} focus toolbar.");
+            Assert.Equal(
+                AutomationLiveSetting.Assertive,
+                AutomationProperties.GetLiveSetting(feedback));
         });
     }
 
