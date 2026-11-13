@@ -3483,7 +3483,8 @@
                                     <TextBlock Text="{Binding ChatboxViewModel.PreviewText}"
                                                Foreground="{StaticResource TextBrush}"
                                                FontSize="12"
-                                               TextWrapping="Wrap" />
+                                               TextWrapping="Wrap"
+                                               AutomationProperties.AutomationId="ChatboxPreviewText" />
                                     <TextBlock Text="{Binding ChatboxViewModel.PreviewStatusText}"
                                                Style="{StaticResource MutedText}"
                                                FontSize="10"
@@ -3546,11 +3547,6 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                            <CheckBox Content="Live edit in VRChat as I type"
-                                      Style="{StaticResource FriendlyCheckBox}"
-                                      IsChecked="{Binding ChatboxViewModel.LiveEditEnabled, Mode=TwoWay}"
-                                      Margin="0,10,0,0"
-                                      ToolTip="Sends a non-submitted draft to VRChat while you type" />
                             <Grid Margin="0,10,0,0">
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                     <Button Content="Add to rotation"
@@ -3558,11 +3554,13 @@
                                             Padding="12,6"
                                             FontSize="11"
                                             Margin="0,0,8,0"
+                                            AutomationProperties.AutomationId="ChatboxAddToRotationButton"
                                             Command="{Binding ChatboxViewModel.AddToRotationCommand}" />
                                     <Button Content="Send now"
                                             Style="{StaticResource PrimaryButton}"
                                             Padding="14,7"
                                             FontSize="11"
+                                            AutomationProperties.AutomationId="ChatboxSendButton"
                                             Command="{Binding ChatboxViewModel.SendCommand}" />
                                 </StackPanel>
                             </Grid>
@@ -3585,9 +3583,12 @@
                                         FontSize="10"
                                         HorizontalAlignment="Right"
                                         VerticalAlignment="Top"
+                                        AutomationProperties.AutomationId="ChatboxClearHistoryButton"
                                         Command="{Binding ChatboxViewModel.ClearHistoryCommand}" />
                             </Grid>
-                            <ItemsControl ItemsSource="{Binding ChatboxViewModel.History}" Margin="0,9,0,0">
+                            <ItemsControl ItemsSource="{Binding ChatboxViewModel.History}"
+                                          AutomationProperties.AutomationId="ChatboxHistoryList"
+                                          Margin="0,9,0,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Button Content="{Binding}"
@@ -3654,7 +3655,22 @@
                                         FontSize="11"
                                         Command="{Binding ChatboxViewModel.AddNowPlayingToRotationCommand}" />
                             </StackPanel>
-                            <TextBlock Text="Tip: put {music} in any message and it is replaced with the current track when sent."
+                            <TextBlock Text="How your music line looks" Style="{StaticResource FieldLabel}" Margin="0,12,0,0" />
+                            <TextBox Style="{StaticResource InputBox}"
+                                     Text="{Binding ChatboxViewModel.MusicFormat, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     AutomationProperties.AutomationId="ChatboxMusicFormatBox"
+                                     AutomationProperties.Name="Music line format"
+                                     ToolTip="Tokens: {display}, {title}, {artist}, {sourceName}, {source}" />
+                            <TextBlock Text="{Binding ChatboxViewModel.MusicFormatPreview}"
+                                       Foreground="{StaticResource AccentHoverBrush}"
+                                       FontSize="11"
+                                       TextWrapping="Wrap"
+                                       Margin="0,5,0,0" />
+                            <TextBlock Text="Use {display}, {title}, {artist}, {sourceName}, or {source}. The default is ♪ {display}{source}."
+                                       Style="{StaticResource MutedText}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0" />
+                            <TextBlock Text="Tip: put {music} in any message and it is replaced with your music line when sent."
                                        Style="{StaticResource MutedText}"
                                        Margin="0,8,0,0" />
                             <CheckBox Content="Keep the current track in rotation ({music})"
@@ -3825,6 +3841,7 @@
                                         FontSize="10"
                                         HorizontalAlignment="Right"
                                         VerticalAlignment="Top"
+                                        AutomationProperties.AutomationId="ChatboxClearRotationButton"
                                         Command="{Binding ChatboxViewModel.ClearRotationCommand}" />
                             </Grid>
                             <StackPanel Orientation="Horizontal">
@@ -3846,7 +3863,9 @@
                                            VerticalAlignment="Center" />
                             </StackPanel>
 
-                            <ItemsControl ItemsSource="{Binding ChatboxViewModel.RotationMessages}" Margin="0,12,0,0">
+                            <ItemsControl ItemsSource="{Binding ChatboxViewModel.RotationMessages}"
+                                          AutomationProperties.AutomationId="ChatboxRotationList"
+                                          Margin="0,12,0,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border Background="{StaticResource InputBrush}"

@@ -13,6 +13,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private const int MinimumRotationSeconds = 5;
     private const int MaxHistoryItems = 20;
     private const int MaxAutocompleteItems = 5;
+    private const string DefaultMusicFormat = "♪ {display}{source}";
 
     private readonly SettingsStore _store;
     private readonly CompanionSettings _settings;
@@ -22,7 +23,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _nowPlayingTimer;
     private readonly DispatcherTimer _lyricsDisplayTimer;
-    private readonly DispatcherTimer _liveEditTimer;
     private NowPlayingInfo? _currentTrack;
     private bool _pollingNowPlaying;
     private LyricsDocument? _lyrics;
@@ -56,8 +56,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private string _host;
     private int _port;
     private int _rotationIndex;
-    private bool _liveEditEnabled;
-    private bool _liveEditTyping;
+    private string _musicFormat;
     private bool _disposed;
 
     public ChatboxViewModel(
@@ -93,6 +92,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
                 .Distinct(StringComparer.Ordinal)
                 .Take(MaxHistoryItems));
         AutocompleteSuggestions = new ObservableCollection<string>();
+        _musicFormat = NormalizeMusicFormat(_settings.ChatboxMusicFormat);
 
         _includeNowPlaying = _settings.ChatboxIncludeNowPlaying;
         if (_includeNowPlaying && !RotationMessages.Contains("{music}", StringComparer.OrdinalIgnoreCase))
@@ -127,8 +127,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(IsPreviewOverLimit));
             UpdateVrchatLyrics();
         };
-        _liveEditTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
-        _liveEditTimer.Tick += (_, _) => SendLiveEditPreview();
         if (startTimers)
         {
             _lyricsDisplayTimer.Start();
@@ -184,8 +182,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             _nowPlayingTimer.Start();
             _ = PollNowPlayingAsync();
         }
-
-        _liveEditEnabled = _settings.ChatboxLiveEditEnabled;
 
         if (_settings.ChatboxRotateEnabled && RotationMessages.Count > 0)
         {
@@ -268,6 +264,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(PreviewStatusText));
             OnPropertyChanged(nameof(PreviewCountText));
             OnPropertyChanged(nameof(IsPreviewOverLimit));
+            OnPropertyChanged(nameof(MusicFormatPreview));
             TrackChanged();
         }
     }
@@ -317,7 +314,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             SendCommand.RaiseCanExecuteChanged();
             AddToRotationCommand.RaiseCanExecuteChanged();
             UpdateAutocompleteSuggestions();
-            ScheduleLiveEditPreview();
         }
     }
 
@@ -341,31 +337,30 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     public bool HasAutocompleteSuggestions => AutocompleteSuggestions.Count > 0;
 
-    public bool LiveEditEnabled
+    public string MusicFormat
     {
-        get => _liveEditEnabled;
+        get => _musicFormat;
         set
         {
-            if (!SetProperty(ref _liveEditEnabled, value))
+            var normalized = NormalizeMusicFormat(value);
+            if (!SetProperty(ref _musicFormat, normalized))
             {
                 return;
             }
 
-            _settings.ChatboxLiveEditEnabled = value;
+            _settings.ChatboxMusicFormat = normalized;
             _store.Save();
-
-            if (value)
-            {
-                StatusText = "Live edit is on. Drafts appear in VRChat as you type.";
-                ScheduleLiveEditPreview();
-            }
-            else
-            {
-                StopLiveEditPreview();
-                StatusText = "Live edit is off.";
-            }
+            OnPropertyChanged(nameof(MusicFormatPreview));
+            OnPropertyChanged(nameof(PreviewText));
+            OnPropertyChanged(nameof(PreviewCountText));
+            OnPropertyChanged(nameof(PreviewStatusText));
+            OnPropertyChanged(nameof(IsPreviewOverLimit));
         }
     }
+
+    public string MusicFormatPreview => CurrentTrack is null
+        ? "Play a track to preview your music line."
+        : FormatMusic(CurrentTrack);
 
     public string StatusText
     {
@@ -717,7 +712,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        StopLiveEditPreview();
         SendText(text);
     }
 
@@ -740,74 +734,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
 
         OnPropertyChanged(nameof(HasAutocompleteSuggestions));
-    }
-
-    private void ScheduleLiveEditPreview()
-    {
-        if (!_liveEditEnabled)
-        {
-            return;
-        }
-
-        _liveEditTimer.Stop();
-        if (string.IsNullOrWhiteSpace(MessageText))
-        {
-            SetLiveTyping(false);
-            return;
-        }
-
-        _liveEditTimer.Start();
-    }
-
-    private void SendLiveEditPreview()
-    {
-        _liveEditTimer.Stop();
-        if (!_liveEditEnabled || _disposed)
-        {
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(MessageText))
-        {
-            SetLiveTyping(false);
-            return;
-        }
-
-        var text = OscMessage.FitChatboxText(ExpandTokens(MessageText, advanceLyrics: false));
-        try
-        {
-            SetLiveTyping(true);
-            _osc.SendChatbox(text, sendImmediately: false);
-            StatusText = $"Live edit preview: {TextPreview(text)}";
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Could not send the live edit preview: {ex.Message}";
-        }
-    }
-
-    private void StopLiveEditPreview()
-    {
-        _liveEditTimer.Stop();
-        SetLiveTyping(false);
-    }
-
-    private void SetLiveTyping(bool typing)
-    {
-        if (_liveEditTyping == typing)
-        {
-            return;
-        }
-
-        _liveEditTyping = typing;
-        try
-        {
-            _osc.SendTyping(typing);
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Could not update the typing indicator: {ex.Message}";
-        }
     }
 
     private void RecordHistory(string text)
@@ -841,6 +767,28 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private static string TextPreview(string text)
         => text.Length > 48 ? text[..48] + "…" : text;
 
+    private static string NormalizeMusicFormat(string? format)
+        => string.IsNullOrWhiteSpace(format) ? DefaultMusicFormat : format.Trim();
+
+    private string FormatMusic(NowPlayingInfo? track)
+    {
+        if (track is null)
+        {
+            return "♪ Nothing playing";
+        }
+
+        var source = track.Source.Length > 0 ? $" · {track.Source}" : string.Empty;
+        var text = MusicFormat
+            .Replace("{display}", track.DisplayText, StringComparison.OrdinalIgnoreCase)
+            .Replace("{title}", track.Title, StringComparison.OrdinalIgnoreCase)
+            .Replace("{artist}", track.Artist, StringComparison.OrdinalIgnoreCase)
+            .Replace("{sourceName}", track.Source, StringComparison.OrdinalIgnoreCase)
+            .Replace("{source}", source, StringComparison.OrdinalIgnoreCase)
+            .Trim();
+
+        return text.Length == 0 ? track.ChatboxText : text;
+    }
+
     private void AddToRotation()
     {
         var text = MessageText.Trim();
@@ -859,7 +807,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        MessageText = CurrentTrack.ChatboxText;
+        MessageText = FormatMusic(CurrentTrack);
         StatusText = "Now playing placed in the message box.";
     }
 
@@ -870,7 +818,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        AddRotationText(CurrentTrack.ChatboxText);
+        AddRotationText(FormatMusic(CurrentTrack));
     }
 
     private void AddRotationText(string text)
@@ -915,7 +863,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
                 : GetCurrentLyricLine(advancePlain: true))
             : null;
 
-        var message = ChatboxLyrics.Compose(CurrentTrack.ChatboxText, line);
+        var message = ChatboxLyrics.Compose(FormatMusic(CurrentTrack), line);
         if (!force && message == _lastVrchatLyric)
         {
             return;
@@ -1263,8 +1211,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     /// <summary>Runs one real rotation tick (for tests).</summary>
     internal void RotateNextForTest() => RotateNext();
 
-    internal void FlushLiveEditForTest() => SendLiveEditPreview();
-
     internal void SetTrackForTest(NowPlayingInfo? track) => CurrentTrack = track;
 
     internal Task? LyricsLoadTaskForTest => _lyricsLoadTask;
@@ -1460,7 +1406,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     {
         if (text.Contains("{music}", StringComparison.OrdinalIgnoreCase))
         {
-            var track = CurrentTrack?.ChatboxText ?? "♪ Nothing playing";
+            var track = FormatMusic(CurrentTrack);
             text = text.Replace("{music}", track, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -1498,7 +1444,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _timer.Stop();
         _nowPlayingTimer.Stop();
         _lyricsDisplayTimer.Stop();
-        _liveEditTimer.Stop();
         _lyricsCancellation?.Cancel();
         _lyricsCancellation?.Dispose();
         if (_osc is IDisposable disposable)

@@ -84,8 +84,8 @@ public sealed class CompanionSettings
     [JsonPropertyName("chatboxHistory")]
     public List<string> ChatboxHistory { get; set; } = new();
 
-    [JsonPropertyName("chatboxLiveEditEnabled")]
-    public bool ChatboxLiveEditEnabled { get; set; }
+    [JsonPropertyName("chatboxMusicFormat")]
+    public string ChatboxMusicFormat { get; set; } = "♪ {display}{source}";
 }
 
 /// <summary>

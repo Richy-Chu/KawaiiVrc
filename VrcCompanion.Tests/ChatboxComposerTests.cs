@@ -71,25 +71,24 @@ public class ChatboxComposerTests
     }
 
     [Fact]
-    public void LiveEditSendsDraftAndStopsTypingWhenTheMessageIsSent()
+    public void MusicFormatCustomizesNowPlayingAndMusicTokens()
     {
         using var fixture = new Fixture();
         var vm = fixture.CreateViewModel();
-        vm.LiveEditEnabled = true;
-        vm.MessageText = "draft";
+        vm.SetTrackForTest(new NowPlayingInfo(
+            "Song",
+            "Artist",
+            "Spotify",
+            Duration: TimeSpan.FromMinutes(3)));
 
-        vm.FlushLiveEditForTest();
+        vm.MusicFormat = "{title} by {artist} [{sourceName}]";
 
-        var draft = Assert.Single(fixture.Sender.Sent);
-        Assert.Equal("draft", draft.Text);
-        Assert.False(draft.SendImmediately);
-        Assert.Equal(new[] { true }, fixture.Sender.Typing);
+        Assert.Equal("Song by Artist [Spotify]", vm.MusicFormatPreview);
+        vm.MessageText = "{music}";
+        Assert.Equal("Song by Artist [Spotify]", vm.PreviewText);
 
-        vm.SendCommand.Execute(null);
-
-        Assert.Equal(2, fixture.Sender.Sent.Count);
-        Assert.True(fixture.Sender.Sent[^1].SendImmediately);
-        Assert.Equal(new[] { true, false }, fixture.Sender.Typing);
+        vm.UseNowPlayingCommand.Execute(null);
+        Assert.Equal("Song by Artist [Spotify]", vm.MessageText);
     }
 
     private sealed class Fixture : IDisposable
@@ -116,17 +115,16 @@ public class ChatboxComposerTests
 
     private sealed class FakeChatboxSender : IChatboxSender
     {
-        public List<(string Text, bool SendImmediately)> Sent { get; } = new();
-
-        public List<bool> Typing { get; } = new();
+        public List<string> Sent { get; } = new();
 
         public string Host { get; set; } = "127.0.0.1";
 
         public int Port { get; set; } = 9000;
 
-        public void SendChatbox(string text, bool sendImmediately = true)
-            => Sent.Add((text, sendImmediately));
+        public void SendChatbox(string text, bool sendImmediately = true) => Sent.Add(text);
 
-        public void SendTyping(bool typing) => Typing.Add(typing);
+        public void SendTyping(bool typing)
+        {
+        }
     }
 }
