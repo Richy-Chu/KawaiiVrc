@@ -5,8 +5,10 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using VrcCompanion.Controls;
 using VrcCompanion.Services;
@@ -109,6 +111,78 @@ public class MainWindowBrowserShortcutTests
                 RaisePreviewKey(window, ignored, ModifierKeys.Alt);
 
                 Assert.False(ignored.Handled, "Shortcuts should be ignored when no browser is focused.");
+
+                var ignoredAddressShortcut = CreatePreviewKeyEvent(window, Key.L);
+                RaisePreviewKey(window, ignoredAddressShortcut, ModifierKeys.Control);
+                Assert.False(
+                    ignoredAddressShortcut.Handled,
+                    "Ctrl+L should be ignored when no browser is focused.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData("brave")]
+    [InlineData("discord")]
+    [InlineData("resources")]
+    public void CtrlLFocusesAndSelectsTheFocusAddress(string sectionKey)
+    {
+        WpfTestHost.Run(() =>
+        {
+            var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            var browserSection = shell.Sections.Single(section => section.Key == sectionKey);
+            IEmbeddedBrowserHost host = sectionKey switch
+            {
+                "brave" => shell.BraveBrowserViewModel,
+                "discord" => shell.DiscordBrowserViewModel,
+                "resources" => shell.CreatorResourcesViewModel,
+                _ => throw new ArgumentOutOfRangeException(nameof(sectionKey), sectionKey, null)
+            };
+            var window = new MainWindow(shell, initializeOnLoad: false)
+            {
+                Width = 1100,
+                Height = 720,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = 100,
+                Top = 100
+            };
+
+            try
+            {
+                window.Show();
+                window.Activate();
+                shell.SelectedSection = browserSection;
+                if (host is CreatorResourcesViewModel creatorResources)
+                {
+                    creatorResources.ShowBrowserForLayoutTest();
+                }
+
+                host.SetBrowserLocation("https://example.com/focus", "Focus page");
+                host.IsFocusMode = true;
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                var browser = FindVisualChildren<EmbeddedBrowser>(window)
+                    .Single(element => element.IsVisible);
+                var address = browser.FindName("FocusAddressBox") as TextBox
+                    ?? throw new InvalidOperationException("Focus address box was not found.");
+
+                RaiseFocusShortcut(window, Key.L, ModifierKeys.Control);
+
+                Assert.True(
+                    address.IsKeyboardFocusWithin,
+                    $"Ctrl+L should focus the {sectionKey} address box.");
+                Assert.Equal(0, address.SelectionStart);
+                Assert.Equal(address.Text.Length, address.SelectionLength);
+                Assert.Equal(address.Text, address.SelectedText);
             }
             finally
             {

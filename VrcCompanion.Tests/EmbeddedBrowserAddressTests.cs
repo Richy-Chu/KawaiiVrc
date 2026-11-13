@@ -128,6 +128,7 @@ public class EmbeddedBrowserAddressTests
             try
             {
                 window.Show();
+                window.Activate();
                 window.UpdateLayout();
                 await browser.InitializeForTestAsync();
 
@@ -172,6 +173,25 @@ public class EmbeddedBrowserAddressTests
                 Assert.Equal("Address probe", core.DocumentTitle);
                 Assert.Equal("https://vrc-address.test/index.html", host.BrowserUrl);
                 Assert.True(host.IsFocusMode, "Address navigation should stay in focus mode.");
+                Assert.True(
+                    await WaitUntilAsync(() => browser.Browser.IsFocused),
+                    "Successful address navigation should return focus to the page.");
+
+                await WaitUntilAsync(
+                    async () => string.Equals(
+                        await core.ExecuteScriptAsync("window.__vrcFocusMode === true"),
+                        "true",
+                        StringComparison.Ordinal));
+                await core.ExecuteScriptAsync(
+                    "window.dispatchEvent(new KeyboardEvent('keydown', " +
+                    "{ key: 'l', ctrlKey: true, bubbles: true, cancelable: true }));");
+                Assert.True(
+                    await WaitUntilAsync(
+                        () => address.IsKeyboardFocusWithin &&
+                              address.SelectionLength == address.Text.Length),
+                    "Ctrl+L in the page should focus and select the address box.");
+                Assert.Equal(0, address.SelectionStart);
+                Assert.Equal(address.Text.Length, address.SelectionLength);
             }
             finally
             {
@@ -186,5 +206,37 @@ public class EmbeddedBrowserAddressTests
                 }
             }
         });
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(25);
+        }
+
+        return condition();
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(25);
+        }
+
+        return await condition();
     }
 }

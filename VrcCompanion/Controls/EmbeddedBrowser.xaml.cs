@@ -49,6 +49,9 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
           } else if (event.altKey && event.key === 'ArrowRight') {
             event.preventDefault();
             window.chrome.webview.postMessage('browser-focus-forward');
+          } else if (event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'l') {
+            event.preventDefault();
+            window.chrome.webview.postMessage('browser-focus-address');
           } else if (event.key === 'F5' || (event.ctrlKey && event.key.toLowerCase() === 'r')) {
             event.preventDefault();
             window.chrome.webview.postMessage('browser-focus-refresh');
@@ -545,13 +548,48 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             }
 
             _viewModel?.SetBrowserError(string.Empty);
-            core.Navigate(uri.AbsoluteUri);
+            NavigateAndFocusPage(core, uri);
         }
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
             _viewModel?.SetBrowserError("The in-app browser could not navigate to that address.");
         }
+    }
+
+    private void NavigateAndFocusPage(CoreWebView2 core, Uri uri)
+    {
+        void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            core.NavigationCompleted -= OnNavigationCompleted;
+            if (e.IsSuccess)
+            {
+                FocusPage();
+            }
+        }
+
+        core.NavigationCompleted += OnNavigationCompleted;
+        try
+        {
+            core.Navigate(uri.AbsoluteUri);
+        }
+        catch
+        {
+            core.NavigationCompleted -= OnNavigationCompleted;
+            throw;
+        }
+    }
+
+    private void FocusPage()
+    {
+        if (_viewModel?.IsFocusMode != true || !IsVisible)
+        {
+            return;
+        }
+
+        Dispatcher.InvokeAsync(
+            () => Browser.Focus(),
+            DispatcherPriority.Input);
     }
 
     private void AnnounceFocusAddressError()
@@ -592,6 +630,18 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
         uri = candidate;
         return true;
+    }
+
+    public void FocusAddressBar()
+    {
+        if (!FocusAddressBox.IsVisible)
+        {
+            return;
+        }
+
+        FocusAddressBox.Focus();
+        Keyboard.Focus(FocusAddressBox);
+        FocusAddressBox.SelectAll();
     }
 
     public void GoBack()
@@ -651,6 +701,9 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
                     break;
                 case "browser-focus-refresh":
                     Reload();
+                    break;
+                case "browser-focus-address":
+                    FocusAddressBar();
                     break;
             }
         }

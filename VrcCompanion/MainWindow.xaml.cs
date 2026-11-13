@@ -154,6 +154,14 @@ public partial class MainWindow : Window
             return true;
         }
 
+        if (key == Key.L &&
+            modifiers.HasFlag(ModifierKeys.Control) &&
+            !modifiers.HasFlag(ModifierKeys.Alt))
+        {
+            browser.FocusAddressBar();
+            return true;
+        }
+
         if (key == Key.F5 ||
             (key == Key.R && modifiers.HasFlag(ModifierKeys.Control)))
         {
