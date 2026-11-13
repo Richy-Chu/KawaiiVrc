@@ -6,7 +6,6 @@ using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -19,7 +18,6 @@ namespace VrcCompanion.Tests;
 
 public class MediaThumbnailRenderTests
 {
-    private const int PageSize = 48;
     private const int PictureCount = 937;
     private const int LastPageCount = 25;
     private const int LastPageStart = PictureCount - LastPageCount;
@@ -29,9 +27,15 @@ public class MediaThumbnailRenderTests
     {
         RunOnSta(() =>
         {
-            if (Application.Current is null)
+            var application = Application.Current;
+            if (application is null)
             {
-                _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+                application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            }
+
+            if (!application.Resources.Contains("BoolToVis"))
+            {
+                application.Resources["BoolToVis"] = new BooleanToVisibilityConverter();
             }
 
             var root = Path.Combine(
@@ -76,7 +80,14 @@ public class MediaThumbnailRenderTests
                 SynchronizationContext.SetSynchronizationContext(
                     new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
 
-                var itemsControl = CreateMediaItems(pageCards);
+                var itemsControl = new ItemsControl
+                {
+                    Width = 1160,
+                    ItemsSource = pageCards,
+                    ItemTemplate = LoadMediaCardTemplate()
+                };
+                itemsControl.ItemsPanel = new ItemsPanelTemplate(
+                    new FrameworkElementFactory(typeof(WrapPanel)));
                 window = new Window
                 {
                     Width = 1200,
@@ -87,6 +98,7 @@ public class MediaThumbnailRenderTests
                     WindowStartupLocation = WindowStartupLocation.Manual,
                     Left = 100,
                     Top = 100,
+                    DataContext = new MediaHostData { MediaViewModel = viewModel },
                     Content = itemsControl
                 };
                 window.Show();
@@ -186,37 +198,15 @@ public class MediaThumbnailRenderTests
         encoder.Save(stream);
     }
 
-    private static ItemsControl CreateMediaItems(IReadOnlyList<MediaCard> cards)
+    private static DataTemplate LoadMediaCardTemplate()
     {
-        var itemsControl = new ItemsControl
+        var resources = new ResourceDictionary
         {
-            Width = 1160,
-            ItemsSource = cards
+            Source = new Uri(
+                "pack://application:,,,/VrcCompanion;component/Themes/MediaTemplates.xaml",
+                UriKind.Absolute)
         };
-        itemsControl.ItemsPanel = new ItemsPanelTemplate(
-            new FrameworkElementFactory(typeof(WrapPanel)));
-
-        var stack = new FrameworkElementFactory(typeof(StackPanel));
-        stack.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 8, 8));
-
-        var border = new FrameworkElementFactory(typeof(Border));
-        border.SetValue(FrameworkElement.WidthProperty, 220d);
-        border.SetValue(FrameworkElement.HeightProperty, 140d);
-        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
-        border.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(21, 26, 36)));
-        border.SetValue(Border.ClipToBoundsProperty, true);
-
-        var image = new FrameworkElementFactory(typeof(AsyncImage));
-        image.SetValue(AsyncImage.DecodeWidthProperty, 160);
-        image.SetValue(AsyncImage.CornerRadiusProperty, 8d);
-        image.SetBinding(
-            AsyncImage.SourceUrlProperty,
-            new Binding(nameof(MediaCard.Path)));
-
-        border.AppendChild(image);
-        stack.AppendChild(border);
-        itemsControl.ItemTemplate = new DataTemplate { VisualTree = stack };
-        return itemsControl;
+        return Assert.IsType<DataTemplate>(resources["MediaCardTemplate"]);
     }
 
     private static void WaitForThumbnails(ItemsControl itemsControl)
@@ -341,6 +331,11 @@ public class MediaThumbnailRenderTests
         };
         timer.Start();
         Dispatcher.PushFrame(frame);
+    }
+
+    private sealed class MediaHostData
+    {
+        public MediaLibraryViewModel MediaViewModel { get; init; } = null!;
     }
 
     private static void RunOnSta(Action action)
