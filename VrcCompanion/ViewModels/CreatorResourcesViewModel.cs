@@ -18,7 +18,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
     private string _browserError = string.Empty;
     private string _downloadStatus = string.Empty;
     private bool _downloadStatusIsError;
-    private string _downloadedFilePath = string.Empty;
+    private string? _downloadedFilePath;
 
     public CreatorResourcesViewModel()
     {
@@ -31,6 +31,13 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
                 "Community model library for VRChat avatars, props, and other assets.",
                 "https://vrmodels.store/",
                 "https://vrmodels.store/?do=search&subaction=search&story={0}"),
+            new(
+                "Ripper Store",
+                "Community asset forum",
+                "R",
+                "Community forum for sharing and requesting VRChat avatars, assets, and tools. Search requires a Ripper Store account.",
+                "https://forum.ripper.store/",
+                "https://forum.ripper.store/search?q={0}"),
             new(
                 "VRCMods",
                 "Avatars & Unity assets",
@@ -127,19 +134,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
         private set => SetProperty(ref _downloadStatusIsError, value);
     }
 
-    public string DownloadedFilePath
-    {
-        get => _downloadedFilePath;
-        private set
-        {
-            if (SetProperty(ref _downloadedFilePath, value))
-            {
-                OnPropertyChanged(nameof(CanOpenDownloadFolder));
-            }
-        }
-    }
-
-    public bool CanOpenDownloadFolder => !string.IsNullOrWhiteSpace(DownloadedFilePath);
+    public bool CanOpenDownloadFolder => !string.IsNullOrWhiteSpace(_downloadedFilePath);
 
     public RelayCommand<CreatorResource> OpenCommand { get; }
 
@@ -158,7 +153,18 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
     {
         DownloadStatus = message;
         DownloadStatusIsError = isError;
-        DownloadedFilePath = downloadedPath ?? string.Empty;
+        SetDownloadedFilePath(downloadedPath);
+    }
+
+    private void SetDownloadedFilePath(string? path)
+    {
+        if (string.Equals(_downloadedFilePath, path, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _downloadedFilePath = path;
+        OnPropertyChanged(nameof(CanOpenDownloadFolder));
     }
 
     private void Open(CreatorResource? resource)
@@ -205,5 +211,10 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
     }
 
     private void OpenDownloadFolder()
-        => LaunchService.OpenFolder(DownloadedFilePath);
+    {
+        if (!LaunchService.OpenFolder(_downloadedFilePath))
+        {
+            SetDownloadStatus("The downloaded file and its folder are no longer available.", true);
+        }
+    }
 }

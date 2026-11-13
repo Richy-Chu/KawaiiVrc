@@ -18,7 +18,7 @@ public partial class CreatorBrowser : UserControl
 {
     private CreatorResourcesViewModel? _viewModel;
     private Task? _initialization;
-    private bool _isLoaded;
+    private string? _pendingUrl;
 
     public CreatorBrowser()
     {
@@ -29,23 +29,21 @@ public partial class CreatorBrowser : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _isLoaded = true;
-
         _viewModel = DataContext as CreatorResourcesViewModel;
         if (_viewModel is not null)
         {
             _viewModel.BrowserNavigationRequested += OnBrowserNavigationRequested;
+            if (_viewModel.IsBrowserOpen)
+            {
+                _pendingUrl = _viewModel.BrowserUrl;
+            }
         }
 
-        if (_viewModel?.IsBrowserOpen == true)
-        {
-            _ = NavigateAsync(_viewModel.BrowserUrl);
-        }
+        _ = NavigatePendingAsync();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        _isLoaded = false;
         if (_viewModel is not null)
         {
             _viewModel.BrowserNavigationRequested -= OnBrowserNavigationRequested;
@@ -56,15 +54,17 @@ public partial class CreatorBrowser : UserControl
 
     private void OnBrowserNavigationRequested(string url)
     {
-        if (_isLoaded)
+        _pendingUrl = url;
+        if (IsLoaded)
         {
-            _ = NavigateAsync(url);
+            _ = NavigatePendingAsync();
         }
     }
 
-    private async Task NavigateAsync(string url)
+    private async Task NavigatePendingAsync()
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+        if (_pendingUrl is not { } url ||
+            !Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         {
             return;
@@ -73,10 +73,13 @@ public partial class CreatorBrowser : UserControl
         try
         {
             await EnsureBrowserAsync();
-            if (_isLoaded)
+            if (!string.Equals(_pendingUrl, url, StringComparison.Ordinal))
             {
-                Browser.Source = uri;
+                return;
             }
+
+            Browser.Source = uri;
+            _pendingUrl = null;
         }
         catch (Exception ex)
         {

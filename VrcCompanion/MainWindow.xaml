@@ -2608,7 +2608,7 @@
                                         Style="{StaticResource SmallButton}"
                                         Margin="12,0,0,0"
                                         VerticalAlignment="Top"
-                                        ToolTip="Show the downloaded file in Explorer"
+                                        ToolTip="Show the downloaded file, or its folder if the file was moved or deleted"
                                         Visibility="{Binding CreatorResourcesViewModel.CanOpenDownloadFolder, Converter={StaticResource BoolToVis}}"
                                         Command="{Binding DataContext.CreatorResourcesViewModel.OpenDownloadFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                             </Grid>

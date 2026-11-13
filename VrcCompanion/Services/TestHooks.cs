@@ -100,6 +100,10 @@ internal static class TestHooks
     public static void UseUriLauncher(Action<string>? launcher)
         => LaunchService.UriLauncher = launcher ?? LaunchService.DefaultUriLauncher;
 
+    /// <summary>Observes Explorer targets instead of opening them; null restores.</summary>
+    public static void UseFolderLauncher(Action<string>? launcher)
+        => LaunchService.FolderLauncher = launcher ?? LaunchService.DefaultFolderLauncher;
+
     /// <summary>Runs one cooldown tick; the dispatcher timer does not tick under xUnit.</summary>
     public static void PumpBrowseBackoff(AvatarViewModel viewModel)
         => viewModel.OnBrowseBackoffTick();

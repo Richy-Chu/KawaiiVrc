@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using VrcCompanion.ViewModels;
 using Xunit;
@@ -12,10 +13,13 @@ public class CreatorResourcesTests
     {
         var vm = new CreatorResourcesViewModel();
 
-        Assert.Equal(7, vm.Resources.Count);
+        Assert.Equal(8, vm.Resources.Count);
         Assert.Equal(
             "https://vrmodels.store/?do=search&subaction=search&story=cat%20ears",
             Resource(vm, "VRModels").BuildSearchUrl("cat ears"));
+        Assert.Equal(
+            "https://forum.ripper.store/search?q=cat%20ears",
+            Resource(vm, "Ripper Store").BuildSearchUrl("cat ears"));
         Assert.Equal(
             "https://vrcmods.com/search?q=cat%20ears",
             Resource(vm, "VRCMods").BuildSearchUrl("cat ears"));
@@ -86,7 +90,7 @@ public class CreatorResourcesTests
 
         Assert.False(vm.IsBrowserOpen);
         Assert.Empty(vm.BrowserError);
-        Assert.Equal(7, vm.Resources.Count);
+        Assert.Equal(8, vm.Resources.Count);
     }
 
     [Fact]
@@ -98,12 +102,24 @@ public class CreatorResourcesTests
         vm.SetDownloadStatus($"Downloaded to {path}", downloadedPath: path);
 
         Assert.True(vm.CanOpenDownloadFolder);
-        Assert.Equal(path, vm.DownloadedFilePath);
 
         vm.SetDownloadStatus("Download failed: access was denied.", true);
 
         Assert.False(vm.CanOpenDownloadFolder);
-        Assert.Empty(vm.DownloadedFilePath);
+    }
+
+    [Fact]
+    public void OpenFolderReportsWhenTheDownloadAndItsFolderAreGone()
+    {
+        var vm = new CreatorResourcesViewModel();
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "avatar.zip");
+
+        vm.SetDownloadStatus($"Downloaded to {path}", downloadedPath: path);
+        vm.OpenDownloadFolderCommand.Execute(null);
+
+        Assert.False(vm.CanOpenDownloadFolder);
+        Assert.True(vm.DownloadStatusIsError);
+        Assert.Equal("The downloaded file and its folder are no longer available.", vm.DownloadStatus);
     }
 
     private static CreatorResource Resource(CreatorResourcesViewModel vm, string name)

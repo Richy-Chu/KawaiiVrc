@@ -60,18 +60,30 @@ public static class LaunchService
         => Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
-    /// <summary>Opens Explorer with the downloaded file selected.</summary>
+    /// <summary>
+    /// Opens Explorer with the downloaded file selected. If the file was moved or
+    /// deleted, opens its containing folder instead.
+    /// </summary>
     public static bool OpenFolder(string? filePath)
     {
-        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        if (string.IsNullOrWhiteSpace(filePath))
         {
             return false;
         }
 
-        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"")
+        if (File.Exists(filePath))
         {
-            UseShellExecute = true
-        });
+            FolderLauncher($"/select,\"{filePath}\"");
+            return true;
+        }
+
+        var folder = Path.GetDirectoryName(filePath);
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+        {
+            return false;
+        }
+
+        FolderLauncher($"\"{folder}\"");
         return true;
     }
 
@@ -124,6 +136,12 @@ public static class LaunchService
         var separator = location!.IndexOf(':');
         return separator > 0 && separator + 1 < location.Length ? location[(separator + 1)..] : null;
     }
+
+    /// <summary>Where an Explorer target goes. Tests replace it to observe the selection.</summary>
+    internal static Action<string> FolderLauncher { get; set; } = DefaultFolderLauncher;
+
+    internal static void DefaultFolderLauncher(string arguments)
+        => Process.Start(new ProcessStartInfo("explorer.exe", arguments) { UseShellExecute = true });
 
     /// <summary>Where a finished launch URI goes. Tests replace it to observe launches.</summary>
     internal static Action<string> UriLauncher { get; set; } = DefaultUriLauncher;

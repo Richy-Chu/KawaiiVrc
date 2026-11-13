@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using VrcCompanion.Services;
 using Xunit;
 
@@ -84,7 +86,7 @@ public class LaunchServiceTests
     [Fact]
     public void Launch_RejectsInvalidLocationBeforeStartingAnything()
     {
-        var started = new System.Collections.Generic.List<string>();
+        var started = new List<string>();
         TestHooks.UseUriLauncher(started.Add);
         try
         {
@@ -103,6 +105,35 @@ public class LaunchServiceTests
         finally
         {
             TestHooks.UseUriLauncher(null);
+        }
+    }
+
+    [Fact]
+    public void OpenFolder_SelectsTheFileOrFallsBackToItsFolder()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "VrcCompanionTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var file = Path.Combine(folder, "avatar.zip");
+        var started = new List<string>();
+        TestHooks.UseFolderLauncher(started.Add);
+        try
+        {
+            Assert.False(LaunchService.OpenFolder(null));
+            Assert.False(LaunchService.OpenFolder(Path.Combine(folder, "missing", "avatar.zip")));
+            Assert.Empty(started);
+
+            Assert.True(LaunchService.OpenFolder(file));
+            Assert.Equal($"\"{folder}\"", Assert.Single(started));
+
+            started.Clear();
+            File.WriteAllText(file, "avatar");
+            Assert.True(LaunchService.OpenFolder(file));
+            Assert.Equal($"/select,\"{file}\"", Assert.Single(started));
+        }
+        finally
+        {
+            TestHooks.UseFolderLauncher(null);
+            Directory.Delete(folder, recursive: true);
         }
     }
 
