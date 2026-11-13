@@ -170,24 +170,19 @@ public partial class CreatorBrowser : UserControl
 
     private void ReportDownloadState(CoreWebView2DownloadOperation operation)
     {
-        if (operation.State == CoreWebView2DownloadState.Completed)
+        switch (operation.State)
         {
-            SetDownloadStatus($"Downloaded to {operation.ResultFilePath}");
-            return;
+            case CoreWebView2DownloadState.Completed:
+                SetDownloadStatus($"Downloaded to {operation.ResultFilePath}");
+                break;
+            case CoreWebView2DownloadState.Interrupted
+                when operation.InterruptReason == CoreWebView2DownloadInterruptReason.UserCanceled:
+                SetDownloadStatus("Download cancelled.");
+                break;
+            case CoreWebView2DownloadState.Interrupted:
+                SetDownloadStatus($"Download failed: {Describe(operation.InterruptReason)}.", true);
+                break;
         }
-
-        if (operation.State != CoreWebView2DownloadState.Interrupted)
-        {
-            return;
-        }
-
-        if (operation.InterruptReason == CoreWebView2DownloadInterruptReason.UserCanceled)
-        {
-            SetDownloadStatus("Download cancelled.");
-            return;
-        }
-
-        SetDownloadStatus($"Download failed: {Describe(operation.InterruptReason)}.", true);
     }
 
     private void SetDownloadStatus(string message, bool isError = false)
