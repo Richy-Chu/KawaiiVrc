@@ -84,6 +84,8 @@ public class MainWindowLayoutTests
         {
             var shell = new MainViewModel();
             TestHooks.SetLoggedIn(shell);
+            var browserSection = shell.Sections.Single(section => section.Key == sectionKey);
+            var profileSection = shell.Sections.Single(section => section.Key == "profile");
             var window = new MainWindow(shell, initializeOnLoad: false)
             {
                 Width = 1100,
@@ -101,7 +103,7 @@ public class MainWindowLayoutTests
                 window.Show();
                 window.UpdateLayout();
 
-                shell.SelectedSection = shell.Sections.Single(section => section.Key == sectionKey);
+                shell.SelectedSection = browserSection;
                 window.UpdateLayout();
 
                 if (sectionKey == "resources")
@@ -118,6 +120,12 @@ public class MainWindowLayoutTests
                 var appHeader = (Border)window.FindName("AppHeader");
                 var appFooter = (Border)window.FindName("AppFooter");
 
+                void AssertChrome(Visibility expected)
+                {
+                    Assert.Equal(expected, appHeader.Visibility);
+                    Assert.Equal(expected, appFooter.Visibility);
+                }
+
                 var normalHeight = pane.ActualHeight;
                 toggle.IsChecked = true;
                 window.UpdateLayout();
@@ -130,24 +138,24 @@ public class MainWindowLayoutTests
                 {
                     Assert.Equal(Visibility.Collapsed, expander.Visibility);
                 }
-                Assert.Equal(Visibility.Collapsed, appHeader.Visibility);
-                Assert.Equal(Visibility.Collapsed, appFooter.Visibility);
+                AssertChrome(Visibility.Collapsed);
 
-                shell.SelectedSection = shell.Sections.Single(section => section.Key == "profile");
+                shell.SelectedSection = profileSection;
                 window.UpdateLayout();
-                Assert.Equal(Visibility.Visible, appHeader.Visibility);
-                Assert.Equal(Visibility.Visible, appFooter.Visibility);
+                AssertChrome(Visibility.Visible);
 
-                shell.SelectedSection = shell.Sections.Single(section => section.Key == sectionKey);
+                shell.SelectedSection = browserSection;
                 window.UpdateLayout();
                 Assert.True(toggle.IsChecked == true, "Focus should remain checked when returning to the browser.");
-                Assert.Equal(Visibility.Collapsed, appHeader.Visibility);
-                Assert.Equal(Visibility.Collapsed, appFooter.Visibility);
+                Assert.True(
+                    pane.ActualHeight > normalHeight + 20,
+                    $"Focus mode should reapply {sectionKey} height after returning. " +
+                    $"Before={normalHeight:F1}, after={pane.ActualHeight:F1}.");
+                AssertChrome(Visibility.Collapsed);
 
                 toggle.IsChecked = false;
                 window.UpdateLayout();
-                Assert.Equal(Visibility.Visible, appHeader.Visibility);
-                Assert.Equal(Visibility.Visible, appFooter.Visibility);
+                AssertChrome(Visibility.Visible);
             }
             finally
             {
