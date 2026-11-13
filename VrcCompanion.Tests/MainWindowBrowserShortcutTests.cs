@@ -97,34 +97,16 @@ public class MainWindowBrowserShortcutTests
 
                 await NavigateAsync(() =>
                 {
-                    var f5 = new KeyEventArgs(
-                        Keyboard.PrimaryDevice,
-                        PresentationSource.FromVisual(window)!,
-                        0,
-                        Key.F5)
-                    {
-                        RoutedEvent = Keyboard.PreviewKeyDownEvent
-                    };
-                    window.RaiseEvent(f5);
+                    var f5 = CreatePreviewKeyEvent(window, Key.F5);
+                    RaisePreviewKey(window, f5, ModifierKeys.None);
                     Assert.True(f5.Handled, "F5 should be handled by the window shortcut path.");
                 });
                 await NavigateAsync(() =>
                     RaiseFocusShortcut(window, Key.R, ModifierKeys.Control));
 
                 shell.BraveBrowserViewModel.IsFocusMode = false;
-                var ignored = new KeyEventArgs(
-                    Keyboard.PrimaryDevice,
-                    PresentationSource.FromVisual(window)!,
-                    0,
-                    Key.Left)
-                {
-                    RoutedEvent = Keyboard.PreviewKeyDownEvent
-                };
-                using (KeyboardModifierState.Apply(ModifierKeys.Alt))
-                {
-                    AssertModifiersApplied(ModifierKeys.Alt, ignored.Key);
-                    window.RaiseEvent(ignored);
-                }
+                var ignored = CreatePreviewKeyEvent(window, Key.Left);
+                RaisePreviewKey(window, ignored, ModifierKeys.Alt);
 
                 Assert.False(ignored.Handled, "Shortcuts should be ignored when no browser is focused.");
             }
@@ -141,7 +123,22 @@ public class MainWindowBrowserShortcutTests
         ModifierKeys modifiers,
         bool asSystemKey = false)
     {
-        var keyEvent = new KeyEventArgs(
+        var keyEvent = CreatePreviewKeyEvent(window, key);
+        if (asSystemKey)
+        {
+            MarkSystemKey(keyEvent);
+            Assert.Equal(Key.System, keyEvent.Key);
+            Assert.Equal(key, keyEvent.SystemKey);
+        }
+
+        RaisePreviewKey(window, keyEvent, modifiers);
+        Assert.True(
+            keyEvent.Handled,
+            $"{modifiers}+{key} should be handled by the window preview-key path.");
+    }
+
+    private static KeyEventArgs CreatePreviewKeyEvent(Window window, Key key)
+        => new(
             Keyboard.PrimaryDevice,
             PresentationSource.FromVisual(window)!,
             0,
@@ -150,27 +147,43 @@ public class MainWindowBrowserShortcutTests
             RoutedEvent = Keyboard.PreviewKeyDownEvent
         };
 
-        if (asSystemKey)
+    private static void RaisePreviewKey(
+        Window window,
+        KeyEventArgs keyEvent,
+        ModifierKeys modifiers)
+    {
+        var previous = new byte[256];
+        if (!GetKeyboardState(previous))
         {
-            // WPF has no public constructor for the Alt system-key shape. The
-            // framework's internal MarkSystem() transition turns Key into
-            // Key.System while preserving the original key as SystemKey.
-            typeof(KeyEventArgs)
-                .GetMethod("MarkSystem", BindingFlags.Instance | BindingFlags.NonPublic)
-                ?.Invoke(keyEvent, null);
-            Assert.Equal(Key.System, keyEvent.Key);
-            Assert.Equal(key, keyEvent.SystemKey);
+            throw new InvalidOperationException(
+                $"Could not read keyboard state: {Marshal.GetLastWin32Error()}.");
         }
 
-        using (KeyboardModifierState.Apply(modifiers))
+        try
         {
-            AssertModifiersApplied(modifiers, key);
+            var state = new byte[256];
+            SetKeyState(state, VkControl, modifiers.HasFlag(ModifierKeys.Control));
+            SetKeyState(state, VkLeftControl, modifiers.HasFlag(ModifierKeys.Control));
+            SetKeyState(state, VkAlt, modifiers.HasFlag(ModifierKeys.Alt));
+            SetKeyState(state, VkLeftAlt, modifiers.HasFlag(ModifierKeys.Alt));
+
+            if (!SetKeyboardState(state))
+            {
+                throw new InvalidOperationException(
+                    $"Could not set keyboard state: {Marshal.GetLastWin32Error()}.");
+            }
+
+            AssertModifiersApplied(modifiers, keyEvent.Key);
             window.RaiseEvent(keyEvent);
         }
-
-        Assert.True(
-            keyEvent.Handled,
-            $"{modifiers}+{key} should be handled by the window preview-key path.");
+        finally
+        {
+            if (!SetKeyboardState(previous))
+            {
+                throw new InvalidOperationException(
+                    $"Could not restore keyboard state: {Marshal.GetLastWin32Error()}.");
+            }
+        }
     }
 
     private static void AssertModifiersApplied(ModifierKeys requested, Key key)
@@ -180,6 +193,35 @@ public class MainWindowBrowserShortcutTests
             (actual & requested) == requested,
             $"The {requested} modifier state was not applied before {key}; actual={actual}.");
     }
+
+    private static void MarkSystemKey(KeyEventArgs keyEvent)
+    {
+        // WPF has no public constructor for the Alt system-key shape. This
+        // framework transition turns Key into Key.System and keeps the real key.
+        MarkSystemMethod.Invoke(keyEvent, null);
+    }
+
+    private static readonly MethodInfo MarkSystemMethod =
+        typeof(KeyEventArgs).GetMethod(
+            "MarkSystem",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("KeyEventArgs.MarkSystem was not found.");
+
+    private const int VkControl = 0x11;
+    private const int VkLeftControl = 0xA2;
+    private const int VkAlt = 0x12;
+    private const int VkLeftAlt = 0xA4;
+
+    private static void SetKeyState(byte[] state, int virtualKey, bool pressed)
+        => state[virtualKey] = pressed ? (byte)0x80 : (byte)0;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetKeyboardState(byte[] keyState);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetKeyboardState(byte[] keyState);
 
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
@@ -196,74 +238,5 @@ public class MainWindowBrowserShortcutTests
                 yield return child;
             }
         }
-    }
-
-    /// <summary>
-    /// WPF reads modifier state from the thread keyboard state, not from
-    /// KeyEventArgs. Set and restore it around each synthetic preview-key event.
-    /// </summary>
-    private sealed class KeyboardModifierState : IDisposable
-    {
-        private const int VkShift = 0x10;
-        private const int VkControl = 0x11;
-        private const int VkAlt = 0x12;
-        private const int VkLeftShift = 0xA0;
-        private const int VkLeftControl = 0xA2;
-        private const int VkLeftAlt = 0xA4;
-        private const int VkLeftWindows = 0x5B;
-
-        private readonly byte[] _previous;
-
-        private KeyboardModifierState(byte[] previous)
-        {
-            _previous = previous;
-        }
-
-        public static KeyboardModifierState Apply(ModifierKeys modifiers)
-        {
-            var previous = new byte[256];
-            if (!GetKeyboardState(previous))
-            {
-                throw new InvalidOperationException(
-                    $"Could not read keyboard state: {Marshal.GetLastWin32Error()}.");
-            }
-
-            var state = (byte[])previous.Clone();
-            SetKeyState(state, VkShift, modifiers.HasFlag(ModifierKeys.Shift));
-            SetKeyState(state, VkLeftShift, modifiers.HasFlag(ModifierKeys.Shift));
-            SetKeyState(state, VkControl, modifiers.HasFlag(ModifierKeys.Control));
-            SetKeyState(state, VkLeftControl, modifiers.HasFlag(ModifierKeys.Control));
-            SetKeyState(state, VkAlt, modifiers.HasFlag(ModifierKeys.Alt));
-            SetKeyState(state, VkLeftAlt, modifiers.HasFlag(ModifierKeys.Alt));
-            SetKeyState(state, VkLeftWindows, modifiers.HasFlag(ModifierKeys.Windows));
-
-            if (!SetKeyboardState(state))
-            {
-                throw new InvalidOperationException(
-                    $"Could not set keyboard state: {Marshal.GetLastWin32Error()}.");
-            }
-
-            return new KeyboardModifierState(previous);
-        }
-
-        public void Dispose()
-        {
-            if (!SetKeyboardState(_previous))
-            {
-                throw new InvalidOperationException(
-                    $"Could not restore keyboard state: {Marshal.GetLastWin32Error()}.");
-            }
-        }
-
-        private static void SetKeyState(byte[] state, int virtualKey, bool pressed)
-            => state[virtualKey] = (byte)((state[virtualKey] & 0x7F) | (pressed ? 0x80 : 0));
-
-        [DllImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetKeyboardState(byte[] keyState);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool SetKeyboardState(byte[] keyState);
     }
 }
