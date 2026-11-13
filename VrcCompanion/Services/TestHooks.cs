@@ -67,14 +67,14 @@ internal static class TestHooks
     }
 
     /// <summary>Marks the shell as signed in so command guards run in tests.</summary>
-    public static void SetLoggedIn(MainViewModel shell, bool isLoggedIn)
+    public static void SetLoggedIn(MainViewModel shell)
     {
         var setter = typeof(MainViewModel)
             .GetProperty(nameof(MainViewModel.IsLoggedIn))
             ?.GetSetMethod(nonPublic: true)
             ?? throw new InvalidOperationException("MainViewModel.IsLoggedIn setter not found.");
 
-        setter.Invoke(shell, new object?[] { isLoggedIn });
+        setter.Invoke(shell, new object?[] { true });
     }
 
     /// <summary>Attaches an open friend profile to the shell through its private setter.</summary>

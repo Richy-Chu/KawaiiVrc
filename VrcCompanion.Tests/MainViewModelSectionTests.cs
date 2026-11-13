@@ -24,7 +24,7 @@ public class MainViewModelSectionTests
             var handler = new ActivityProfileHandler();
             using var api = new VrcApiClient(null, handler);
             var shell = new MainViewModel(api);
-            TestHooks.SetLoggedIn(shell, true);
+            TestHooks.SetLoggedIn(shell);
             const string location =
                 "wrld_4432ea9b-729c-46e3-8eaf-846aa0a37fdd:12345~group(grp_test)";
             var entry = new ActivityEntry
