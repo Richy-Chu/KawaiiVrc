@@ -144,6 +144,37 @@ public sealed class LyricsDocument
 
 public sealed record LyricsLookupResult(LyricsDocument? Lyrics, string Status);
 
+/// <summary>Formats a VRChat chatbox line containing the song and, if present, a lyric.</summary>
+public static class ChatboxLyrics
+{
+    public static string Compose(string song, string? lyric)
+    {
+        var header = song.Length > OscMessage.ChatboxLimit
+            ? song[..OscMessage.ChatboxLimit]
+            : song;
+
+        if (string.IsNullOrWhiteSpace(lyric))
+        {
+            return header;
+        }
+
+        const string separator = " | ";
+        var available = OscMessage.ChatboxLimit - header.Length - separator.Length;
+        if (available <= 3)
+        {
+            return header;
+        }
+
+        var line = lyric.Trim();
+        if (line.Length > available)
+        {
+            line = line[..available].TrimEnd();
+        }
+
+        return $"{header}{separator}{line}";
+    }
+}
+
 /// <summary>
 /// Fetches lyrics from LRCLIB (https://lrclib.net), a free, keyless, open
 /// lyrics database. Lookups are best effort and never block the UI.

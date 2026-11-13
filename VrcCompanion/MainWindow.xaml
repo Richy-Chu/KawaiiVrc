@@ -2966,7 +2966,7 @@
                                       Style="{StaticResource FriendlyCheckBox}"
                                       IsChecked="{Binding ChatboxViewModel.ShowLyricsInRotation, Mode=TwoWay}"
                                       Margin="0,8,0,0" />
-                            <TextBlock Text="VRChat lyrics update automatically while music plays; typed messages still send and stay visible for at least 5 seconds. Free lyrics come from LRCLIB."
+                            <TextBlock Text="Shows the song on the VRChat chatbox and adds the current lyric when free lyrics are available. Updates automatically; typed messages still send and stay visible for at least 5 seconds. Lyrics come from LRCLIB."
                                        TextWrapping="Wrap"
                                        Style="{StaticResource MutedText}"
                                        Margin="0,6,0,0" />

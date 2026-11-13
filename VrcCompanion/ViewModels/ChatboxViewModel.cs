@@ -481,7 +481,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     private void UpdateVrchatLyrics()
     {
-        if (!_showLyricsOnVrchat || CurrentTrack is null || _lyrics is null || !_lyrics.HasLyrics)
+        if (!_showLyricsOnVrchat || CurrentTrack is null)
         {
             return;
         }
@@ -492,22 +492,27 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var line = _lyrics.IsSynced
-            ? _lyrics.LineAt(CurrentTrack.Position)
-            : GetCurrentLyricLine(advancePlain: true);
+        var line = _lyrics?.HasLyrics == true
+            ? (_lyrics.IsSynced
+                ? _lyrics.LineAt(CurrentTrack.Position)
+                : GetCurrentLyricLine(advancePlain: true))
+            : null;
 
-        if (string.IsNullOrWhiteSpace(line) || line == _lastVrchatLyric)
+        var message = ChatboxLyrics.Compose(CurrentTrack.ChatboxText, line);
+        if (message == _lastVrchatLyric)
         {
             return;
         }
 
         try
         {
-            _osc.SendChatbox(line);
+            _osc.SendChatbox(message);
             _lastOscSend = now;
-            _lastVrchatLyric = line;
-            var preview = line.Length > 48 ? line[..48] + "…" : line;
-            StatusText = $"Lyrics on VRChat: {preview}";
+            _lastVrchatLyric = message;
+            var preview = message.Length > 52 ? message[..52] + "…" : message;
+            StatusText = line is null
+                ? $"Now playing on VRChat: {preview}"
+                : $"Song + lyrics on VRChat: {preview}";
         }
         catch (Exception ex)
         {

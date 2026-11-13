@@ -38,6 +38,28 @@ public class LyricsTests
         Assert.Null(LyricsDocument.Parse(null, "  \n\n"));
     }
 
+    [Fact]
+    public void ChatboxLineIncludesSongEvenWithoutLyrics()
+    {
+        Assert.Equal("♪ Song — Artist · Spotify", ChatboxLyrics.Compose("♪ Song — Artist · Spotify", null));
+    }
+
+    [Fact]
+    public void ChatboxLineAppendsAvailableLyric()
+    {
+        Assert.Equal(
+            "♪ Song — Artist · Spotify | Current lyric line",
+            ChatboxLyrics.Compose("♪ Song — Artist · Spotify", "Current lyric line"));
+    }
+
+    [Fact]
+    public void ChatboxLineNeverExceedsTheOscLimit()
+    {
+        var message = ChatboxLyrics.Compose(new string('S', 100), new string('L', 100));
+        Assert.Equal(OscMessage.ChatboxLimit, message.Length);
+        Assert.StartsWith(new string('S', 100) + " | ", message);
+    }
+
     [Theory]
     [InlineData("Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)", "Rick Astley", "Never Gonna Give You Up")]
     [InlineData("Song Name (Official Audio)", "Artist", "Song Name")]
