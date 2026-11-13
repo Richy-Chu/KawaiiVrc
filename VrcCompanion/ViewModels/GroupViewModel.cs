@@ -177,6 +177,8 @@ public sealed class GroupViewModel : ViewModelBase
             if (SetProperty(ref _isMemberOfGroupInfo, value))
             {
                 OnPropertyChanged(nameof(GroupInfoMemberText));
+                OnPropertyChanged(nameof(GroupInfoMembershipLabel));
+                OnPropertyChanged(nameof(HasGroupInfoMembershipLabel));
                 OnPropertyChanged(nameof(GroupJoinHint));
                 OnPropertyChanged(nameof(IsGroupJoinOpen));
                 RaiseCommandStates();
@@ -184,17 +186,45 @@ public sealed class GroupViewModel : ViewModelBase
         }
     }
 
-    public string GroupInfoMemberText => GroupInfo?.MembershipStatus?.ToLowerInvariant() switch
+    public string GroupInfoMemberText
     {
-        "member" => "You are a member",
-        "requested" => "Your join request is pending",
-        "invited" => "You have an invite to this group",
-        "banned" => "You are banned from this group",
-        "userblocked" => "You have blocked this group",
-        _ => IsMemberOfGroupInfo ? "You are a member" : "You are not a member"
-    };
+        get
+        {
+            if (IsMemberOfGroupInfo)
+            {
+                return "You are a member";
+            }
 
-    public string GroupInfoMembershipLabel => GroupInfo?.MembershipLabel ?? string.Empty;
+            return GroupInfo?.MembershipStatus?.ToLowerInvariant() switch
+            {
+                "requested" => "Your join request is pending",
+                "invited" => "You have an invite to this group",
+                "banned" => "You are banned from this group",
+                "userblocked" => "You have blocked this group",
+                _ => "You are not a member"
+            };
+        }
+    }
+
+    public string GroupInfoMembershipLabel
+    {
+        get
+        {
+            if (IsMemberOfGroupInfo)
+            {
+                return "Joined";
+            }
+
+            return GroupInfo?.MembershipStatus?.ToLowerInvariant() switch
+            {
+                "requested" => "Request pending",
+                "invited" => "Invited",
+                "banned" => "Banned",
+                "userblocked" => "Blocked",
+                _ => string.Empty
+            };
+        }
+    }
 
     public bool HasGroupInfoMembershipLabel => GroupInfoMembershipLabel.Length > 0;
 
@@ -573,7 +603,7 @@ public sealed class GroupViewModel : ViewModelBase
             return;
         }
 
-        LaunchService.OpenUrl($"https://vrchat.com/home/group/{GroupInfo.Id}");
+        LaunchService.OpenUrl($"https://vrchat.com/home/group/{GroupInfo.EffectiveId}");
     }
 
     private async Task JoinGroupInfoAsync()
@@ -587,10 +617,13 @@ public sealed class GroupViewModel : ViewModelBase
         GroupInfoError = null;
         try
         {
-            await _api.JoinGroupAsync(GroupInfo.Id);
+            await _api.JoinGroupAsync(GroupInfo.EffectiveId);
             IsMemberOfGroupInfo = true;
+            GroupInfo.MembershipStatus = "member";
+            OnPropertyChanged(nameof(GroupInfoMemberText));
+            OnPropertyChanged(nameof(GroupInfoMembershipLabel));
             GroupInstancesHidden = false;
-            await LoadGroupInfoInstancesAsync(GroupInfo.Id);
+            await LoadGroupInfoInstancesAsync(GroupInfo.EffectiveId);
             // Refresh the cached membership list in the background; the popup
             // above must not wait for it or re-derive membership from stale data.
             _ = LoadGroupsAsync();
@@ -625,8 +658,11 @@ public sealed class GroupViewModel : ViewModelBase
         GroupInfoError = null;
         try
         {
-            await _api.LeaveGroupAsync(GroupInfo.Id);
+            await _api.LeaveGroupAsync(GroupInfo.EffectiveId);
             IsMemberOfGroupInfo = false;
+            GroupInfo.MembershipStatus = "inactive";
+            OnPropertyChanged(nameof(GroupInfoMemberText));
+            OnPropertyChanged(nameof(GroupInfoMembershipLabel));
             IsLeaveGroupConfirmOpen = false;
             GroupInfoInstances = new ObservableCollection<GroupInstance>();
             GroupInstancesHidden = true;

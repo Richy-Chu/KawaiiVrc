@@ -4097,6 +4097,59 @@
                                                        Foreground="{StaticResource AccentHoverBrush}"
                                                        Margin="0,3,0,0"
                                                        Visibility="{Binding HasMutualGroups, Converter={StaticResource BoolToVis}}" />
+                                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                                <Button Content="{Binding TheirGroupsTabText}"
+                                                        FontSize="10.5"
+                                                        Padding="9,4"
+                                                        Margin="0,0,6,0"
+                                                        Command="{Binding ShowProfileGroupsCommand}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsProfileGroupsTab}" Value="True">
+                                                                    <Setter Property="Background" Value="#4C1D95" />
+                                                                    <Setter Property="BorderBrush" Value="#8B5CF6" />
+                                                                    <Setter Property="Foreground" Value="White" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                                <Button Content="{Binding MutualGroupsTabText}"
+                                                        FontSize="10.5"
+                                                        Padding="9,4"
+                                                        Margin="0,0,6,0"
+                                                        Command="{Binding ShowMutualGroupsCommand}"
+                                                        Visibility="{Binding HasMutualGroups, Converter={StaticResource BoolToVis}}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsMutualGroupsTab}" Value="True">
+                                                                    <Setter Property="Background" Value="#4C1D95" />
+                                                                    <Setter Property="BorderBrush" Value="#8B5CF6" />
+                                                                    <Setter Property="Foreground" Value="White" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                                <Button Content="{Binding MyGroupsTabText}"
+                                                        FontSize="10.5"
+                                                        Padding="9,4"
+                                                        Command="{Binding ShowMyGroupsCommand}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsMyGroupsTab}" Value="True">
+                                                                    <Setter Property="Background" Value="#4C1D95" />
+                                                                    <Setter Property="BorderBrush" Value="#8B5CF6" />
+                                                                    <Setter Property="Foreground" Value="White" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                            </StackPanel>
                                         </StackPanel>
                                         <Button Style="{StaticResource GhostButton}" Padding="7,4"
                                                 HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -4107,7 +4160,12 @@
                                 </Border>
 
                                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="14,12,14,14">
-                                    <ItemsControl ItemsSource="{Binding Groups}">
+                                    <StackPanel>
+                                        <TextBlock Text="No groups in this list."
+                                                   Style="{StaticResource MutedText}"
+                                                   Margin="4,8,0,8"
+                                                   Visibility="{Binding VisibleGroups.Count, Converter={StaticResource IntToVis}, ConverterParameter=invert}" />
+                                    <ItemsControl ItemsSource="{Binding VisibleGroups}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
                                                 <Button Command="{Binding DataContext.OpenGroupCommand, RelativeSource={RelativeSource AncestorType=ScrollViewer}}"
@@ -4169,6 +4227,7 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
+                                    </StackPanel>
                                 </ScrollViewer>
                             </Grid>
                         </Border>

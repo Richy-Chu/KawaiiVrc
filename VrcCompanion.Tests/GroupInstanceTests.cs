@@ -57,12 +57,47 @@ public class GroupInstanceTests
     }
 
     [Fact]
+    public void SharedProfileGroupIsLabelledMutual()
+    {
+        var mutual = new VrcProfileGroup { Id = "grp_test", Name = "Shared", IsMine = true, IsMutual = true };
+        var mineOnly = new VrcProfileGroup { Id = "grp_other", Name = "Mine", IsMine = true };
+
+        Assert.Equal("Mutual", mutual.MembershipLabel);
+        Assert.True(mutual.HasMembershipLabel);
+        Assert.Equal("Joined", mineOnly.MembershipLabel);
+    }
+
+    [Fact]
     public void RequestedGroupIsNotTreatedAsJoined()
     {
         var group = new Group { Id = "grp_test", MembershipStatus = "requested" };
 
         Assert.False(group.IsMember);
         Assert.Equal("Request pending", group.MembershipLabel);
+    }
+
+    [Fact]
+    public void GroupPopupFollowsLiveMembershipAndNotTheStaleStatus()
+    {
+        using var api = new VrcApiClient();
+        var vm = new GroupViewModel(api)
+        {
+            GroupInfo = new Group { Id = "grp_test", Name = "Test", MembershipStatus = "member" },
+            IsMemberOfGroupInfo = true
+        };
+
+        Assert.Equal("You are a member", vm.GroupInfoMemberText);
+        Assert.Equal("Joined", vm.GroupInfoMembershipLabel);
+
+        // Leaving flips the live flag while the fetched payload still says member.
+        vm.IsMemberOfGroupInfo = false;
+        Assert.Equal("You are not a member", vm.GroupInfoMemberText);
+        Assert.Equal(string.Empty, vm.GroupInfoMembershipLabel);
+
+        // Joining flips it back without waiting for a refetch.
+        vm.IsMemberOfGroupInfo = true;
+        Assert.Equal("You are a member", vm.GroupInfoMemberText);
+        Assert.Equal("Joined", vm.GroupInfoMembershipLabel);
     }
 
     [Fact]

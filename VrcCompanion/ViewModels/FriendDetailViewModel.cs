@@ -57,8 +57,15 @@ public sealed class FriendDetailViewModel : ViewModelBase
                 }
             },
             group => group is not null && !string.IsNullOrWhiteSpace(group.Id));
-        OpenGroupsCommand = new RelayCommand(() => IsGroupsOpen = true);
+        OpenGroupsCommand = new RelayCommand(() =>
+        {
+            GroupsTab = ProfileGroupsTab.Profile;
+            IsGroupsOpen = true;
+        });
         CloseGroupsCommand = new RelayCommand(() => IsGroupsOpen = false);
+        ShowProfileGroupsCommand = new RelayCommand(() => GroupsTab = ProfileGroupsTab.Profile);
+        ShowMutualGroupsCommand = new RelayCommand(() => GroupsTab = ProfileGroupsTab.Mutual);
+        ShowMyGroupsCommand = new RelayCommand(() => GroupsTab = ProfileGroupsTab.Mine);
 
         var stored = _notes.Get(_friend.Id);
         _noteText = stored?.Text ?? string.Empty;
@@ -300,6 +307,59 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     public bool HasGroups => Groups.Count > 0;
 
+    public enum ProfileGroupsTab
+    {
+        Profile,
+        Mutual,
+        Mine
+    }
+
+    private IReadOnlyList<VrcProfileGroup> _myGroups = Array.Empty<VrcProfileGroup>();
+    private ProfileGroupsTab _groupsTab = ProfileGroupsTab.Profile;
+
+    /// <summary>Every group the signed-in account is in, including all 100+.</summary>
+    public IReadOnlyList<VrcProfileGroup> MyGroups => _myGroups;
+
+    public ProfileGroupsTab GroupsTab
+    {
+        get => _groupsTab;
+        set
+        {
+            if (SetProperty(ref _groupsTab, value))
+            {
+                OnPropertyChanged(nameof(VisibleGroups));
+                OnPropertyChanged(nameof(IsProfileGroupsTab));
+                OnPropertyChanged(nameof(IsMutualGroupsTab));
+                OnPropertyChanged(nameof(IsMyGroupsTab));
+                OnPropertyChanged(nameof(ProfileGroupsTabText));
+            }
+        }
+    }
+
+    public IReadOnlyList<VrcProfileGroup> VisibleGroups => GroupsTab switch
+    {
+        ProfileGroupsTab.Mutual => Groups.Where(group => group.IsMutual).ToList(),
+        ProfileGroupsTab.Mine => _myGroups,
+        _ => Groups
+    };
+
+    public bool IsProfileGroupsTab => GroupsTab == ProfileGroupsTab.Profile;
+    public bool IsMutualGroupsTab => GroupsTab == ProfileGroupsTab.Mutual;
+    public bool IsMyGroupsTab => GroupsTab == ProfileGroupsTab.Mine;
+
+    public string MyGroupsTabText => $"My groups ({_myGroups.Count})";
+
+    public string TheirGroupsTabText => $"Their groups ({Groups.Count})";
+
+    public string MutualGroupsTabText => $"Mutual ({MutualGroupCount})";
+
+    public string ProfileGroupsTabText => GroupsTab switch
+    {
+        ProfileGroupsTab.Mutual => $"Mutual ({MutualGroupCount})",
+        ProfileGroupsTab.Mine => MyGroupsTabText,
+        _ => $"Their groups ({Groups.Count})"
+    };
+
     public int MutualGroupCount => Groups.Count(group => group.IsMutual);
 
     public bool HasMutualGroups => MutualGroupCount > 0;
@@ -315,6 +375,12 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     public RelayCommand CloseGroupsCommand { get; }
 
+    public RelayCommand ShowProfileGroupsCommand { get; }
+
+    public RelayCommand ShowMutualGroupsCommand { get; }
+
+    public RelayCommand ShowMyGroupsCommand { get; }
+
     private bool _isGroupsOpen;
 
     /// <summary>Scrollable list of every group on this profile.</summary>
@@ -326,6 +392,8 @@ public sealed class FriendDetailViewModel : ViewModelBase
             if (SetProperty(ref _isGroupsOpen, value))
             {
                 OnPropertyChanged(nameof(Groups));
+                OnPropertyChanged(nameof(VisibleGroups));
+                OnPropertyChanged(nameof(ProfileGroupsTabText));
             }
         }
     }
@@ -563,42 +631,59 @@ public sealed class FriendDetailViewModel : ViewModelBase
     private async Task AnnotateGroupsAsync(CancellationToken cancellationToken)
     {
         var groups = Groups;
-        if (groups.Count == 0)
+        try
         {
-            return;
-        }
+            // Load every group on the account, not just the ones shown on this
+            // profile: the popup offers a "My groups" tab with the full list.
+            var mine = await _api.GetMyGroupsAsync(cancellationToken);
+            var ids = mine.Select(group => group.EffectiveId).ToHashSet(StringComparer.Ordinal);
+            var profileIds = groups.Select(group => group.Id).ToHashSet(StringComparer.Ordinal);
 
-        if (IsSelf)
-        {
-            foreach (var group in groups)
+            if (IsSelf)
             {
-                group.IsMine = true;
-                group.IsMutual = false;
+                foreach (var group in groups)
+                {
+                    group.IsMine = true;
+                    group.IsMutual = false;
+                }
             }
-        }
-        else
-        {
-            try
+            else
             {
-                var mine = await _api.GetMyGroupsAsync(cancellationToken);
-                var ids = mine.Select(group => group.EffectiveId).ToHashSet(StringComparer.Ordinal);
                 foreach (var group in groups)
                 {
                     group.IsMine = ids.Contains(group.Id);
                     group.IsMutual = group.IsMine;
                 }
             }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine(ex);
-            }
+
+            _myGroups = mine
+                .Select(group => new VrcProfileGroup
+                {
+                    Id = group.EffectiveId,
+                    Name = group.Name,
+                    IconUrl = group.IconUrl,
+                    IsMine = true,
+                    IsMutual = !IsSelf && profileIds.Contains(group.EffectiveId)
+                })
+                .OrderBy(group => group.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
         }
 
         OnPropertyChanged(nameof(Groups));
+        OnPropertyChanged(nameof(MyGroups));
+        OnPropertyChanged(nameof(VisibleGroups));
+        OnPropertyChanged(nameof(MyGroupsTabText));
+        OnPropertyChanged(nameof(TheirGroupsTabText));
+        OnPropertyChanged(nameof(MutualGroupsTabText));
+        OnPropertyChanged(nameof(ProfileGroupsTabText));
         OnPropertyChanged(nameof(GroupsSummary));
         OnPropertyChanged(nameof(MutualGroupCount));
         OnPropertyChanged(nameof(HasMutualGroups));
