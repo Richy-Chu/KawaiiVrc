@@ -29,7 +29,6 @@ public sealed class GroupViewModel : ViewModelBase
     private readonly List<IRelayCommand> _commands = new();
     private bool _showCreateDialog;
     private bool _hasLoaded;
-    private readonly Func<LaunchMode> _launchMode;
     private readonly Action<string, string>? _openLaunchChooser;
     private ObservableCollection<GroupInstance> _instances = new();
     private bool _isLoadingInstances;
@@ -53,11 +52,9 @@ public sealed class GroupViewModel : ViewModelBase
 
     public GroupViewModel(
         VrcApiClient api,
-        Func<LaunchMode>? launchMode = null,
         Action<string, string>? openLaunchChooser = null)
     {
         _api = api;
-        _launchMode = launchMode ?? (() => LaunchMode.Vr);
         _openLaunchChooser = openLaunchChooser;
 
         LoadGroupsCommand = Track(new AsyncRelayCommand(() => LoadGroupsAsync(), () => !IsBusy));
@@ -527,21 +524,12 @@ public sealed class GroupViewModel : ViewModelBase
             return;
         }
 
-        if (_openLaunchChooser is not null)
+        if (_openLaunchChooser is null)
         {
-            _openLaunchChooser(instance.Location, "that group instance");
             return;
         }
 
-        try
-        {
-            LaunchService.Launch(instance.Location, _launchMode());
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine(ex);
-            ErrorMessage = "Could not launch VRChat for that instance.";
-        }
+        _openLaunchChooser(instance.Location, "that group instance");
     }
 
     /// <summary>

@@ -119,6 +119,28 @@ public class GroupInstanceTests
     }
 
     [Fact]
+    public void GroupInstanceJoinUsesTheSharedLaunchChooser()
+    {
+        using var api = new VrcApiClient();
+        string? chosenLocation = null;
+        string? chosenLabel = null;
+        var vm = new GroupViewModel(api, (location, label) =>
+        {
+            chosenLocation = location;
+            chosenLabel = label;
+        });
+        var instance = new GroupInstance
+        {
+            Location = "wrld_4432ea9b-729c-46e3-8eaf-846aa0a37fdd:12345~group(grp_abc)"
+        };
+
+        vm.JoinGroupInstanceCommand.Execute(instance);
+
+        Assert.Equal(instance.Location, chosenLocation);
+        Assert.Equal("that group instance", chosenLabel);
+    }
+
+    [Fact]
     public void InvalidOrMissingLocationsCannotBeJoined()
     {
         var instance = new GroupInstance { Location = "not-a-location" };

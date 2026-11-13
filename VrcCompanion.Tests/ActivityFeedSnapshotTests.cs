@@ -8,6 +8,36 @@ namespace VrcCompanion.Tests;
 public class ActivityFeedSnapshotTests
 {
     [Fact]
+    public async Task LoadUsesTheSharedFriendLoader()
+    {
+        using var api = new VrcApiClient();
+        var feed = new ActivityFeedViewModel(api);
+        var calls = 0;
+        feed.RefreshRequested = () =>
+        {
+            calls++;
+            feed.ApplyFriends(new[]
+            {
+                new VrcUser
+                {
+                    Id = "usr_1",
+                    DisplayName = "One",
+                    Username = "one",
+                    Location = "wrld_test:12345",
+                    Status = "active"
+                }
+            });
+            return Task.CompletedTask;
+        };
+
+        await feed.LoadAsync();
+
+        Assert.Equal(1, calls);
+        Assert.True(feed.HasLoaded);
+        Assert.Single(feed.Entries);
+    }
+
+    [Fact]
     public void SharedFriendSnapshotRaisesOneDeltaForTheChange()
     {
         using var api = new VrcApiClient();

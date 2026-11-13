@@ -315,6 +315,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OpenActivityAvatarCommand = Track(new AsyncRelayCommand<ActivityEntry>(
             OpenActivityAvatarAsync,
             entry => entry is not null && entry.HasAvatar && !IsBusy));
+        OpenActivityUserCommand = Track(new AsyncRelayCommand<ActivityEntry>(
+            OpenActivityUserAsync,
+            entry => entry is not null && !string.IsNullOrWhiteSpace(entry.UserId) && IsLoggedIn && !IsBusy));
         CloseWorldDialogCommand = Track(new RelayCommand(CloseWorldDialog));
         RefreshWorldDialogCommand = Track(new AsyncRelayCommand(
             RefreshWorldDialogAsync,
@@ -1534,6 +1537,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand CloseFriendChangesCommand { get; }
     public RelayCommand<FriendChangeItem> OpenFriendChangeCommand { get; }
     public AsyncRelayCommand<ActivityEntry> OpenActivityAvatarCommand { get; }
+    public AsyncRelayCommand<ActivityEntry> OpenActivityUserCommand { get; }
     public RelayCommand CloseWorldDialogCommand { get; }
     public AsyncRelayCommand RefreshWorldDialogCommand { get; }
     public AsyncRelayCommand CreateInstanceCommand { get; }
@@ -1576,10 +1580,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         // Initialize new feature view models on the signed-in client
         AvatarViewModel = new AvatarViewModel(_api);
-        GroupViewModel = new GroupViewModel(
-            _api,
-            () => IsDesktopDefault ? LaunchMode.Desktop : LaunchMode.Vr,
-            OpenLaunchChooser);
+        GroupViewModel = new GroupViewModel(_api, OpenLaunchChooser);
         ActivityFeedViewModel = new ActivityFeedViewModel(_api);
         ActivityFeedViewModel.RefreshRequested = LoadAllFriendsAsync;
         ActivityFeedViewModel.FriendListChanged += OnFriendListChanged;
@@ -2621,9 +2622,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void LaunchLocation(string location, LaunchMode? mode = null)
+    private void LaunchLocation(string location, LaunchMode chosen)
     {
-        var chosen = mode ?? DefaultLaunchMode;
         try
         {
             LaunchService.Launch(location, chosen);
@@ -3257,6 +3257,54 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             Debug.WriteLine(ex);
             ShowError("Could not load that avatar.");
+        }
+        finally
+        {
+            PopBusy();
+        }
+    }
+
+    private async Task OpenActivityUserAsync(ActivityEntry? entry)
+    {
+        if (entry is null || string.IsNullOrWhiteSpace(entry.UserId) || IsBusy)
+        {
+            return;
+        }
+
+        PushBusy("Loading that VRChat profile…");
+        try
+        {
+            // Activity rows only carry an id. Resolve the live user first, then
+            // let the profile popup fetch the full public profile itself.
+            var user = await _api.GetUserAsync(entry.UserId, forceRefresh: true);
+            if (user is null)
+            {
+                ShowError("VRChat did not return that profile.");
+                return;
+            }
+
+            var detail = new FriendDetailViewModel(
+                new FriendItem(user),
+                _api,
+                _images,
+                openGroup: OpenGroupInfoFromProfile);
+
+            SelectedFriend = null;
+            SelectedFriendDetail = detail;
+            await detail.LoadAsync(forceRefresh: true, CancellationToken.None);
+        }
+        catch (VrcApiException ex)
+        {
+            ShowError(ex.Message);
+        }
+        catch (HttpRequestException)
+        {
+            ShowError("Could not reach VRChat to load that profile.");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            ShowError("Could not load that VRChat profile.");
         }
         finally
         {
