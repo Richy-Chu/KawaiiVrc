@@ -34,6 +34,75 @@ public class EmbeddedBrowserAddressTests
     }
 
     [Fact]
+    public void InvalidAddressLeavesCurrentPageUnchanged()
+    {
+        WpfTestHost.RunAsync(async () =>
+        {
+            var host = new BraveBrowserViewModel { IsFocusMode = true };
+            var browser = new EmbeddedBrowser { DataContext = host };
+            var window = new Window
+            {
+                Content = browser,
+                Width = 900,
+                Height = 600,
+                ShowActivated = false
+            };
+
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                await browser.InitializeForTestAsync();
+
+                var core = browser.Browser.CoreWebView2
+                    ?? throw new InvalidOperationException("WebView2 did not initialize.");
+                var loaded = new TaskCompletionSource<CoreWebView2NavigationCompletedEventArgs>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                void OnNavigationCompleted(
+                    object? sender,
+                    CoreWebView2NavigationCompletedEventArgs e)
+                {
+                    core.NavigationCompleted -= OnNavigationCompleted;
+                    loaded.TrySetResult(e);
+                }
+
+                core.NavigationCompleted += OnNavigationCompleted;
+                core.NavigateToString(
+                    "<html><head><title>Current page</title></head><body>Still here</body></html>");
+                await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+                var address = browser.FindName("FocusAddressBox") as TextBox
+                    ?? throw new InvalidOperationException("Focus address box was not found.");
+                var sourceBefore = core.Source;
+                var titleBefore = core.DocumentTitle;
+                var browserUrlBefore = host.BrowserUrl;
+
+                address.Text = "ftp://example.com/";
+                var enter = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window)!,
+                    0,
+                    Key.Enter)
+                {
+                    RoutedEvent = Keyboard.KeyDownEvent
+                };
+                address.RaiseEvent(enter);
+
+                Assert.True(enter.Handled, "Enter should still be handled for invalid input.");
+                Assert.Equal("Enter a valid http or https address.", host.BrowserError);
+                Assert.Equal(sourceBefore, core.Source);
+                Assert.Equal(titleBefore, core.DocumentTitle);
+                Assert.Equal(browserUrlBefore, host.BrowserUrl);
+                Assert.True(host.IsFocusMode, "Invalid input should not leave focus mode.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void FocusAddressBarNavigatesWithoutLeavingFocusMode()
     {
         WpfTestHost.RunAsync(async () =>
