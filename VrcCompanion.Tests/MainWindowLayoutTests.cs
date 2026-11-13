@@ -252,19 +252,45 @@ public class MainWindowLayoutTests
         });
     }
 
-    [Fact]
-    public void InvalidFocusAddressFeedbackIsVisibleAtMinimumWindowWidth()
+    [Theory]
+    [InlineData("brave", "BraveBrowserPane", "BraveFocusToggle")]
+    [InlineData("discord", "DiscordBrowserPane", "DiscordFocusToggle")]
+    [InlineData("resources", "CreatorBrowserPane", "CreatorFocusToggle")]
+    public void InvalidFocusAddressFeedbackFitsAtMinimumWindowWidth(
+        string sectionKey,
+        string paneTag,
+        string toggleTag)
     {
         WpfTestHost.Run(() =>
         {
             const string message = "Enter a valid http or https address.";
+            const string pageUrl = "https://example.com/focus";
             var shell = new MainViewModel();
             TestHooks.SetLoggedIn(shell);
-            var browserSection = shell.Sections.Single(section => section.Key == "brave");
+            var browserSection = shell.Sections.Single(section => section.Key == sectionKey);
+            IEmbeddedBrowserHost host = sectionKey switch
+            {
+                "brave" => shell.BraveBrowserViewModel,
+                "discord" => shell.DiscordBrowserViewModel,
+                "resources" => shell.CreatorResourcesViewModel,
+                _ => throw new ArgumentOutOfRangeException(nameof(sectionKey), sectionKey, null)
+            };
+            string GetBrowserError() => sectionKey switch
+            {
+                "brave" => shell.BraveBrowserViewModel.BrowserError,
+                "discord" => shell.DiscordBrowserViewModel.BrowserError,
+                "resources" => shell.CreatorResourcesViewModel.BrowserError,
+                _ => string.Empty
+            };
+            var errorBindingPath = sectionKey switch
+            {
+                "brave" => "BraveBrowserViewModel.BrowserError",
+                "discord" => "DiscordBrowserViewModel.BrowserError",
+                "resources" => "CreatorResourcesViewModel.BrowserError",
+                _ => string.Empty
+            };
             var window = new MainWindow(shell, initializeOnLoad: false)
             {
-                Width = 1100,
-                Height = 720,
                 WindowStyle = WindowStyle.None,
                 ShowInTaskbar = false,
                 ShowActivated = false,
@@ -272,18 +298,27 @@ public class MainWindowLayoutTests
                 Left = 100,
                 Top = 100
             };
+            window.Width = window.MinWidth;
+            window.Height = window.MinHeight;
 
             try
             {
                 window.Show();
                 shell.SelectedSection = browserSection;
-                shell.BraveBrowserViewModel.SetBrowserLocation(
-                    "https://example.com/focus",
-                    "Focus page");
-                shell.BraveBrowserViewModel.IsFocusMode = true;
+                if (host is CreatorResourcesViewModel creatorResources)
+                {
+                    creatorResources.ShowBrowserForLayoutTest();
+                }
+
+                host.SetBrowserLocation(pageUrl, "Focus page");
+                host.IsFocusMode = true;
                 window.UpdateLayout();
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
 
+                var pane = FindVisualChildren<Border>(window)
+                    .Single(element => Equals(element.Tag, paneTag));
+                var toggle = FindVisualChildren<ToggleButton>(window)
+                    .Single(element => Equals(element.Tag, toggleTag));
                 var address = FindVisualChildren<TextBox>(window)
                     .Single(textBox =>
                         AutomationProperties.GetAutomationId(textBox) == "BrowserFocusAddressBox");
@@ -291,8 +326,11 @@ public class MainWindowLayoutTests
                     .Single(button =>
                         AutomationProperties.GetAutomationId(button) == "BrowserFocusExitButton");
 
-                Assert.True(address.IsVisible, "The focus address box should be visible.");
-                Assert.True(exit.IsVisible, "The Exit focus button should be visible.");
+                Assert.True(pane.IsVisible, $"The {sectionKey} browser pane should be visible.");
+                Assert.True(toggle.IsChecked == true, $"{sectionKey} should be in focus mode.");
+                Assert.True(host.IsFocusMode, $"{sectionKey} focus state should be active.");
+                Assert.True(address.IsVisible, $"The {sectionKey} focus address box should be visible.");
+                Assert.True(exit.IsVisible, $"The {sectionKey} Exit focus button should be visible.");
 
                 address.Text = "ftp://example.com/";
                 var enter = new KeyEventArgs(
@@ -308,32 +346,49 @@ public class MainWindowLayoutTests
 
                 Assert.True(
                     enter.Handled,
-                    $"Enter should submit the focus address bar. Text='{address.Text}', " +
-                    $"error='{shell.BraveBrowserViewModel.BrowserError}', " +
-                    $"browserUrl='{shell.BraveBrowserViewModel.BrowserUrl}'.");
-                Assert.Equal(message, shell.BraveBrowserViewModel.BrowserError);
+                    $"Enter should submit the {sectionKey} focus address bar. Text='{address.Text}', " +
+                    $"error='{GetBrowserError()}', browserUrl='{host.BrowserUrl}'.");
+                Assert.Equal(message, GetBrowserError());
+                Assert.Equal(pageUrl, host.BrowserUrl);
 
                 var feedback = FindVisualChildren<TextBlock>(window)
-                    .Single(text => text.Text == message);
-                Assert.True(feedback.IsVisible, "Invalid-address feedback should be visible in focus mode.");
+                    .Single(text =>
+                        text.Text == message &&
+                        text.GetBindingExpression(TextBlock.TextProperty)
+                            ?.ParentBinding.Path.Path == errorBindingPath);
+                Assert.True(
+                    feedback.IsVisible,
+                    $"Invalid-address feedback should be visible for {sectionKey} in focus mode.");
+                Assert.Equal(message, feedback.Text);
 
                 var feedbackBounds = BoundsWithin(feedback, window);
                 var addressBounds = BoundsWithin(address, window);
                 var exitBounds = BoundsWithin(exit, window);
-                Assert.True(feedbackBounds.Width > 0, "Invalid-address feedback should have width.");
+                Assert.True(
+                    feedbackBounds.Width > 0 && feedbackBounds.Height > 0,
+                    $"Invalid-address feedback should have size for {sectionKey}. Bounds={feedbackBounds}.");
                 Assert.True(
                     feedbackBounds.Left >= 0 &&
                     feedbackBounds.Right <= window.ActualWidth + 1 &&
                     feedbackBounds.Top >= 0 &&
                     feedbackBounds.Bottom <= window.ActualHeight + 1,
-                    $"Invalid-address feedback should remain inside the window. " +
+                    $"Invalid-address feedback should remain inside the window for {sectionKey}. " +
                     $"Bounds={feedbackBounds}, window={window.ActualWidth}x{window.ActualHeight}.");
                 Assert.True(
                     addressBounds.Width >= 200,
-                    $"The address box should remain usable at the minimum width. Bounds={addressBounds}.");
+                    $"The {sectionKey} address box should remain usable at the minimum width. " +
+                    $"Bounds={addressBounds}.");
                 Assert.True(
                     addressBounds.Right <= exitBounds.Left + 1,
-                    $"The address box should not overlap Exit focus. Address={addressBounds}, exit={exitBounds}.");
+                    $"The {sectionKey} address box should not overlap Exit focus. " +
+                    $"Address={addressBounds}, exit={exitBounds}.");
+                Assert.True(
+                    exitBounds.Left >= 0 &&
+                    exitBounds.Right <= window.ActualWidth + 1 &&
+                    exitBounds.Top >= 0 &&
+                    exitBounds.Bottom <= window.ActualHeight + 1,
+                    $"The {sectionKey} Exit focus button should remain inside the window. " +
+                    $"Bounds={exitBounds}, window={window.ActualWidth}x{window.ActualHeight}.");
             }
             finally
             {
