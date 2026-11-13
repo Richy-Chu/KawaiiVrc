@@ -19,6 +19,7 @@ public sealed class BraveBrowserViewModel : ViewModelBase, IEmbeddedBrowserHost
     private string _downloadStatus = string.Empty;
     private bool _downloadStatusIsError;
     private string? _downloadedFilePath;
+    private bool _isFocusMode;
 
     public BraveBrowserViewModel()
     {
@@ -45,6 +46,12 @@ public sealed class BraveBrowserViewModel : ViewModelBase, IEmbeddedBrowserHost
     {
         get => _isBrowserOpen;
         private set => SetProperty(ref _isBrowserOpen, value);
+    }
+
+    public bool IsFocusMode
+    {
+        get => _isFocusMode;
+        set => SetProperty(ref _isFocusMode, value);
     }
 
     public string BrowserUrl

@@ -19,6 +19,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserH
     private string _downloadStatus = string.Empty;
     private bool _downloadStatusIsError;
     private string? _downloadedFilePath;
+    private bool _isFocusMode;
 
     public CreatorResourcesViewModel()
     {
@@ -104,6 +105,12 @@ public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserH
         private set => SetProperty(ref _isBrowserOpen, value);
     }
 
+    public bool IsFocusMode
+    {
+        get => _isFocusMode;
+        set => SetProperty(ref _isFocusMode, value);
+    }
+
     public string BrowserUrl
     {
         get => _browserUrl;
@@ -164,6 +171,13 @@ public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserH
         SetDownloadedFilePath(downloadedPath);
     }
 
+    /// <summary>Shows the browser pane without starting a navigation for layout tests.</summary>
+    internal void ShowBrowserForLayoutTest()
+    {
+        BrowserTitle = "Creator Resources";
+        IsBrowserOpen = true;
+    }
+
     private void SetDownloadedFilePath(string? path)
     {
         if (string.Equals(_downloadedFilePath, path, StringComparison.Ordinal))
@@ -207,6 +221,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserH
         BrowserUrl = url;
         BrowserError = string.Empty;
         SetDownloadStatus(string.Empty);
+        IsFocusMode = false;
         IsBrowserOpen = true;
         BrowserNavigationRequested?.Invoke(url);
     }
@@ -214,6 +229,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserH
     private void CloseBrowser()
     {
         IsBrowserOpen = false;
+        IsFocusMode = false;
         BrowserError = string.Empty;
         SetDownloadStatus(string.Empty);
     }

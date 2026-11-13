@@ -2716,8 +2716,7 @@
                 <StackPanel Grid.Row="2" Margin="0,8,0,0">
                     <ToggleButton x:Name="CreatorFocusToggle"
                                   Tag="CreatorFocusToggle"
-                                  Checked="BrowserFocusToggle_Checked"
-                                  Unchecked="BrowserFocusToggle_Unchecked"
+                                  IsChecked="{Binding CreatorResourcesViewModel.IsFocusMode, Mode=TwoWay}"
                                   HorizontalAlignment="Left"
                                   Margin="0,0,0,6">
                         <ToggleButton.Style>
@@ -2867,8 +2866,7 @@
                         <StackPanel Grid.Row="2" Margin="0,8,0,0">
                             <ToggleButton x:Name="BraveFocusToggle"
                                           Tag="BraveFocusToggle"
-                                          Checked="BrowserFocusToggle_Checked"
-                                          Unchecked="BrowserFocusToggle_Unchecked"
+                                          IsChecked="{Binding BraveBrowserViewModel.IsFocusMode, Mode=TwoWay}"
                                           HorizontalAlignment="Left"
                                           Margin="0,0,0,6">
                                 <ToggleButton.Style>
@@ -3028,8 +3026,7 @@
                         <StackPanel Grid.Row="2" Margin="0,8,0,0">
                             <ToggleButton x:Name="DiscordFocusToggle"
                                           Tag="DiscordFocusToggle"
-                                          Checked="BrowserFocusToggle_Checked"
-                                          Unchecked="BrowserFocusToggle_Unchecked"
+                                          IsChecked="{Binding DiscordBrowserViewModel.IsFocusMode, Mode=TwoWay}"
                                           HorizontalAlignment="Left"
                                           Margin="0,0,0,6">
                                 <ToggleButton.Style>
@@ -3956,6 +3953,7 @@
 
                 <!-- Header -->
                 <Border x:Name="AppHeader"
+                        Visibility="{Binding IsAnyBrowserFocused, Converter={StaticResource InverseBoolToVis}}"
                         BorderBrush="{StaticResource SoftBorderBrush}"
                         BorderThickness="0,0,0,1"
                         Padding="26,18,26,14">
@@ -4121,6 +4119,7 @@
                 <!-- Footer -->
                 <Border x:Name="AppFooter"
                         Grid.Row="3"
+                        Visibility="{Binding IsAnyBrowserFocused, Converter={StaticResource InverseBoolToVis}}"
                         BorderBrush="{StaticResource SoftBorderBrush}"
                         BorderThickness="0,1,0,0"
                         Padding="26,8">

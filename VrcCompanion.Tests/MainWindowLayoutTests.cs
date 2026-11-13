@@ -72,12 +72,14 @@ public class MainWindowLayoutTests
     }
 
     [Theory]
-    [InlineData("brave", "BraveBrowserPane", "BraveFocusToggle")]
-    [InlineData("discord", "DiscordBrowserPane", "DiscordFocusToggle")]
+    [InlineData("brave", "BraveBrowserPane", "BraveFocusToggle", false)]
+    [InlineData("discord", "DiscordBrowserPane", "DiscordFocusToggle", false)]
+    [InlineData("resources", "CreatorBrowserPane", "CreatorFocusToggle", true)]
     public void FocusModeGivesTheBrowserTheWholePane(
         string sectionKey,
         string paneTag,
-        string toggleTag)
+        string toggleTag,
+        bool openCreatorBrowser)
     {
         WpfTestHost.Run(() =>
         {
@@ -103,11 +105,17 @@ public class MainWindowLayoutTests
                 shell.SelectedSection = shell.Sections.Single(section => section.Key == sectionKey);
                 window.UpdateLayout();
 
+                if (openCreatorBrowser)
+                {
+                    shell.CreatorResourcesViewModel.ShowBrowserForLayoutTest();
+                    window.UpdateLayout();
+                }
+
                 var pane = FindVisualChildren<Border>(window)
                     .Single(element => Equals(element.Tag, paneTag));
                 var toggle = FindVisualChildren<ToggleButton>(window)
                     .Single(element => Equals(element.Tag, toggleTag));
-                var expander = FindVisualChildren<Expander>(window).Single();
+                var expander = FindVisualChildren<Expander>(window).SingleOrDefault();
 
                 var normalHeight = pane.ActualHeight;
                 toggle.IsChecked = true;
@@ -117,7 +125,10 @@ public class MainWindowLayoutTests
                     pane.ActualHeight > normalHeight + 20,
                     $"Focus mode should give {sectionKey} more height. " +
                     $"Before={normalHeight:F1}, after={pane.ActualHeight:F1}.");
-                Assert.Equal(Visibility.Collapsed, expander.Visibility);
+                if (expander is not null)
+                {
+                    Assert.Equal(Visibility.Collapsed, expander.Visibility);
+                }
                 Assert.Equal(
                     Visibility.Collapsed,
                     ((Border)window.FindName("AppHeader")).Visibility);

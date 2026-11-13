@@ -179,6 +179,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         CreatorResourcesViewModel = new CreatorResourcesViewModel();
         BraveBrowserViewModel = new BraveBrowserViewModel();
         DiscordBrowserViewModel = new DiscordBrowserViewModel();
+        CreatorResourcesViewModel.PropertyChanged += OnBrowserFocusChanged;
+        BraveBrowserViewModel.PropertyChanged += OnBrowserFocusChanged;
+        DiscordBrowserViewModel.PropertyChanged += OnBrowserFocusChanged;
 
         Statuses = new ObservableCollection<StatusOption>
         {
@@ -419,6 +422,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public ObservableCollection<NavItem> Sections { get; }
 
+    public bool IsAnyBrowserFocused => SelectedSection.Key switch
+    {
+        "brave" => BraveBrowserViewModel.IsFocusMode,
+        "discord" => DiscordBrowserViewModel.IsFocusMode,
+        "resources" => CreatorResourcesViewModel.IsFocusMode,
+        _ => false
+    };
+
     public NavItem SelectedSection
     {
         get => _selectedSection;
@@ -436,6 +447,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             OnPropertyChanged(nameof(SectionTitle));
             OnPropertyChanged(nameof(SectionSubtitle));
+            OnPropertyChanged(nameof(IsAnyBrowserFocused));
 
             // Automatic browse retries only run while their tab is on screen.
             if (AvatarViewModel is not null)
@@ -3937,6 +3949,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     // -------------------------------------------------------------- helpers
 
+    private void OnBrowserFocusChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(BraveBrowserViewModel.IsFocusMode))
+        {
+            OnPropertyChanged(nameof(IsAnyBrowserFocused));
+        }
+    }
+
     private void PushBusy(string text)
     {
         _busyDepth++;
@@ -4064,6 +4084,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _friendDetailCancellation?.Dispose();
         _worldDialogCancellation?.Cancel();
         _worldDialogCancellation?.Dispose();
+        CreatorResourcesViewModel.PropertyChanged -= OnBrowserFocusChanged;
+        BraveBrowserViewModel.PropertyChanged -= OnBrowserFocusChanged;
+        DiscordBrowserViewModel.PropertyChanged -= OnBrowserFocusChanged;
         ChatboxViewModel.Dispose();
         _api.Dispose();
         _images.Dispose();

@@ -5,10 +5,8 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
-using System.Windows.Media;
 using System.Windows.Threading;
 using VrcCompanion.ViewModels;
 
@@ -41,7 +39,6 @@ public partial class MainWindow : Window
         _initializeOnLoad = initializeOnLoad;
         DataContext = _viewModel;
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
-        _viewModel.CreatorResourcesViewModel.PropertyChanged += OnCreatorResourcesPropertyChanged;
         ShowSelectedSection();
 
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -237,7 +234,6 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainViewModel.SelectedSection))
         {
             ShowSelectedSection();
-            UpdateBrowserFocusChrome();
             return;
         }
 
@@ -251,48 +247,6 @@ public partial class MainWindow : Window
             TwoFactorBox.Focus();
             Keyboard.Focus(TwoFactorBox);
         }));
-    }
-
-    private void OnCreatorResourcesPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName == nameof(CreatorResourcesViewModel.IsBrowserOpen))
-        {
-            Dispatcher.BeginInvoke(
-                DispatcherPriority.Loaded,
-                new Action(UpdateBrowserFocusChrome));
-        }
-    }
-
-    private void BrowserFocusToggle_Checked(object sender, RoutedEventArgs e)
-        => UpdateBrowserFocusChrome();
-
-    private void BrowserFocusToggle_Unchecked(object sender, RoutedEventArgs e)
-        => UpdateBrowserFocusChrome();
-
-    private void UpdateBrowserFocusChrome()
-    {
-        var focused = HasVisibleBrowserFocusToggle(SectionHost);
-        AppHeader.Visibility = focused ? Visibility.Collapsed : Visibility.Visible;
-        AppFooter.Visibility = focused ? Visibility.Collapsed : Visibility.Visible;
-    }
-
-    private static bool HasVisibleBrowserFocusToggle(DependencyObject root)
-    {
-        if (root is ToggleButton { IsChecked: true, IsVisible: true, Tag: string tag } &&
-            tag.EndsWith("FocusToggle", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-        {
-            if (HasVisibleBrowserFocusToggle(VisualTreeHelper.GetChild(root, index)))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>
@@ -389,7 +343,6 @@ public partial class MainWindow : Window
     {
         _refreshTimer.Stop();
         _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
-        _viewModel.CreatorResourcesViewModel.PropertyChanged -= OnCreatorResourcesPropertyChanged;
         _viewModel.Dispose();
     }
 

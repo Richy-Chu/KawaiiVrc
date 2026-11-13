@@ -37,6 +37,7 @@ public sealed class DiscordBrowserViewModel : ViewModelBase, IEmbeddedBrowserHos
     private string _downloadStatus = string.Empty;
     private bool _downloadStatusIsError;
     private string? _downloadedFilePath;
+    private bool _isFocusMode;
     private string _actionStatus = "Sign in on Discord's own page. Search and quick actions unlock once Discord is ready.";
     private bool _actionStatusIsError;
     private bool _isLoginPage = true;
@@ -70,6 +71,12 @@ public sealed class DiscordBrowserViewModel : ViewModelBase, IEmbeddedBrowserHos
     {
         get => _isBrowserOpen;
         private set => SetProperty(ref _isBrowserOpen, value);
+    }
+
+    public bool IsFocusMode
+    {
+        get => _isFocusMode;
+        set => SetProperty(ref _isFocusMode, value);
     }
 
     public string BrowserUrl
