@@ -122,6 +122,7 @@ public class MainWindowBrowserShortcutTests
                 };
                 using (KeyboardModifierState.Apply(ModifierKeys.Alt))
                 {
+                    AssertModifiersApplied(ModifierKeys.Alt, ignored.Key);
                     window.RaiseEvent(ignored);
                 }
 
@@ -163,12 +164,21 @@ public class MainWindowBrowserShortcutTests
 
         using (KeyboardModifierState.Apply(modifiers))
         {
+            AssertModifiersApplied(modifiers, key);
             window.RaiseEvent(keyEvent);
         }
 
         Assert.True(
             keyEvent.Handled,
             $"{modifiers}+{key} should be handled by the window preview-key path.");
+    }
+
+    private static void AssertModifiersApplied(ModifierKeys requested, Key key)
+    {
+        var actual = Keyboard.Modifiers;
+        Assert.True(
+            (actual & requested) == requested,
+            $"The {requested} modifier state was not applied before {key}; actual={actual}.");
     }
 
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
