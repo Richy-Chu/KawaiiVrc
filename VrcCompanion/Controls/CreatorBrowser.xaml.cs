@@ -1,23 +1,24 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
 using VrcCompanion.ViewModels;
 
 namespace VrcCompanion.Controls;
 
 /// <summary>
-/// Hosts WebView2 lazily. Downloads use WebView2's normal download UI, so the
-/// user still chooses each file and signs in on the site.
+/// Hosts WebView2 lazily. Downloads open a Save As dialog so the user chooses
+/// each destination, while sign-in stays on the site.
 /// </summary>
 public partial class CreatorBrowser : UserControl
 {
     private CreatorResourcesViewModel? _viewModel;
     private Task? _initialization;
     private bool _isLoaded;
-    private bool _downloadStarted;
 
     public CreatorBrowser()
     {
@@ -100,7 +101,6 @@ public partial class CreatorBrowser : UserControl
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         core.NewWindowRequested += OnNewWindowRequested;
-        core.NavigationCompleted += OnNavigationCompleted;
         core.DownloadStarting += OnDownloadStarting;
     }
 
@@ -115,30 +115,51 @@ public partial class CreatorBrowser : UserControl
         }
     }
 
-    private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
-    {
-        if (_downloadStarted)
-        {
-            _downloadStarted = false;
-            _viewModel?.SetBrowserError(string.Empty);
-            return;
-        }
-
-        if (e.IsSuccess)
-        {
-            _viewModel?.SetBrowserError(string.Empty);
-        }
-        else
-        {
-            _viewModel?.SetBrowserError("This page could not be loaded. You can try again or use Open site.");
-        }
-    }
-
     private void OnDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e)
     {
-        // Leave e.Handled alone so WebView2 keeps its normal download UI/path.
-        _downloadStarted = true;
-        _viewModel?.SetBrowserError(string.Empty);
+        try
+        {
+            e.Handled = true;
+
+            string? selectedPath = null;
+            Dispatcher.Invoke(() =>
+            {
+                var suggestedName = string.IsNullOrWhiteSpace(e.ResultFilePath)
+                    ? "download"
+                    : Path.GetFileName(e.ResultFilePath);
+
+                var dialog = new SaveFileDialog
+                {
+                    Title = "Save download",
+                    FileName = suggestedName,
+                    Filter = "All files (*.*)|*.*",
+                    AddExtension = false,
+                    OverwritePrompt = true
+                };
+
+                var owner = Window.GetWindow(this);
+                var accepted = owner is null ? dialog.ShowDialog() : dialog.ShowDialog(owner);
+                if (accepted == true)
+                {
+                    selectedPath = dialog.FileName;
+                }
+            });
+
+            if (selectedPath is null)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            e.ResultFilePath = selectedPath;
+            _viewModel?.SetBrowserError(string.Empty);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            e.Cancel = true;
+            _viewModel?.SetBrowserError("Could not open the Save As dialog. The download was cancelled.");
+        }
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
