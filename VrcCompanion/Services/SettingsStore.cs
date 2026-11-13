@@ -50,6 +50,21 @@ public sealed class CompanionSettings
 
     [JsonPropertyName("profileBackdropImagePath")]
     public string? ProfileBackdropImagePath { get; set; }
+
+    [JsonPropertyName("oscHost")]
+    public string OscHost { get; set; } = "127.0.0.1";
+
+    [JsonPropertyName("oscPort")]
+    public int OscPort { get; set; } = 9000;
+
+    [JsonPropertyName("chatboxRotationSeconds")]
+    public int ChatboxRotationSeconds { get; set; } = 15;
+
+    [JsonPropertyName("chatboxRotateEnabled")]
+    public bool ChatboxRotateEnabled { get; set; }
+
+    [JsonPropertyName("chatboxMessages")]
+    public List<string> ChatboxMessages { get; set; } = new();
 }
 
 /// <summary>

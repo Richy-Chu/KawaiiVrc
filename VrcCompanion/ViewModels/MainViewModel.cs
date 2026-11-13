@@ -75,6 +75,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public MediaLibraryViewModel MediaViewModel { get; }
 
+    public ChatboxViewModel ChatboxViewModel { get; }
+
     public GroupViewModel? GroupViewModel
     {
         get => _groupViewModel;
@@ -133,12 +135,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             new("avatarsearch", "Avatar Search", "\uE721"),
             new("groups", "Groups", "\uE70E"),
             new("activity", "Activity", "\uE790"),
+            new("chatbox", "Chatbox", "\uE8BD"),
             new("media", "Media", "\uEB9F"),
             new("accounts", "Accounts", "\uE716"),
             new("settings", "Settings", "\uE713")
         };
         _selectedSection = Sections[0];
         MediaViewModel = new MediaLibraryViewModel();
+        ChatboxViewModel = new ChatboxViewModel();
 
         Statuses = new ObservableCollection<StatusOption>
         {
@@ -414,6 +418,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         "avatarsearch" => "Search every avatar VRChat knows about and wear or save it.",
         "groups" => "Manage your VRChat groups, roles, and members.",
         "activity" => "See what your friends have been up to.",
+        "chatbox" => "Send and rotate VRChat chatbox messages over OSC.",
         "media" => "Your in-game pictures, grouped by world and month.",
         "accounts" => "Switch between multiple VRChat accounts.",
         _ => "Your account, status, and trust level at a glance."
@@ -3703,6 +3708,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _friendDetailCancellation?.Dispose();
         _worldDialogCancellation?.Cancel();
         _worldDialogCancellation?.Dispose();
+        ChatboxViewModel.Dispose();
         _api.Dispose();
         _images.Dispose();
     }

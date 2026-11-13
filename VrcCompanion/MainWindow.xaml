@@ -2849,6 +2849,134 @@
             </Grid>
         </DataTemplate>
 
+        <DataTemplate x:Key="ChatboxTemplate">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="26,2,18,18">
+                <StackPanel MaxWidth="780" HorizontalAlignment="Left">
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Magic Chatbox" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="VRChat must have OSC enabled: Action Menu → Options → OSC → Enabled. Messages go to the local VRChat client over UDP."
+                                       Style="{StaticResource MutedText}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,3,0,12" />
+                            <TextBox Style="{StaticResource InputBox}"
+                                     Text="{Binding ChatboxViewModel.MessageText, UpdateSourceTrigger=PropertyChanged}"
+                                     MaxLength="144"
+                                     ToolTip="Up to 144 characters, like VRChat's chatbox" />
+                            <Grid Margin="0,8,0,0">
+                                <TextBlock Text="{Binding ChatboxViewModel.MessageCountText}"
+                                           Style="{StaticResource MutedText}"
+                                           VerticalAlignment="Center" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Content="Add to rotation"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="12,6"
+                                            FontSize="11"
+                                            Margin="0,0,8,0"
+                                            Command="{Binding ChatboxViewModel.AddToRotationCommand}" />
+                                    <Button Content="Send now"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Padding="14,7"
+                                            FontSize="11"
+                                            Command="{Binding ChatboxViewModel.SendCommand}" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Rotation" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="Cycle through these lines so the chatbox keeps changing."
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,3,0,10" />
+                            <StackPanel Orientation="Horizontal">
+                                <CheckBox Content="Rotate messages automatically"
+                                          Style="{StaticResource FriendlyCheckBox}"
+                                          IsChecked="{Binding ChatboxViewModel.IsRotating, Mode=TwoWay}"
+                                          VerticalAlignment="Center" />
+                                <TextBlock Text="Every"
+                                           Style="{StaticResource MutedText}"
+                                           Margin="16,0,6,0"
+                                           VerticalAlignment="Center" />
+                                <TextBox Width="72"
+                                         Style="{StaticResource InputBox}"
+                                         Text="{Binding ChatboxViewModel.RotationSeconds, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                         ToolTip="Seconds between messages (minimum 5)" />
+                                <TextBlock Text="seconds (minimum 5)"
+                                           Style="{StaticResource MutedText}"
+                                           Margin="6,0,0,0"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <ItemsControl ItemsSource="{Binding ChatboxViewModel.RotationMessages}" Margin="0,12,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource InputBrush}"
+                                                BorderBrush="{StaticResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="8"
+                                                Padding="10,7"
+                                                Margin="0,0,0,6">
+                                            <Grid>
+                                                <TextBlock Text="{Binding}"
+                                                           Foreground="{StaticResource TextBrush}"
+                                                           FontSize="11"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Margin="0,0,80,0"
+                                                           VerticalAlignment="Center" />
+                                                <Button Content="Remove"
+                                                        Style="{StaticResource GhostButton}"
+                                                        Padding="8,3"
+                                                        FontSize="10"
+                                                        HorizontalAlignment="Right"
+                                                        Command="{Binding DataContext.ChatboxViewModel.RemoveMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="No rotation messages yet. Type a message above and choose Add to rotation."
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,10,0,0"
+                                       Visibility="{Binding ChatboxViewModel.HasNoRotationMessages, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="OSC connection" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="These are saved automatically. VRChat listens on 127.0.0.1:9000 by default."
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,3,0,10" />
+                            <StackPanel Orientation="Horizontal">
+                                <StackPanel Width="220" Margin="0,0,12,0">
+                                    <TextBlock Text="HOST" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Style="{StaticResource InputBox}"
+                                             Text="{Binding ChatboxViewModel.Host, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                                </StackPanel>
+                                <StackPanel Width="110">
+                                    <TextBlock Text="PORT" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Style="{StaticResource InputBox}"
+                                             Text="{Binding ChatboxViewModel.Port, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="{Binding ChatboxViewModel.StatusText}"
+                               Foreground="{StaticResource AccentHoverBrush}"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Margin="2,0,0,8" />
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
         <!-- Section switching swaps ContentTemplate, which rebuilds each tab's visual
              tree; that recreation is what returns a tab to the top. Checked on
              friends (29 rows), notifications (24 items / 65 texts) and worlds (35
@@ -2893,6 +3021,9 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding SelectedSection.Key}" Value="media">
                     <Setter Property="ContentTemplate" Value="{StaticResource MediaTemplate}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding SelectedSection.Key}" Value="chatbox">
+                    <Setter Property="ContentTemplate" Value="{StaticResource ChatboxTemplate}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
