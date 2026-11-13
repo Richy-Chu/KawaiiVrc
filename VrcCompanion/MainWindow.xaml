@@ -437,15 +437,6 @@
                             </WrapPanel>
 
                             <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                <Button Style="{StaticResource PrimaryButton}"
-                                        Padding="18,9"
-                                        Margin="0,0,8,0"
-                                        Command="{Binding OpenVrChatCommand}">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding LaunchDefaultText, StringFormat='Open VRChat â€” {0}'}" Margin="7,0,0,0" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button>
                                 <Button Style="{StaticResource SecondaryButton}"
                                         Padding="14,8"
                                         Margin="0,0,8,0"

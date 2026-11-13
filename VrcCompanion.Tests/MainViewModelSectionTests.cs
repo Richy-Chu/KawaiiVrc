@@ -1,8 +1,12 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Runtime.ExceptionServices;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -12,6 +16,60 @@ namespace VrcCompanion.Tests;
 
 public class MainViewModelSectionTests
 {
+    [Fact]
+    public void RefreshFriendProfileBypassesBothGroupCaches()
+    {
+        RunOnSta(() =>
+        {
+            var handler = new RefreshHandler();
+            using var api = new VrcApiClient(null, handler);
+            TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_cache", DisplayName = "Me", Username = "me" });
+
+            var notesDirectory = Path.Combine(Path.GetTempPath(), "vrccompanion-refresh-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(notesDirectory);
+            try
+            {
+                var profile = new FriendDetailViewModel(
+                    new FriendItem(new VrcUser { Id = "usr_friend", DisplayName = "Friend", Username = "friend" }),
+                    api,
+                    ImageLoader.Shared,
+                    new FriendNotesStore(Path.Combine(notesDirectory, "notes.json")));
+
+                profile.LoadAsync(forceRefresh: false, CancellationToken.None).GetAwaiter().GetResult();
+                WaitUntil(() => handler.FriendGroupGets >= 1 && handler.MyGroupGets >= 1);
+
+                Assert.Equal(1, handler.ProfileGets);
+                Assert.Equal(1, handler.MyGroupGets);
+                Assert.Equal(1, handler.FriendGroupGets);
+
+                var shell = new MainViewModel();
+                TestHooks.AttachFriendDetail(shell, profile);
+                shell.RefreshFriendProfileCommand.Execute(null);
+
+                WaitUntil(() => handler.FriendGroupGets >= 2 && handler.MyGroupGets >= 2);
+
+                Assert.Equal(2, handler.ProfileGets);
+                Assert.Equal(2, handler.MyGroupGets);
+                Assert.Equal(2, handler.FriendGroupGets);
+            }
+            finally
+            {
+                Directory.Delete(notesDirectory, recursive: true);
+            }
+        });
+    }
+
+    private static void WaitUntil(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition() && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(25);
+        }
+
+        Assert.True(condition(), "Timed out waiting for the profile refresh.");
+    }
+
     [Fact]
     public void MembershipEventFromTheGroupViewModelUpdatesTheOpenProfile()
     {
@@ -97,5 +155,62 @@ public class MainViewModelSectionTests
         }
 
         failure?.Throw();
+    }
+
+    private sealed class RefreshHandler : HttpMessageHandler
+    {
+        private int _profileGets;
+        private int _myGroupGets;
+        private int _friendGroupGets;
+
+        public int ProfileGets => Volatile.Read(ref _profileGets);
+
+        public int MyGroupGets => Volatile.Read(ref _myGroupGets);
+
+        public int FriendGroupGets => Volatile.Read(ref _friendGroupGets);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+
+            if (path.Contains("/profile/usr_friend", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _profileGets);
+                return Json("""
+                    {
+                      "id": "usr_friend",
+                      "displayName": "Friend",
+                      "username": "friend",
+                      "groups": {
+                        "count": 3,
+                        "list": [ { "id": "grp_1", "name": "One" } ]
+                      },
+                      "representedGroup": { "id": "grp_1", "name": "One" }
+                    }
+                    """);
+            }
+
+            if (path.Contains("/users/usr_cache/groups", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _myGroupGets);
+                return Json("[{\"id\":\"gmem_1\",\"groupId\":\"grp_1\",\"name\":\"One\",\"membershipStatus\":\"member\"}]");
+            }
+
+            if (path.Contains("/users/usr_friend/groups", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _friendGroupGets);
+                return Json("[{\"id\":\"gmem_1\",\"groupId\":\"grp_1\",\"name\":\"One\",\"membershipStatus\":\"member\"},{\"id\":\"gmem_2\",\"groupId\":\"grp_2\",\"name\":\"Two\",\"membershipStatus\":\"member\"},{\"id\":\"gmem_3\",\"groupId\":\"grp_3\",\"name\":\"Three\",\"membershipStatus\":\"member\"}]");
+            }
+
+            return Json("{}");
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
     }
 }
