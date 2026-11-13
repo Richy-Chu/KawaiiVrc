@@ -188,24 +188,27 @@ public class MainWindowBrowserShortcutTests
 
     private static void AssertModifiersApplied(ModifierKeys requested, Key key)
     {
-        var actual = Keyboard.Modifiers;
+        var actual = Keyboard.Modifiers & (ModifierKeys.Alt | ModifierKeys.Control);
         Assert.True(
-            (actual & requested) == requested,
-            $"The {requested} modifier state was not applied before {key}; actual={actual}.");
+            actual == requested,
+            $"The {requested} modifier state was not applied before {key}; " +
+            $"requested={requested}, actual={actual}, full={Keyboard.Modifiers}.");
     }
 
     private static void MarkSystemKey(KeyEventArgs keyEvent)
     {
         // WPF has no public constructor for the Alt system-key shape. This
         // framework transition turns Key into Key.System and keeps the real key.
-        MarkSystemMethod.Invoke(keyEvent, null);
-    }
-
-    private static readonly MethodInfo MarkSystemMethod =
-        typeof(KeyEventArgs).GetMethod(
+        _markSystemMethod ??= typeof(KeyEventArgs).GetMethod(
             "MarkSystem",
             BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException("KeyEventArgs.MarkSystem was not found.");
+            ?? throw new MissingMethodException(
+                "KeyEventArgs.MarkSystem was not found; the system-key test cannot run.");
+
+        _markSystemMethod.Invoke(keyEvent, null);
+    }
+
+    private static MethodInfo? _markSystemMethod;
 
     private const int VkControl = 0x11;
     private const int VkLeftControl = 0xA2;
