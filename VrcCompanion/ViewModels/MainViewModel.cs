@@ -2876,6 +2876,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         CustomBackdropPath = dialog.FileName;
+        if (dialog.FileName.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+        {
+            AnimateBackdrop = true;
+        }
         _settingsStore.Save();
         ClearBackdropCommand.RaiseCanExecuteChanged();
         ShowInfo("Backdrop updated. GIFs animate slowly to stay lightweight.");
@@ -2903,6 +2907,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         ProfileBackdropPath = dialog.FileName;
+        if (dialog.FileName.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+        {
+            // The picker promises animated GIFs; do not require the separate
+            // backdrop switch to be found first.
+            AnimateBackdrop = true;
+        }
         ShowInfo("Profile popup background updated.");
     }
 

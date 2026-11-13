@@ -13,6 +13,14 @@ public sealed class Group
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
+    /// <summary>Set when the group arrived from a membership list, where `id` is
+    /// the membership (gmem_…) and the group itself is `groupId` (grp_…).</summary>
+    [JsonPropertyName("groupId")]
+    public string GroupId { get; set; } = string.Empty;
+
+    [JsonIgnore]
+    public string EffectiveId => string.IsNullOrWhiteSpace(GroupId) ? Id : GroupId;
+
     [JsonPropertyName("name")]
     public string Name { get; set; } = string.Empty;
 
@@ -35,6 +43,13 @@ public sealed class Group
     [JsonPropertyName("joinState")]
     public string JoinState { get; set; } = string.Empty;
 
+    /// <summary>member, requested, invited, banned, inactive or userblocked.</summary>
+    [JsonPropertyName("membershipStatus")]
+    public string MembershipStatus { get; set; } = string.Empty;
+
+    [JsonPropertyName("myMember")]
+    public GroupMember? MyMember { get; set; }
+
     [JsonPropertyName("roles")]
     public List<GroupRole> Roles { get; set; } = new();
 
@@ -46,6 +61,21 @@ public sealed class Group
 
     [JsonPropertyName("updatedAt")]
     public DateTimeOffset UpdatedAt { get; set; }
+
+    [JsonIgnore]
+    public bool IsMember => string.Equals(MembershipStatus, "member", StringComparison.OrdinalIgnoreCase)
+        || (MyMember is not null && string.Equals(MyMember.MembershipStatus, "member", StringComparison.OrdinalIgnoreCase));
+
+    [JsonIgnore]
+    public string MembershipLabel => MembershipStatus?.ToLowerInvariant() switch
+    {
+        "member" => "Joined",
+        "requested" => "Request pending",
+        "invited" => "Invited",
+        "banned" => "Banned",
+        "userblocked" => "Blocked",
+        _ => string.Empty
+    };
 
     /// <summary>Resized group icon URL, loaded through the shared image cache.</summary>
     [JsonIgnore]
@@ -101,4 +131,7 @@ public sealed class GroupMember
 
     [JsonPropertyName("avatarUrl")]
     public string AvatarUrl { get; set; } = string.Empty;
+
+    [JsonPropertyName("membershipStatus")]
+    public string MembershipStatus { get; set; } = string.Empty;
 }

@@ -300,6 +300,14 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     public bool HasGroups => Groups.Count > 0;
 
+    public int MutualGroupCount => Groups.Count(group => group.IsMutual);
+
+    public bool HasMutualGroups => MutualGroupCount > 0;
+
+    public string MutualGroupsText => MutualGroupCount == 0
+        ? "No groups in common"
+        : $"{MutualGroupCount} group{(MutualGroupCount == 1 ? string.Empty : "s")} in common";
+
     /// <summary>Opens a group chip in the group info popup (join/leave/details).</summary>
     public RelayCommand<VrcProfileGroup> OpenGroupCommand { get; }
 
@@ -322,9 +330,22 @@ public sealed class FriendDetailViewModel : ViewModelBase
         }
     }
 
-    public string GroupsSummary => Profile?.Groups is { Count: > 0 } groups
-        ? $"{groups.Count} public group{(groups.Count == 1 ? string.Empty : "s")}"
-        : string.Empty;
+    public string GroupsSummary
+    {
+        get
+        {
+            var groups = Groups;
+            if (groups.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var summary = $"{groups.Count} public group{(groups.Count == 1 ? string.Empty : "s")}";
+            return IsSelf || MutualGroupCount == 0
+                ? summary
+                : $"{summary} · {MutualGroupCount} mutual";
+        }
+    }
 
     public IReadOnlyList<VrcBadge> Badges
         => Profile?.Badges?
@@ -447,6 +468,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
             }
 
             _ = LoadImagesAsync(profile, cancellationToken);
+            _ = AnnotateGroupsAsync(cancellationToken);
             _ = LoadExtrasAsync(cancellationToken);
         }
         catch (OperationCanceledException)
@@ -531,6 +553,56 @@ public sealed class FriendDetailViewModel : ViewModelBase
         {
             Debug.WriteLine(ex);
         }
+    }
+
+    /// <summary>
+    /// Marks each profile group as one of the account's own ("Joined") and, for
+    /// another user, as a group in common ("Mutual"). Membership is not inferred
+    /// from the profile payload: it is cross-checked against the account's groups.
+    /// </summary>
+    private async Task AnnotateGroupsAsync(CancellationToken cancellationToken)
+    {
+        var groups = Groups;
+        if (groups.Count == 0)
+        {
+            return;
+        }
+
+        if (IsSelf)
+        {
+            foreach (var group in groups)
+            {
+                group.IsMine = true;
+                group.IsMutual = false;
+            }
+        }
+        else
+        {
+            try
+            {
+                var mine = await _api.GetMyGroupsAsync(cancellationToken);
+                var ids = mine.Select(group => group.EffectiveId).ToHashSet(StringComparer.Ordinal);
+                foreach (var group in groups)
+                {
+                    group.IsMine = ids.Contains(group.Id);
+                    group.IsMutual = group.IsMine;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+        }
+
+        OnPropertyChanged(nameof(Groups));
+        OnPropertyChanged(nameof(GroupsSummary));
+        OnPropertyChanged(nameof(MutualGroupCount));
+        OnPropertyChanged(nameof(HasMutualGroups));
+        OnPropertyChanged(nameof(MutualGroupsText));
     }
 
     private async Task LoadExtrasAsync(CancellationToken cancellationToken)

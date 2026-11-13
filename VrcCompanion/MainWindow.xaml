@@ -2349,6 +2349,13 @@
 
                                     <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
                                         <Button Style="{StaticResource PrimaryButton}"
+                                                Content="Group details"
+                                                Padding="12,6"
+                                                FontSize="11"
+                                                Margin="0,0,8,0"
+                                                Command="{Binding DataContext.GroupViewModel.OpenSelectedGroupInfoCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                ToolTip="Instances, membership and join or leave" />
+                                        <Button Style="{StaticResource SecondaryButton}"
                                                 Content="Open on vrchat.com"
                                                 Padding="12,6"
                                                 FontSize="11"
@@ -3990,9 +3997,21 @@
                                                             </ControlTemplate>
                                                         </Button.Template>
                                                         <Border Style="{StaticResource TagChip}">
-                                                            <TextBlock Text="{Binding Name}" Style="{StaticResource TagText}"
-                                                                       TextTrimming="CharacterEllipsis"
-                                                                       MaxWidth="180" />
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <TextBlock Text="{Binding Name}" Style="{StaticResource TagText}"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           MaxWidth="150" />
+                                                                <Border Background="#2A1E4A"
+                                                                        CornerRadius="4"
+                                                                        Padding="4,0"
+                                                                        Margin="5,0,0,0"
+                                                                        VerticalAlignment="Center"
+                                                                        Visibility="{Binding HasMembershipLabel, Converter={StaticResource BoolToVis}}">
+                                                                    <TextBlock Text="{Binding MembershipLabel}"
+                                                                               FontSize="8.5"
+                                                                               Foreground="{StaticResource AccentHoverBrush}" />
+                                                                </Border>
+                                                            </StackPanel>
                                                         </Border>
                                                     </Button>
                                                 </DataTemplate>
@@ -4073,6 +4092,11 @@
                                             <TextBlock Text="Groups" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
                                             <TextBlock Text="Pick a group to see details, open instances and membership."
                                                        Style="{StaticResource MutedText}" Margin="0,3,0,0" />
+                                            <TextBlock Text="{Binding MutualGroupsText}"
+                                                       FontSize="10.5"
+                                                       Foreground="{StaticResource AccentHoverBrush}"
+                                                       Margin="0,3,0,0"
+                                                       Visibility="{Binding HasMutualGroups, Converter={StaticResource BoolToVis}}" />
                                         </StackPanel>
                                         <Button Style="{StaticResource GhostButton}" Padding="7,4"
                                                 HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -4123,11 +4147,22 @@
                                                                        Foreground="{StaticResource TextBrush}"
                                                                        VerticalAlignment="Center"
                                                                        TextTrimming="CharacterEllipsis" />
-                                                            <TextBlock Grid.Column="2" Text="View →"
-                                                                       FontSize="10.5"
-                                                                       Foreground="{StaticResource AccentHoverBrush}"
-                                                                       VerticalAlignment="Center"
-                                                                       Margin="10,0,0,0" />
+                                                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                                                                <Border Background="#2A1E4A"
+                                                                        CornerRadius="4"
+                                                                        Padding="5,1"
+                                                                        Margin="0,0,8,0"
+                                                                        VerticalAlignment="Center"
+                                                                        Visibility="{Binding HasMembershipLabel, Converter={StaticResource BoolToVis}}">
+                                                                    <TextBlock Text="{Binding MembershipLabel}"
+                                                                               FontSize="8.5"
+                                                                               Foreground="{StaticResource AccentHoverBrush}" />
+                                                                </Border>
+                                                                <TextBlock Text="View →"
+                                                                           FontSize="10.5"
+                                                                           Foreground="{StaticResource AccentHoverBrush}"
+                                                                           VerticalAlignment="Center" />
+                                                            </StackPanel>
                                                         </Grid>
                                                     </Border>
                                                 </Button>
@@ -4211,14 +4246,51 @@
                                                    TextWrapping="Wrap" FontSize="12" LineHeight="19"
                                                    Foreground="{StaticResource MutedBrush}" />
 
-                                        <TextBlock Text="{Binding GroupViewModel.GroupInfoMemberText}"
-                                                   Style="{StaticResource MutedText}"
-                                                   Margin="0,12,0,0" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                            <TextBlock Text="{Binding GroupViewModel.GroupInfoMemberText}"
+                                                       Style="{StaticResource MutedText}"
+                                                       VerticalAlignment="Center" />
+                                            <Border Background="#2A1E4A"
+                                                    CornerRadius="4"
+                                                    Padding="5,1"
+                                                    Margin="7,0,0,0"
+                                                    VerticalAlignment="Center"
+                                                    Visibility="{Binding GroupViewModel.HasGroupInfoMembershipLabel, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock Text="{Binding GroupViewModel.GroupInfoMembershipLabel}"
+                                                           FontSize="9"
+                                                           Foreground="{StaticResource AccentHoverBrush}" />
+                                            </Border>
+                                        </StackPanel>
                                         <TextBlock Text="{Binding GroupViewModel.GroupJoinHint}"
                                                    Foreground="{StaticResource MutedBrush}"
                                                    FontSize="11"
                                                    TextWrapping="Wrap"
                                                    Margin="0,3,0,0" />
+
+                                        <Border Style="{StaticResource ErrorBannerPanel}"
+                                                Margin="0,12,0,0"
+                                                Visibility="{Binding GroupViewModel.IsLeaveGroupConfirmOpen, Converter={StaticResource BoolToVis}}">
+                                            <StackPanel>
+                                                <TextBlock Text="Leave this group?"
+                                                           FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{StaticResource TextBrush}" />
+                                                <TextBlock Text="This removes your membership on VRChat. You can rejoin public groups later."
+                                                           Style="{StaticResource MutedText}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,8" />
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Button Content="Yes, leave group"
+                                                            Style="{StaticResource PrimaryButton}"
+                                                            Padding="11,5" FontSize="10.5"
+                                                            Margin="0,0,8,0"
+                                                            Command="{Binding GroupViewModel.LeaveGroupInfoCommand}" />
+                                                    <Button Content="Keep membership"
+                                                            Style="{StaticResource SecondaryButton}"
+                                                            Padding="11,5" FontSize="10.5"
+                                                            Command="{Binding GroupViewModel.CancelLeaveGroupCommand}" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
 
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock Text="OPEN INSTANCES" Style="{StaticResource FieldLabel}" />
@@ -4262,31 +4334,6 @@
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
                                         </StackPanel>
-
-                                        <Border Style="{StaticResource ErrorBannerPanel}"
-                                                Margin="0,12,0,0"
-                                                Visibility="{Binding GroupViewModel.IsLeaveGroupConfirmOpen, Converter={StaticResource BoolToVis}}">
-                                            <StackPanel>
-                                                <TextBlock Text="Leave this group?"
-                                                           FontSize="12" FontWeight="SemiBold"
-                                                           Foreground="{StaticResource TextBrush}" />
-                                                <TextBlock Text="This removes your membership on VRChat. You can rejoin public groups later."
-                                                           Style="{StaticResource MutedText}"
-                                                           TextWrapping="Wrap"
-                                                           Margin="0,3,0,8" />
-                                                <StackPanel Orientation="Horizontal">
-                                                    <Button Content="Yes, leave group"
-                                                            Style="{StaticResource PrimaryButton}"
-                                                            Padding="11,5" FontSize="10.5"
-                                                            Margin="0,0,8,0"
-                                                            Command="{Binding GroupViewModel.LeaveGroupInfoCommand}" />
-                                                    <Button Content="Keep membership"
-                                                            Style="{StaticResource SecondaryButton}"
-                                                            Padding="11,5" FontSize="10.5"
-                                                            Command="{Binding GroupViewModel.CancelLeaveGroupCommand}" />
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </Border>
 
                                         <WrapPanel Margin="0,12,0,0">
                                             <Button Content="Join group"

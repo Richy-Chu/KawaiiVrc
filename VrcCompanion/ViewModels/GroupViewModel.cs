@@ -55,6 +55,15 @@ public sealed class GroupViewModel : ViewModelBase
         RefreshMembersCommand = Track(new AsyncRelayCommand(LoadGroupMembersAsync, () => SelectedGroup is not null && !IsBusy));
         OpenSelectedGroupCommand = Track(new RelayCommand(OpenSelectedGroupInBrowser, () => SelectedGroup is not null));
         OpenGroupCommand = Track(new RelayCommand<Group>(group => SelectedGroup = group, group => group is not null));
+        OpenSelectedGroupInfoCommand = Track(new RelayCommand(
+            () =>
+            {
+                if (SelectedGroup is not null)
+                {
+                    _ = OpenGroupInfoAsync(SelectedGroup.EffectiveId);
+                }
+            },
+            () => SelectedGroup is not null));
         RefreshInstancesCommand = Track(new AsyncRelayCommand(LoadGroupInstancesAsync, () => SelectedGroup is not null && !IsBusy));
         JoinGroupInstanceCommand = Track(new RelayCommand<GroupInstance>(JoinGroupInstance, instance => instance?.CanJoin == true));
         CloseGroupInfoCommand = Track(new RelayCommand(() => IsGroupInfoOpen = false));
@@ -122,11 +131,13 @@ public sealed class GroupViewModel : ViewModelBase
     public Group? GroupInfo
     {
         get => _groupInfo;
-        private set
+        internal set
         {
             if (SetProperty(ref _groupInfo, value))
             {
                 OnPropertyChanged(nameof(GroupInfoMemberText));
+                OnPropertyChanged(nameof(GroupInfoMembershipLabel));
+                OnPropertyChanged(nameof(HasGroupInfoMembershipLabel));
                 OnPropertyChanged(nameof(GroupJoinHint));
                 OnPropertyChanged(nameof(IsGroupJoinOpen));
                 RaiseCommandStates();
@@ -161,7 +172,7 @@ public sealed class GroupViewModel : ViewModelBase
     public bool IsMemberOfGroupInfo
     {
         get => _isMemberOfGroupInfo;
-        private set
+        internal set
         {
             if (SetProperty(ref _isMemberOfGroupInfo, value))
             {
@@ -173,11 +184,23 @@ public sealed class GroupViewModel : ViewModelBase
         }
     }
 
-    public string GroupInfoMemberText => IsMemberOfGroupInfo ? "You are a member" : "You are not a member";
+    public string GroupInfoMemberText => GroupInfo?.MembershipStatus?.ToLowerInvariant() switch
+    {
+        "member" => "You are a member",
+        "requested" => "Your join request is pending",
+        "invited" => "You have an invite to this group",
+        "banned" => "You are banned from this group",
+        "userblocked" => "You have blocked this group",
+        _ => IsMemberOfGroupInfo ? "You are a member" : "You are not a member"
+    };
+
+    public string GroupInfoMembershipLabel => GroupInfo?.MembershipLabel ?? string.Empty;
+
+    public bool HasGroupInfoMembershipLabel => GroupInfoMembershipLabel.Length > 0;
 
     public bool IsGroupJoinOpen => string.Equals(GroupInfo?.JoinState, "open", StringComparison.OrdinalIgnoreCase);
 
-    public string GroupJoinHint => GroupInfo is null
+    public string GroupJoinHint => GroupInfo is null || IsMemberOfGroupInfo
         ? string.Empty
         : GroupInfo.JoinState?.ToLowerInvariant() switch
         {
@@ -290,7 +313,7 @@ public sealed class GroupViewModel : ViewModelBase
 
     public string SelectedGroupUrl => SelectedGroup is null
         ? string.Empty
-        : $"https://vrchat.com/home/group/{SelectedGroup.Id}";
+        : $"https://vrchat.com/home/group/{SelectedGroup.EffectiveId}";
 
     public string MembersSummary => Members.Count == 1 ? "1 member loaded" : $"{Members.Count} members loaded";
 
@@ -301,6 +324,8 @@ public sealed class GroupViewModel : ViewModelBase
     public RelayCommand OpenSelectedGroupCommand { get; }
 
     public RelayCommand<Group> OpenGroupCommand { get; }
+
+    public RelayCommand OpenSelectedGroupInfoCommand { get; }
 
     private void OpenSelectedGroupInBrowser()
     {
@@ -414,7 +439,7 @@ public sealed class GroupViewModel : ViewModelBase
             return;
         }
 
-        var groupId = SelectedGroup.Id;
+        var groupId = SelectedGroup.EffectiveId;
         IsLoadingInstances = true;
         try
         {
@@ -478,11 +503,22 @@ public sealed class GroupViewModel : ViewModelBase
 
         try
         {
-            GroupInfo = await _api.GetGroupAsync(groupId);
+            var info = await _api.GetGroupAsync(groupId)
+                ?? throw new VrcApiException(404, "That VRChat group could not be found.");
+            GroupInfo = info;
 
-            var mine = Groups.Count > 0 ? (IReadOnlyList<Group>)Groups.ToList() : await _api.GetMyGroupsAsync();
-            IsMemberOfGroupInfo = mine.Any(group =>
-                string.Equals(group.Id, groupId, StringComparison.Ordinal));
+            // The group payload carries the signed-in account's membership, which
+            // stays correct even when the cached "my groups" page is stale.
+            if (!string.IsNullOrWhiteSpace(info.MembershipStatus))
+            {
+                IsMemberOfGroupInfo = info.IsMember;
+            }
+            else
+            {
+                var mine = Groups.Count > 0 ? (IReadOnlyList<Group>)Groups.ToList() : await _api.GetMyGroupsAsync();
+                IsMemberOfGroupInfo = mine.Any(group =>
+                    string.Equals(group.EffectiveId, groupId, StringComparison.Ordinal));
+            }
 
             // Instance lists are member-only; non-members get a 403 we must not
             // surface as a scary failure.
@@ -631,7 +667,7 @@ public sealed class GroupViewModel : ViewModelBase
 
         try
         {
-            var members = await _api.GetGroupMembersAsync(SelectedGroup.Id);
+            var members = await _api.GetGroupMembersAsync(SelectedGroup.EffectiveId);
             Members = new ObservableCollection<GroupMember>(members.OrderBy(m => m.UserName));
             OnPropertyChanged(nameof(MembersSummary));
         }

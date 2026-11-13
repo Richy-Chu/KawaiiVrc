@@ -85,6 +85,20 @@ public sealed class VrcProfileGroup
 
     [JsonPropertyName("iconUrl")]
     public string? IconUrl { get; set; }
+
+    /// <summary>True when the signed-in account is also in this group.</summary>
+    [JsonIgnore]
+    public bool IsMine { get; set; }
+
+    /// <summary>True when this is a group both the profile and the account are in.</summary>
+    [JsonIgnore]
+    public bool IsMutual { get; set; }
+
+    [JsonIgnore]
+    public string MembershipLabel => IsMutual ? "Mutual" : IsMine ? "Joined" : string.Empty;
+
+    [JsonIgnore]
+    public bool HasMembershipLabel => MembershipLabel.Length > 0;
 }
 
 public sealed class VrcBadge

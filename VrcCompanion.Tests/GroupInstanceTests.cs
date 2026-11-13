@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Reflection;
 using System.Text.Json;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
@@ -38,14 +37,43 @@ public class GroupInstanceTests
     }
 
     [Fact]
+    public void MembershipListGroupsResolveTheRealGroupIdAndMembership()
+    {
+        const string json = """
+        {
+          "id": "gmem_05ffa838-fa82-47f9-9033-47e468a1a3e5",
+          "groupId": "grp_326c2349-0e87-4e75-81ab-5b6cf8ebb665",
+          "name": "After Dark",
+          "membershipStatus": "member",
+          "joinState": "request"
+        }
+        """;
+
+        var group = JsonSerializer.Deserialize<Group>(json)!;
+
+        Assert.Equal("grp_326c2349-0e87-4e75-81ab-5b6cf8ebb665", group.EffectiveId);
+        Assert.True(group.IsMember);
+        Assert.Equal("Joined", group.MembershipLabel);
+    }
+
+    [Fact]
+    public void RequestedGroupIsNotTreatedAsJoined()
+    {
+        var group = new Group { Id = "grp_test", MembershipStatus = "requested" };
+
+        Assert.False(group.IsMember);
+        Assert.Equal("Request pending", group.MembershipLabel);
+    }
+
+    [Fact]
     public void LeaveGroupNeedsASecondConfirmationStep()
     {
         using var api = new VrcApiClient();
-        var vm = new GroupViewModel(api);
-        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
-        typeof(GroupViewModel).GetField("_groupInfo", flags)!.SetValue(vm,
-            new Group { Id = "grp_test", Name = "Test group", JoinState = "open" });
-        typeof(GroupViewModel).GetField("_isMemberOfGroupInfo", flags)!.SetValue(vm, true);
+        var vm = new GroupViewModel(api)
+        {
+            GroupInfo = new Group { Id = "grp_test", Name = "Test group", JoinState = "open" },
+            IsMemberOfGroupInfo = true
+        };
 
         Assert.False(vm.IsLeaveGroupConfirmOpen);
         vm.RequestLeaveGroupCommand.Execute(null);
