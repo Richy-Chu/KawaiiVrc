@@ -43,6 +43,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
         Action<VrcProfileGroup>? openGroup = null)
     {
         _friend = friend;
+        _worldName = friend.HasWorldName ? friend.WorldName : null;
         _api = api;
         _images = images;
         _notes = notes ?? FriendNotesStore.Shared;
@@ -683,7 +684,17 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     public void UpdateFriend(FriendItem friend)
     {
+        var locationChanged = !string.Equals(_friend.Location, friend.Location, StringComparison.Ordinal);
         _friend = friend;
+        if (locationChanged)
+        {
+            _worldName = friend.HasWorldName ? friend.WorldName : null;
+        }
+        else if (friend.HasWorldName)
+        {
+            _worldName = friend.WorldName;
+        }
+
         OnAllPropertiesChanged();
     }
 
@@ -852,24 +863,25 @@ public sealed class FriendDetailViewModel : ViewModelBase
         var worldId = WorldId;
         try
         {
-            var mutualsTask = _api.GetMutualsAsync(Id, cancellationToken: cancellationToken);
-            VrcWorld? world = null;
             if (worldId is not null)
             {
-                world = await _api.GetWorldAsync(worldId, cancellationToken: cancellationToken);
+                var world = await _api.GetWorldAsync(worldId, cancellationToken: cancellationToken);
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    _worldName = world?.Name;
+                    OnPropertyChanged(nameof(WorldName));
+                    OnPropertyChanged(nameof(HasWorldName));
+                    OnPropertyChanged(nameof(WorldLine));
+                }
             }
-            var mutuals = await mutualsTask;
 
+            var mutuals = await _api.GetMutualsAsync(Id, cancellationToken: cancellationToken);
             if (cancellationToken.IsCancellationRequested)
             {
                 return;
             }
 
-            _worldName = world?.Name;
             _mutuals = mutuals;
-            OnPropertyChanged(nameof(WorldName));
-            OnPropertyChanged(nameof(HasWorldName));
-            OnPropertyChanged(nameof(WorldLine));
             OnPropertyChanged(nameof(MutualText));
             OnPropertyChanged(nameof(HasMutuals));
         }

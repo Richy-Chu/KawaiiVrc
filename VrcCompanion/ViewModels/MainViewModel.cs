@@ -63,7 +63,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private string _notificationsEmptyMessage = "You're all caught up.";
     private FilterOption _selectedBackdropStyle = null!;
     private FilterOption _selectedFriendChangeFilter = null!;
-    private Dictionary<string, VrcUser>? _friendSnapshot;
     private bool _isFriendLocationsOpen;
     private bool _isFriendChangesOpen;
     private bool _loadingFriendLocations;
@@ -1035,7 +1034,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public string LaunchModeLabel => DefaultLaunchMode == LaunchMode.Desktop ? "Desktop" : "VR";
 
-    public string LaunchDefaultText => $"Every join asks desktop or VR. Last used: {LaunchModeLabel}.";
+    public string LaunchDefaultText => $"Friend joins use {LaunchModeLabel}. Choose a mode when opening VRChat.";
 
     public bool IsLaunchChooserOpen
     {
@@ -1583,6 +1582,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _api,
             () => IsDesktopDefault ? LaunchMode.Desktop : LaunchMode.Vr);
         ActivityFeedViewModel = new ActivityFeedViewModel(_api);
+        ActivityFeedViewModel.FriendListChanged += OnFriendListChanged;
         MultiAccountViewModel = new MultiAccountViewModel(_api);
         MultiAccountViewModel.SessionSwitched += OnAccountSessionSwitched;
 
@@ -1736,7 +1736,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
 
             UpdateFriends(friends);
-            RecordFriendChanges(friends);
+            ActivityFeedViewModel?.ApplyFriends(friends);
             _lastUpdated = DateTimeOffset.Now;
             OnPropertyChanged(nameof(LastUpdatedText));
         }
@@ -1959,7 +1959,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         GroupViewModel?.Reset();
         ActivityFeedViewModel?.Reset();
         FriendChanges.Clear();
-        _friendSnapshot = null;
         _friendChangesView.Refresh();
         OnPropertyChanged(nameof(FriendChangesSummary));
         OnPropertyChanged(nameof(HasNoFriendChanges));
@@ -3518,26 +3517,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SelectedFriend = change.Friend;
     }
 
-    private void RecordFriendChanges(IReadOnlyList<VrcUser> current)
+    private void OnFriendListChanged(FriendListDelta delta)
     {
-        if (_friendSnapshot is null)
+        var timestamp = DateTimeOffset.UtcNow;
+        foreach (var removed in delta.Removed)
         {
-            _friendSnapshot = current
-                .Where(user => !string.IsNullOrWhiteSpace(user.Id))
-                .GroupBy(user => user.Id)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
-            return;
+            FriendChanges.Insert(0, new FriendChangeItem(new FriendItem(removed), false, timestamp));
         }
 
-        var currentIds = new HashSet<string>(current.Select(user => user.Id), StringComparer.Ordinal);
-        foreach (var removed in _friendSnapshot.Values.Where(user => !currentIds.Contains(user.Id)))
+        foreach (var added in delta.Added)
         {
-            FriendChanges.Insert(0, new FriendChangeItem(new FriendItem(removed), false, DateTimeOffset.UtcNow));
-        }
-
-        foreach (var added in current.Where(user => !_friendSnapshot.ContainsKey(user.Id)))
-        {
-            FriendChanges.Insert(0, new FriendChangeItem(new FriendItem(added), true, DateTimeOffset.UtcNow));
+            FriendChanges.Insert(0, new FriendChangeItem(new FriendItem(added), true, timestamp));
         }
 
         while (FriendChanges.Count > 100)
@@ -3545,10 +3535,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             FriendChanges.RemoveAt(FriendChanges.Count - 1);
         }
 
-        _friendSnapshot = current
-            .Where(user => !string.IsNullOrWhiteSpace(user.Id))
-            .GroupBy(user => user.Id)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         _friendChangesView.Refresh();
         OnPropertyChanged(nameof(FriendChangesSummary));
         OnPropertyChanged(nameof(HasNoFriendChanges));

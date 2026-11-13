@@ -5,6 +5,14 @@ using VrcCompanion.Models;
 
 namespace VrcCompanion.Services;
 
+/// <summary>Friends added to and removed from the full friend list.</summary>
+public sealed record FriendListDelta(
+    IReadOnlyList<VrcUser> Added,
+    IReadOnlyList<VrcUser> Removed)
+{
+    public bool HasChanges => Added.Count > 0 || Removed.Count > 0;
+}
+
 /// <summary>
 /// Builds an activity feed / timeline from friends' data.
 /// Analyzes friend locations, status changes, and instance history.
@@ -135,9 +143,8 @@ public sealed class ActivityFeedService
 
         if (previousFriends is not null)
         {
-            var currentIds = new HashSet<string>(friends.Select(friend => friend.Id), StringComparer.Ordinal);
-            var previousIds = new HashSet<string>(previousFriends.Select(friend => friend.Id), StringComparer.Ordinal);
-            foreach (var friend in friends.Where(friend => !previousIds.Contains(friend.Id)))
+            var delta = DiffFriends(friends, previousFriends);
+            foreach (var friend in delta.Added)
             {
                 entries.Add(new ActivityEntry
                 {
@@ -153,7 +160,7 @@ public sealed class ActivityFeedService
                 });
             }
 
-            foreach (var friend in previousFriends.Where(friend => !currentIds.Contains(friend.Id)))
+            foreach (var friend in delta.Removed)
             {
                 entries.Add(new ActivityEntry
                 {
@@ -172,6 +179,22 @@ public sealed class ActivityFeedService
 
         // Sort by timestamp descending (newest first)
         return entries.OrderByDescending(e => e.Timestamp).ToList();
+    }
+
+    /// <summary>
+    /// Compares two complete friend lists. The activity feed is the single
+    /// owner of the previous list, so this is also the change signal used by
+    /// the friend-changes popup.
+    /// </summary>
+    public FriendListDelta DiffFriends(
+        IReadOnlyList<VrcUser> current,
+        IReadOnlyList<VrcUser> previous)
+    {
+        var currentIds = new HashSet<string>(current.Select(friend => friend.Id), StringComparer.Ordinal);
+        var previousIds = new HashSet<string>(previous.Select(friend => friend.Id), StringComparer.Ordinal);
+        return new FriendListDelta(
+            current.Where(friend => !previousIds.Contains(friend.Id)).ToList(),
+            previous.Where(friend => !currentIds.Contains(friend.Id)).ToList());
     }
 
     /// <summary>

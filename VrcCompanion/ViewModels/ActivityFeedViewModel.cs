@@ -31,6 +31,12 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
     private readonly List<IRelayCommand> _commands = new();
 
+    /// <summary>
+    /// Raised only when a complete friend list is compared with the previous
+    /// complete list. This is the app's single friend-change signal.
+    /// </summary>
+    public event Action<FriendListDelta>? FriendListChanged;
+
     public ActivityFeedViewModel(VrcApiClient api)
     {
         _feedService = new ActivityFeedService();
@@ -139,17 +145,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         {
             // Online friends arrive first, so the feed can render before the
             // offline pages (large accounts need dozens of requests) finish.
-            var friends = await _api.GetFriendsAsync(forceRefresh: false, onPartial: partial =>
+            var friends = await _api.GetFriendsAsync(forceRefresh: true, onPartial: partial =>
             {
                 _allEntries = _feedService.BuildFeedFromFriends(partial.ToList());
                 ApplyFilterAndSearch();
             });
 
-            _allEntries = _feedService.BuildFeedFromFriends(friends.ToList(), _previousFriends);
-            _previousFriends = friends.ToList();
-            ApplyFilterAndSearch();
-            _ = HydrateAvatarNamesAsync(_allEntries);
-            HasLoaded = true;
+            SetFeed(friends);
         }
         catch (VrcApiException ex)
         {
@@ -175,6 +177,42 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     }
 
     private Task RefreshAsync() => LoadAsync();
+
+    /// <summary>
+    /// Rebuilds the feed from a complete friend list already fetched by the
+    /// main view model, so the two views share one snapshot instead of
+    /// fetching and diffing the list independently.
+    /// </summary>
+    public void ApplyFriends(IReadOnlyList<VrcUser> friends)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        SetFeed(friends);
+    }
+
+    private void SetFeed(IReadOnlyList<VrcUser> friends)
+    {
+        var current = friends.ToList();
+        var previous = _previousFriends;
+        _allEntries = _feedService.BuildFeedFromFriends(current, previous);
+        _previousFriends = current;
+        ApplyFilterAndSearch();
+        HasLoaded = true;
+        ErrorMessage = null;
+        _ = HydrateAvatarNamesAsync(_allEntries);
+
+        if (previous is not null)
+        {
+            var delta = _feedService.DiffFriends(current, previous);
+            if (delta.HasChanges)
+            {
+                FriendListChanged?.Invoke(delta);
+            }
+        }
+    }
 
     private async Task HydrateAvatarNamesAsync(IReadOnlyList<ActivityEntry> entries)
     {
