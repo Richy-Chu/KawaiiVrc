@@ -18,6 +18,28 @@ public static class OscMessage
         return Encode("/chatbox/input", trimmed, sendImmediately, playSound);
     }
 
+    /// <summary>
+    /// Shortens a chatbox line near a word boundary instead of cutting a word
+    /// in half. The ellipsis counts toward VRChat's 144-character limit.
+    /// </summary>
+    public static string FitChatboxText(string text)
+    {
+        if (text.Length <= ChatboxLimit)
+        {
+            return text;
+        }
+
+        var available = ChatboxLimit - 1;
+        var slice = text[..available];
+        var boundary = slice.LastIndexOf(' ');
+        if (boundary < available / 2)
+        {
+            boundary = available;
+        }
+
+        return slice[..boundary].TrimEnd() + "…";
+    }
+
     public static byte[] ChatboxTyping(bool typing)
         => Encode("/chatbox/typing", typing);
 

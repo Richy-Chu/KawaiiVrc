@@ -35,6 +35,18 @@ public class OscChatboxTests
     }
 
     [Fact]
+    public void ChatboxTextIsShortenedAtAWordBoundary()
+    {
+        var text = string.Join(" ", Enumerable.Repeat("word", 60));
+
+        var fitted = OscMessage.FitChatboxText(text);
+
+        Assert.True(fitted.Length <= OscMessage.ChatboxLimit);
+        Assert.EndsWith("…", fitted);
+        Assert.DoesNotContain("wor…", fitted);
+    }
+
+    [Fact]
     public void ChatboxTextIsTruncatedToVrchatsLimit()
     {
         var packet = OscMessage.ChatboxInput(new string('x', 200));

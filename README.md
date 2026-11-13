@@ -38,7 +38,7 @@ That is the normal starting flow. You do not need to configure the low-memory be
 - **Avatars** — your VRChat avatars, favourites, and avatar search.
 - **Groups** — browse and manage your VRChat groups.
 - **Activity** — recent friend activity.
-- **Chatbox** — send and rotate VRChat chatbox messages over OSC.
+- **Chatbox** — send and rotate VRChat chatbox messages over OSC, with a live VRChat preview, recent-message history, autocomplete, `{music}`/`{lyrics}`/`{time}`/`{date}` tokens, rotation reordering, and optional live-edit drafts.
 - **Media** — your local VRChat pictures, grouped by world and month.
 - **Creator Resources** — links to creator marketplaces and official VRChat tools.
 - **Accounts** — switch between saved VRChat accounts.

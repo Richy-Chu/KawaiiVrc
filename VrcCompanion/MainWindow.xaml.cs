@@ -131,6 +131,21 @@ public partial class MainWindow : Window
         base.OnPreviewKeyDown(e);
     }
 
+    private void ChatboxMessageBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        var command = _viewModel.ChatboxViewModel.SendCommand;
+        if (command.CanExecute(null))
+        {
+            command.Execute(null);
+            e.Handled = true;
+        }
+    }
+
     private bool TryHandleBrowserFocusShortcut(KeyEventArgs e)
         => TryHandleBrowserFocusShortcut(
             e.Key == Key.System ? e.SystemKey : e.Key,

@@ -3439,19 +3439,119 @@
 
                     <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                         <StackPanel>
-                            <TextBlock Text="Magic Chatbox" Style="{StaticResource SectionTitle}" />
-                            <TextBlock Text="VRChat must have OSC enabled: Action Menu → Options → OSC → Enabled. Messages go to the local VRChat client over UDP."
+                            <TextBlock Text="Chatbox composer" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="Type once, then send it now or save it to your rotation. VRChat needs OSC enabled: Action Menu → Options → OSC → Enabled."
                                        Style="{StaticResource MutedText}"
                                        TextWrapping="Wrap"
                                        Margin="0,3,0,12" />
-                            <TextBox Style="{StaticResource InputBox}"
+                            <TextBox x:Name="ChatboxMessageBox"
+                                     Style="{StaticResource InputBox}"
                                      Text="{Binding ChatboxViewModel.MessageText, UpdateSourceTrigger=PropertyChanged}"
                                      MaxLength="144"
-                                     ToolTip="Up to 144 characters, like VRChat's chatbox" />
-                            <Grid Margin="0,8,0,0">
+                                     KeyDown="ChatboxMessageBox_KeyDown"
+                                     AutomationProperties.AutomationId="ChatboxMessageBox"
+                                     AutomationProperties.Name="Chatbox message"
+                                     ToolTip="Type a message and press Enter to send" />
+                            <Grid Margin="0,7,0,0">
                                 <TextBlock Text="{Binding ChatboxViewModel.MessageCountText}"
                                            Style="{StaticResource MutedText}"
                                            VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding ChatboxViewModel.PreviewCountText}"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           FontSize="11"
+                                           FontWeight="SemiBold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ChatboxViewModel.IsPreviewOverLimit}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource RedBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                            <Border Background="{StaticResource InputBrush}"
+                                    BorderBrush="{StaticResource SoftBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="9"
+                                    Padding="10,8"
+                                    Margin="0,8,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="VRChat preview" Style="{StaticResource FieldLabel}" Margin="0,0,0,3" />
+                                    <TextBlock Text="{Binding ChatboxViewModel.PreviewText}"
+                                               Foreground="{StaticResource TextBrush}"
+                                               FontSize="12"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding ChatboxViewModel.PreviewStatusText}"
+                                               Style="{StaticResource MutedText}"
+                                               FontSize="10"
+                                               TextWrapping="Wrap"
+                                               Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <TextBlock Text="INSERT A LIVE VALUE" Style="{StaticResource FieldLabel}" Margin="0,11,0,5" />
+                            <WrapPanel>
+                                <Button Content="Music"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="9,4"
+                                        FontSize="10"
+                                        Margin="0,0,6,0"
+                                        Command="{Binding ChatboxViewModel.InsertTokenCommand}"
+                                        CommandParameter="{}{music}"
+                                        ToolTip="Insert the current track ({music})" />
+                                <Button Content="Lyrics"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="9,4"
+                                        FontSize="10"
+                                        Margin="0,0,6,0"
+                                        Command="{Binding ChatboxViewModel.InsertTokenCommand}"
+                                        CommandParameter="{}{lyrics}"
+                                        ToolTip="Insert the current lyric line ({lyrics})" />
+                                <Button Content="Time"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="9,4"
+                                        FontSize="10"
+                                        Margin="0,0,6,0"
+                                        Command="{Binding ChatboxViewModel.InsertTokenCommand}"
+                                        CommandParameter="{}{time}"
+                                        ToolTip="Insert your local time ({time})" />
+                                <Button Content="Date"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="9,4"
+                                        FontSize="10"
+                                        Command="{Binding ChatboxViewModel.InsertTokenCommand}"
+                                        CommandParameter="{}{date}"
+                                        ToolTip="Insert today's date ({date})" />
+                            </WrapPanel>
+                            <ItemsControl ItemsSource="{Binding ChatboxViewModel.AutocompleteSuggestions}"
+                                          Visibility="{Binding ChatboxViewModel.HasAutocompleteSuggestions, Converter={StaticResource BoolToVis}}"
+                                          Margin="0,7,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Content="{Binding}"
+                                                Style="{StaticResource GhostButton}"
+                                                Padding="8,3"
+                                                FontSize="10"
+                                                Margin="0,0,5,3"
+                                                Command="{Binding DataContext.ChatboxViewModel.UseSuggestionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip="Use this recent message" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <CheckBox Content="Live edit in VRChat as I type"
+                                      Style="{StaticResource FriendlyCheckBox}"
+                                      IsChecked="{Binding ChatboxViewModel.LiveEditEnabled, Mode=TwoWay}"
+                                      Margin="0,10,0,0"
+                                      ToolTip="Sends a non-submitted draft to VRChat while you type" />
+                            <Grid Margin="0,10,0,0">
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                     <Button Content="Add to rotation"
                                             Style="{StaticResource SecondaryButton}"
@@ -3466,6 +3566,46 @@
                                             Command="{Binding ChatboxViewModel.SendCommand}" />
                                 </StackPanel>
                             </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <Grid>
+                                <StackPanel>
+                                    <TextBlock Text="Recent messages" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Click a message to put it back in the composer. History is saved locally."
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,3,0,0" />
+                                </StackPanel>
+                                <Button Content="Clear history"
+                                        Style="{StaticResource GhostButton}"
+                                        Padding="9,4"
+                                        FontSize="10"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Top"
+                                        Command="{Binding ChatboxViewModel.ClearHistoryCommand}" />
+                            </Grid>
+                            <ItemsControl ItemsSource="{Binding ChatboxViewModel.History}" Margin="0,9,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Content="{Binding}"
+                                                Style="{StaticResource GhostButton}"
+                                                HorizontalContentAlignment="Left"
+                                                Padding="10,7"
+                                                FontSize="11"
+                                                Margin="0,0,0,5"
+                                                Command="{Binding DataContext.ChatboxViewModel.UseHistoryMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip="Reuse this message" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="Send a message and it will appear here for quick reuse."
+                                       Style="{StaticResource MutedText}"
+                                       Visibility="{Binding ChatboxViewModel.HasNoHistory, Converter={StaticResource BoolToVis}}"
+                                       Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
 
@@ -3671,10 +3811,22 @@
 
                     <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                         <StackPanel>
-                            <TextBlock Text="Rotation" Style="{StaticResource SectionTitle}" />
-                            <TextBlock Text="Cycle through these lines so the chatbox keeps changing."
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,3,0,10" />
+                            <Grid>
+                                <StackPanel>
+                                    <TextBlock Text="Rotation" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Cycle through these lines so the chatbox keeps changing. Put the lines you care about first."
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,3,0,10" />
+                                </StackPanel>
+                                <Button Content="Clear rotation"
+                                        Style="{StaticResource GhostButton}"
+                                        Padding="9,4"
+                                        FontSize="10"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Top"
+                                        Command="{Binding ChatboxViewModel.ClearRotationCommand}" />
+                            </Grid>
                             <StackPanel Orientation="Horizontal">
                                 <CheckBox Content="Rotate messages automatically"
                                           Style="{StaticResource FriendlyCheckBox}"
@@ -3708,15 +3860,40 @@
                                                            Foreground="{StaticResource TextBrush}"
                                                            FontSize="11"
                                                            TextTrimming="CharacterEllipsis"
-                                                           Margin="0,0,80,0"
+                                                           Margin="0,0,220,0"
                                                            VerticalAlignment="Center" />
-                                                <Button Content="Remove"
-                                                        Style="{StaticResource GhostButton}"
-                                                        Padding="8,3"
-                                                        FontSize="10"
-                                                        HorizontalAlignment="Right"
-                                                        Command="{Binding DataContext.ChatboxViewModel.RemoveMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                        CommandParameter="{Binding}" />
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <Button Content="Use"
+                                                            Style="{StaticResource GhostButton}"
+                                                            Padding="8,3"
+                                                            FontSize="10"
+                                                            Margin="0,0,3,0"
+                                                            Command="{Binding DataContext.ChatboxViewModel.UseRotationMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}"
+                                                            ToolTip="Put this message in the composer" />
+                                                    <Button Content="↑"
+                                                            Style="{StaticResource GhostButton}"
+                                                            Padding="7,3"
+                                                            FontSize="11"
+                                                            Margin="0,0,3,0"
+                                                            Command="{Binding DataContext.ChatboxViewModel.MoveRotationUpCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}"
+                                                            ToolTip="Move up" />
+                                                    <Button Content="↓"
+                                                            Style="{StaticResource GhostButton}"
+                                                            Padding="7,3"
+                                                            FontSize="11"
+                                                            Margin="0,0,6,0"
+                                                            Command="{Binding DataContext.ChatboxViewModel.MoveRotationDownCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}"
+                                                            ToolTip="Move down" />
+                                                    <Button Content="Remove"
+                                                            Style="{StaticResource GhostButton}"
+                                                            Padding="8,3"
+                                                            FontSize="10"
+                                                            Command="{Binding DataContext.ChatboxViewModel.RemoveMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}" />
+                                                </StackPanel>
                                             </Grid>
                                         </Border>
                                     </DataTemplate>

@@ -80,6 +80,12 @@ public sealed class CompanionSettings
 
     [JsonPropertyName("chatboxLyricsPauseSeconds")]
     public int ChatboxLyricsPauseSeconds { get; set; } = 30;
+
+    [JsonPropertyName("chatboxHistory")]
+    public List<string> ChatboxHistory { get; set; } = new();
+
+    [JsonPropertyName("chatboxLiveEditEnabled")]
+    public bool ChatboxLiveEditEnabled { get; set; }
 }
 
 /// <summary>

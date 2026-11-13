@@ -11,6 +11,8 @@ namespace VrcCompanion.ViewModels;
 public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 {
     private const int MinimumRotationSeconds = 5;
+    private const int MaxHistoryItems = 20;
+    private const int MaxAutocompleteItems = 5;
 
     private readonly SettingsStore _store;
     private readonly CompanionSettings _settings;
@@ -20,6 +22,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _nowPlayingTimer;
     private readonly DispatcherTimer _lyricsDisplayTimer;
+    private readonly DispatcherTimer _liveEditTimer;
     private NowPlayingInfo? _currentTrack;
     private bool _pollingNowPlaying;
     private LyricsDocument? _lyrics;
@@ -53,6 +56,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private string _host;
     private int _port;
     private int _rotationIndex;
+    private bool _liveEditEnabled;
+    private bool _liveEditTyping;
     private bool _disposed;
 
     public ChatboxViewModel(
@@ -82,6 +87,13 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
                 .Distinct(StringComparer.Ordinal)
                 .Take(25));
 
+        History = new ObservableCollection<string>(
+            _settings.ChatboxHistory
+                .Where(message => !string.IsNullOrWhiteSpace(message))
+                .Distinct(StringComparer.Ordinal)
+                .Take(MaxHistoryItems));
+        AutocompleteSuggestions = new ObservableCollection<string>();
+
         _includeNowPlaying = _settings.ChatboxIncludeNowPlaying;
         if (_includeNowPlaying && !RotationMessages.Contains("{music}", StringComparer.OrdinalIgnoreCase))
         {
@@ -109,8 +121,14 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         {
             OnPropertyChanged(nameof(LyricsText));
             OnPropertyChanged(nameof(RemainingText));
+            OnPropertyChanged(nameof(PreviewText));
+            OnPropertyChanged(nameof(PreviewCountText));
+            OnPropertyChanged(nameof(PreviewStatusText));
+            OnPropertyChanged(nameof(IsPreviewOverLimit));
             UpdateVrchatLyrics();
         };
+        _liveEditTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+        _liveEditTimer.Tick += (_, _) => SendLiveEditPreview();
         if (startTimers)
         {
             _lyricsDisplayTimer.Start();
@@ -121,6 +139,32 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         SendCommand = new RelayCommand(Send, () => !string.IsNullOrWhiteSpace(MessageText));
         AddToRotationCommand = new RelayCommand(AddToRotation, () => !string.IsNullOrWhiteSpace(MessageText));
         RemoveMessageCommand = new RelayCommand<string>(RemoveMessage, message => message is not null);
+        MoveRotationUpCommand = new RelayCommand<string>(
+            message => MoveRotation(message, -1),
+            message => RotationMessages.IndexOf(message ?? string.Empty) > 0);
+        MoveRotationDownCommand = new RelayCommand<string>(
+            message => MoveRotation(message, 1),
+            message =>
+            {
+                var index = RotationMessages.IndexOf(message ?? string.Empty);
+                return index >= 0 && index < RotationMessages.Count - 1;
+            });
+        UseRotationMessageCommand = new RelayCommand<string>(
+            UseRotationMessage,
+            message => !string.IsNullOrWhiteSpace(message));
+        ClearRotationCommand = new RelayCommand(
+            ClearRotation,
+            () => RotationMessages.Count > 0);
+        UseHistoryMessageCommand = new RelayCommand<string>(
+            UseHistoryMessage,
+            message => !string.IsNullOrWhiteSpace(message));
+        ClearHistoryCommand = new RelayCommand(ClearHistory, () => History.Count > 0);
+        UseSuggestionCommand = new RelayCommand<string>(
+            UseSuggestion,
+            suggestion => !string.IsNullOrWhiteSpace(suggestion));
+        InsertTokenCommand = new RelayCommand<string>(
+            InsertToken,
+            token => !string.IsNullOrWhiteSpace(token));
         UseNowPlayingCommand = new RelayCommand(UseNowPlaying, () => CurrentTrack is not null);
         AddNowPlayingToRotationCommand = new RelayCommand(AddNowPlayingToRotation, () => CurrentTrack is not null);
         SendLyricCommand = new RelayCommand(SendLyric, () => HasLyrics);
@@ -141,6 +185,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             _ = PollNowPlayingAsync();
         }
 
+        _liveEditEnabled = _settings.ChatboxLiveEditEnabled;
+
         if (_settings.ChatboxRotateEnabled && RotationMessages.Count > 0)
         {
             _isRotating = true;
@@ -153,11 +199,31 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     public ObservableCollection<LyricsCandidate> LyricsCandidates { get; }
 
+    public ObservableCollection<string> History { get; }
+
+    public ObservableCollection<string> AutocompleteSuggestions { get; }
+
     public RelayCommand SendCommand { get; }
 
     public RelayCommand AddToRotationCommand { get; }
 
     public RelayCommand<string> RemoveMessageCommand { get; }
+
+    public RelayCommand<string> MoveRotationUpCommand { get; }
+
+    public RelayCommand<string> MoveRotationDownCommand { get; }
+
+    public RelayCommand<string> UseRotationMessageCommand { get; }
+
+    public RelayCommand ClearRotationCommand { get; }
+
+    public RelayCommand<string> UseHistoryMessageCommand { get; }
+
+    public RelayCommand ClearHistoryCommand { get; }
+
+    public RelayCommand<string> UseSuggestionCommand { get; }
+
+    public RelayCommand<string> InsertTokenCommand { get; }
 
     public RelayCommand UseNowPlayingCommand { get; }
 
@@ -198,6 +264,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(HasLyrics));
             OnPropertyChanged(nameof(RemainingText));
             OnPropertyChanged(nameof(IsLyricsPaused));
+            OnPropertyChanged(nameof(PreviewText));
+            OnPropertyChanged(nameof(PreviewStatusText));
+            OnPropertyChanged(nameof(PreviewCountText));
+            OnPropertyChanged(nameof(IsPreviewOverLimit));
             TrackChanged();
         }
     }
@@ -234,16 +304,68 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         get => _messageText;
         set
         {
-            if (SetProperty(ref _messageText, value))
+            if (!SetProperty(ref _messageText, value))
             {
-                OnPropertyChanged(nameof(MessageCountText));
-                SendCommand.RaiseCanExecuteChanged();
-                AddToRotationCommand.RaiseCanExecuteChanged();
+                return;
             }
+
+            OnPropertyChanged(nameof(MessageCountText));
+            OnPropertyChanged(nameof(PreviewText));
+            OnPropertyChanged(nameof(PreviewCountText));
+            OnPropertyChanged(nameof(PreviewStatusText));
+            OnPropertyChanged(nameof(IsPreviewOverLimit));
+            SendCommand.RaiseCanExecuteChanged();
+            AddToRotationCommand.RaiseCanExecuteChanged();
+            UpdateAutocompleteSuggestions();
+            ScheduleLiveEditPreview();
         }
     }
 
     public string MessageCountText => $"{MessageText.Length}/{OscMessage.ChatboxLimit}";
+
+    public string PreviewText => ExpandTokens(MessageText, advanceLyrics: false);
+
+    public string PreviewCountText => $"{PreviewText.Length}/{OscMessage.ChatboxLimit}";
+
+    public bool IsPreviewOverLimit => PreviewText.Length > OscMessage.ChatboxLimit;
+
+    public string PreviewStatusText => MessageText.Trim().Length == 0
+        ? "Start typing to preview the line VRChat will show."
+        : IsPreviewOverLimit
+            ? "VRChat will receive a shortened version at a word boundary."
+            : "This is exactly what VRChat will show.";
+
+    public bool HasHistory => History.Count > 0;
+
+    public bool HasNoHistory => History.Count == 0;
+
+    public bool HasAutocompleteSuggestions => AutocompleteSuggestions.Count > 0;
+
+    public bool LiveEditEnabled
+    {
+        get => _liveEditEnabled;
+        set
+        {
+            if (!SetProperty(ref _liveEditEnabled, value))
+            {
+                return;
+            }
+
+            _settings.ChatboxLiveEditEnabled = value;
+            _store.Save();
+
+            if (value)
+            {
+                StatusText = "Live edit is on. Drafts appear in VRChat as you type.";
+                ScheduleLiveEditPreview();
+            }
+            else
+            {
+                StopLiveEditPreview();
+                StatusText = "Live edit is off.";
+            }
+        }
+    }
 
     public string StatusText
     {
@@ -315,6 +437,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             SaveMessages();
             OnPropertyChanged(nameof(HasRotationMessages));
             OnPropertyChanged(nameof(HasNoRotationMessages));
+            RaiseRotationCommandStates();
+            UpdateAutocompleteSuggestions();
             if (RotationMessages.Count == 0)
             {
                 IsRotating = false;
@@ -432,6 +556,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             SaveMessages();
             OnPropertyChanged(nameof(HasRotationMessages));
             OnPropertyChanged(nameof(HasNoRotationMessages));
+            RaiseRotationCommandStates();
+            UpdateAutocompleteSuggestions();
             if (RotationMessages.Count == 0)
             {
                 IsRotating = false;
@@ -591,8 +717,129 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        StopLiveEditPreview();
         SendText(text);
     }
+
+    private void UpdateAutocompleteSuggestions()
+    {
+        AutocompleteSuggestions.Clear();
+        var query = MessageText.Trim();
+        if (query.Length > 0)
+        {
+            foreach (var candidate in History
+                         .Concat(RotationMessages)
+                         .Where(candidate =>
+                             !candidate.Equals(query, StringComparison.OrdinalIgnoreCase) &&
+                             candidate.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+                         .Distinct(StringComparer.Ordinal)
+                         .Take(MaxAutocompleteItems))
+            {
+                AutocompleteSuggestions.Add(candidate);
+            }
+        }
+
+        OnPropertyChanged(nameof(HasAutocompleteSuggestions));
+    }
+
+    private void ScheduleLiveEditPreview()
+    {
+        if (!_liveEditEnabled)
+        {
+            return;
+        }
+
+        _liveEditTimer.Stop();
+        if (string.IsNullOrWhiteSpace(MessageText))
+        {
+            SetLiveTyping(false);
+            return;
+        }
+
+        _liveEditTimer.Start();
+    }
+
+    private void SendLiveEditPreview()
+    {
+        _liveEditTimer.Stop();
+        if (!_liveEditEnabled || _disposed)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(MessageText))
+        {
+            SetLiveTyping(false);
+            return;
+        }
+
+        var text = OscMessage.FitChatboxText(ExpandTokens(MessageText, advanceLyrics: false));
+        try
+        {
+            SetLiveTyping(true);
+            _osc.SendChatbox(text, sendImmediately: false);
+            StatusText = $"Live edit preview: {TextPreview(text)}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Could not send the live edit preview: {ex.Message}";
+        }
+    }
+
+    private void StopLiveEditPreview()
+    {
+        _liveEditTimer.Stop();
+        SetLiveTyping(false);
+    }
+
+    private void SetLiveTyping(bool typing)
+    {
+        if (_liveEditTyping == typing)
+        {
+            return;
+        }
+
+        _liveEditTyping = typing;
+        try
+        {
+            _osc.SendTyping(typing);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Could not update the typing indicator: {ex.Message}";
+        }
+    }
+
+    private void RecordHistory(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        var existing = History.FirstOrDefault(item =>
+            item.Equals(text, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            History.Remove(existing);
+        }
+
+        History.Insert(0, text);
+        while (History.Count > MaxHistoryItems)
+        {
+            History.RemoveAt(History.Count - 1);
+        }
+
+        _settings.ChatboxHistory = History.ToList();
+        _store.Save();
+        OnPropertyChanged(nameof(HasHistory));
+        OnPropertyChanged(nameof(HasNoHistory));
+        ClearHistoryCommand.RaiseCanExecuteChanged();
+        UpdateAutocompleteSuggestions();
+    }
+
+    private static string TextPreview(string text)
+        => text.Length > 48 ? text[..48] + "…" : text;
 
     private void AddToRotation()
     {
@@ -639,6 +886,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             SaveMessages();
             OnPropertyChanged(nameof(HasRotationMessages));
             OnPropertyChanged(nameof(HasNoRotationMessages));
+            RaiseRotationCommandStates();
+            UpdateAutocompleteSuggestions();
             StatusText = $"Added to rotation ({RotationMessages.Count}).";
         }
         else
@@ -1014,6 +1263,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     /// <summary>Runs one real rotation tick (for tests).</summary>
     internal void RotateNextForTest() => RotateNext();
 
+    internal void FlushLiveEditForTest() => SendLiveEditPreview();
+
     internal void SetTrackForTest(NowPlayingInfo? track) => CurrentTrack = track;
 
     internal Task? LyricsLoadTaskForTest => _lyricsLoadTask;
@@ -1041,11 +1292,114 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             SaveMessages();
             OnPropertyChanged(nameof(HasRotationMessages));
             OnPropertyChanged(nameof(HasNoRotationMessages));
+            RaiseRotationCommandStates();
+            UpdateAutocompleteSuggestions();
             if (RotationMessages.Count == 0)
             {
                 IsRotating = false;
             }
         }
+    }
+
+    private void MoveRotation(string? message, int offset)
+    {
+        if (message is null)
+        {
+            return;
+        }
+
+        var index = RotationMessages.IndexOf(message);
+        var target = index + offset;
+        if (index < 0 || target < 0 || target >= RotationMessages.Count)
+        {
+            return;
+        }
+
+        RotationMessages.Move(index, target);
+        SaveMessages();
+        RaiseRotationCommandStates();
+        StatusText = $"Moved rotation message to position {target + 1}.";
+    }
+
+    private void UseRotationMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        MessageText = message;
+        StatusText = "Rotation message placed in the composer.";
+    }
+
+    private void ClearRotation()
+    {
+        if (RotationMessages.Count == 0)
+        {
+            return;
+        }
+
+        IsRotating = false;
+        RotationMessages.Clear();
+        SaveMessages();
+        OnPropertyChanged(nameof(HasRotationMessages));
+        OnPropertyChanged(nameof(HasNoRotationMessages));
+        RaiseRotationCommandStates();
+        UpdateAutocompleteSuggestions();
+        StatusText = "Rotation cleared.";
+    }
+
+    private void UseHistoryMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        MessageText = message;
+        StatusText = "Recent message placed in the composer.";
+    }
+
+    private void ClearHistory()
+    {
+        History.Clear();
+        _settings.ChatboxHistory.Clear();
+        _store.Save();
+        OnPropertyChanged(nameof(HasHistory));
+        OnPropertyChanged(nameof(HasNoHistory));
+        ClearHistoryCommand.RaiseCanExecuteChanged();
+        UpdateAutocompleteSuggestions();
+        StatusText = "Recent message history cleared.";
+    }
+
+    private void UseSuggestion(string? suggestion)
+    {
+        if (string.IsNullOrWhiteSpace(suggestion))
+        {
+            return;
+        }
+
+        MessageText = suggestion;
+    }
+
+    private void InsertToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return;
+        }
+
+        MessageText = string.IsNullOrWhiteSpace(MessageText)
+            ? token
+            : MessageText.TrimEnd() + " " + token;
+    }
+
+    private void RaiseRotationCommandStates()
+    {
+        MoveRotationUpCommand.RaiseCanExecuteChanged();
+        MoveRotationDownCommand.RaiseCanExecuteChanged();
+        UseRotationMessageCommand.RaiseCanExecuteChanged();
+        ClearRotationCommand.RaiseCanExecuteChanged();
     }
 
     private void RotateNext()
@@ -1063,16 +1417,22 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     private void SendText(string text, bool rotating = false, bool pauseLyrics = true)
     {
-        text = ExpandTokens(text);
+        var historyText = text;
+        text = OscMessage.FitChatboxText(ExpandTokens(text));
         try
         {
             _osc.SendChatbox(text);
             _lastOscSend = DateTime.UtcNow;
             _lastVrchatLyric = null;
-            var preview = text.Length > 48 ? text[..48] + "…" : text;
+            var preview = TextPreview(text);
             StatusText = rotating
                 ? $"Sent rotation message: {preview}"
                 : $"Sent: {preview}";
+
+            if (!rotating && pauseLyrics)
+            {
+                RecordHistory(historyText);
+            }
 
             if (_showLyricsOnVrchat && _pauseLyricsAfterMessage)
             {
@@ -1096,7 +1456,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private string ExpandTokens(string text)
+    private string ExpandTokens(string text, bool advanceLyrics = true)
     {
         if (text.Contains("{music}", StringComparison.OrdinalIgnoreCase))
         {
@@ -1106,12 +1466,15 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
         if (text.Contains("{lyrics}", StringComparison.OrdinalIgnoreCase))
         {
-            var line = GetCurrentLyricLine(advancePlain: true) ??
+            var line = GetCurrentLyricLine(advancePlain: advanceLyrics) ??
                        CurrentTrack?.ChatboxText ??
                        "♪ Nothing playing";
             text = text.Replace("{lyrics}", line, StringComparison.OrdinalIgnoreCase);
         }
 
+        var now = DateTime.Now;
+        text = text.Replace("{time}", now.ToString("HH:mm"), StringComparison.OrdinalIgnoreCase);
+        text = text.Replace("{date}", now.ToString("yyyy-MM-dd"), StringComparison.OrdinalIgnoreCase);
         return text;
     }
 
@@ -1135,6 +1498,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _timer.Stop();
         _nowPlayingTimer.Stop();
         _lyricsDisplayTimer.Stop();
+        _liveEditTimer.Stop();
         _lyricsCancellation?.Cancel();
         _lyricsCancellation?.Dispose();
         if (_osc is IDisposable disposable)
