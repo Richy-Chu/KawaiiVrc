@@ -172,11 +172,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserH
     }
 
     /// <summary>Shows the browser pane without starting a navigation for layout tests.</summary>
-    internal void ShowBrowserForLayoutTest()
-    {
-        BrowserTitle = "Creator Resources";
-        IsBrowserOpen = true;
-    }
+    internal void ShowBrowserForLayoutTest() => IsBrowserOpen = true;
 
     private void SetDownloadedFilePath(string? path)
     {

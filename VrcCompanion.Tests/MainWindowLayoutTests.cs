@@ -72,14 +72,13 @@ public class MainWindowLayoutTests
     }
 
     [Theory]
-    [InlineData("brave", "BraveBrowserPane", "BraveFocusToggle", false)]
-    [InlineData("discord", "DiscordBrowserPane", "DiscordFocusToggle", false)]
-    [InlineData("resources", "CreatorBrowserPane", "CreatorFocusToggle", true)]
+    [InlineData("brave", "BraveBrowserPane", "BraveFocusToggle")]
+    [InlineData("discord", "DiscordBrowserPane", "DiscordFocusToggle")]
+    [InlineData("resources", "CreatorBrowserPane", "CreatorFocusToggle")]
     public void FocusModeGivesTheBrowserTheWholePane(
         string sectionKey,
         string paneTag,
-        string toggleTag,
-        bool openCreatorBrowser)
+        string toggleTag)
     {
         WpfTestHost.Run(() =>
         {
@@ -105,7 +104,7 @@ public class MainWindowLayoutTests
                 shell.SelectedSection = shell.Sections.Single(section => section.Key == sectionKey);
                 window.UpdateLayout();
 
-                if (openCreatorBrowser)
+                if (sectionKey == "resources")
                 {
                     shell.CreatorResourcesViewModel.ShowBrowserForLayoutTest();
                     window.UpdateLayout();

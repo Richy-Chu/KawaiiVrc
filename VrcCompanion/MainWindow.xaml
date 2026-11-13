@@ -206,7 +206,10 @@
             <Setter Property="Background" Value="{StaticResource InputBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Content" Value="Focus browser" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Margin" Value="0,0,0,6" />
             <Setter Property="Padding" Value="8,4" />
             <Setter Property="FontSize" Value="10" />
             <Setter Property="FontWeight" Value="SemiBold" />
@@ -214,6 +217,7 @@
             <Setter Property="ToolTip" Value="Hide the search controls and give this browser the whole pane." />
             <Style.Triggers>
                 <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Content" Value="Exit focus" />
                     <Setter Property="Foreground" Value="#0B0D12" />
                 </Trigger>
             </Style.Triggers>
@@ -2717,19 +2721,7 @@
                     <ToggleButton x:Name="CreatorFocusToggle"
                                   Tag="CreatorFocusToggle"
                                   IsChecked="{Binding CreatorResourcesViewModel.IsFocusMode, Mode=TwoWay}"
-                                  HorizontalAlignment="Left"
-                                  Margin="0,0,0,6">
-                        <ToggleButton.Style>
-                            <Style TargetType="ToggleButton" BasedOn="{StaticResource BrowserFocusToggle}">
-                                <Setter Property="Content" Value="Focus browser" />
-                                <Style.Triggers>
-                                    <Trigger Property="IsChecked" Value="True">
-                                        <Setter Property="Content" Value="Exit focus" />
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </ToggleButton.Style>
-                    </ToggleButton>
+                                  Style="{StaticResource BrowserFocusToggle}" />
                     <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserError}"
                                Foreground="{StaticResource ErrorTextBrush}"
                                TextWrapping="Wrap" />
@@ -2867,19 +2859,7 @@
                             <ToggleButton x:Name="BraveFocusToggle"
                                           Tag="BraveFocusToggle"
                                           IsChecked="{Binding BraveBrowserViewModel.IsFocusMode, Mode=TwoWay}"
-                                          HorizontalAlignment="Left"
-                                          Margin="0,0,0,6">
-                                <ToggleButton.Style>
-                                    <Style TargetType="ToggleButton" BasedOn="{StaticResource BrowserFocusToggle}">
-                                        <Setter Property="Content" Value="Focus browser" />
-                                        <Style.Triggers>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter Property="Content" Value="Exit focus" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ToggleButton.Style>
-                            </ToggleButton>
+                                          Style="{StaticResource BrowserFocusToggle}" />
                             <TextBlock Text="{Binding BraveBrowserViewModel.BrowserError}"
                                        Foreground="{StaticResource ErrorTextBrush}"
                                        TextWrapping="Wrap" />
@@ -3027,19 +3007,7 @@
                             <ToggleButton x:Name="DiscordFocusToggle"
                                           Tag="DiscordFocusToggle"
                                           IsChecked="{Binding DiscordBrowserViewModel.IsFocusMode, Mode=TwoWay}"
-                                          HorizontalAlignment="Left"
-                                          Margin="0,0,0,6">
-                                <ToggleButton.Style>
-                                    <Style TargetType="ToggleButton" BasedOn="{StaticResource BrowserFocusToggle}">
-                                        <Setter Property="Content" Value="Focus browser" />
-                                        <Style.Triggers>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter Property="Content" Value="Exit focus" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ToggleButton.Style>
-                            </ToggleButton>
+                                          Style="{StaticResource BrowserFocusToggle}" />
                             <TextBlock Text="{Binding DiscordBrowserViewModel.BrowserError}"
                                        Foreground="{StaticResource ErrorTextBrush}"
                                        TextWrapping="Wrap" />
