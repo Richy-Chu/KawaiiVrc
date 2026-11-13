@@ -60,7 +60,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public ObservableCollection<MediaGroup> Groups { get; } = new();
 
     /// <summary>
-    /// What the grid renders. A large OneDrive library is capped at 240 pictures
+    /// What the grid renders. A large OneDrive library is capped at 48 pictures
     /// so opening the tab never queues hundreds of decodes; "Show all" lifts it.
     /// </summary>
     public ObservableCollection<MediaGroup> DisplayedGroups { get; } = new();
@@ -292,16 +292,6 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsShowingAll));
         OnPropertyChanged(nameof(ShowAllText));
         RebuildDisplayedGroups();
-    }
-
-    /// <summary>
-    /// Drops the rendered media cards when the tab is left. The grid is not
-    /// virtualized, so keeping its decoded thumbnails alive would retain the
-    /// whole picture library even while another section is on screen.
-    /// </summary>
-    public void UnloadDisplay()
-    {
-        DisplayedGroups.Clear();
     }
 
     private void RebuildDisplayedGroups()
