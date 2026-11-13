@@ -2182,6 +2182,93 @@
                                 Command="{Binding LoadGroupsCommand}" />
                     </StackPanel>
 
+                    <!-- Joined group filter -->
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Text="SEARCH YOUR GROUPS" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding GroupViewModel.GroupFilterText, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource InputBox}"
+                                     Tag="Filter joined groups by name..." />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Group discovery -->
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="DISCOVER GROUPS" Style="{StaticResource FieldLabel}" />
+                            <TextBlock Text="Search VRChat for public groups by name or group ID."
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,3,0,8"
+                                       TextWrapping="Wrap" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Text="{Binding GroupViewModel.GroupDiscoveryQuery, UpdateSourceTrigger=PropertyChanged}"
+                                         Style="{StaticResource InputBox}"
+                                         Margin="0,0,8,0"
+                                         Tag="Group name or grp_... ID" />
+                                <Button Grid.Column="1"
+                                        Content="Search"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Padding="14,8"
+                                        FontSize="11"
+                                        Command="{Binding GroupViewModel.SearchGroupsCommand}" />
+                            </Grid>
+                            <TextBlock Text="{Binding GroupViewModel.GroupSearchMessage}"
+                                       Style="{StaticResource MutedText}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,0" />
+                            <ItemsControl ItemsSource="{Binding GroupViewModel.GroupSearchResults}"
+                                          Margin="0,8,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource InputBrush}"
+                                                BorderBrush="{StaticResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="9"
+                                                Padding="10"
+                                                Margin="0,0,0,6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="38" Height="38" CornerRadius="8"
+                                                        Background="#151A24" Margin="0,0,10,0">
+                                                    <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}"
+                                                                         DecodeWidth="96"
+                                                                         CornerRadius="8" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}"
+                                                               FontSize="11.5"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource TextBrush}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding MemberCount, StringFormat='{}{0} members'}"
+                                                               FontSize="10"
+                                                               Foreground="{StaticResource MutedBrush}"
+                                                               Margin="0,2,0,0" />
+                                                </StackPanel>
+                                                <Button Grid.Column="2"
+                                                        Content="View"
+                                                        Style="{StaticResource SecondaryButton}"
+                                                        Padding="10,5"
+                                                        FontSize="10.5"
+                                                        VerticalAlignment="Center"
+                                                        Command="{Binding DataContext.GroupViewModel.OpenDiscoveredGroupCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
                     <!-- Error -->
                     <TextBlock Text="{Binding GroupViewModel.ErrorMessage}"
                                Style="{StaticResource MutedText}"
@@ -2191,7 +2278,7 @@
                                Visibility="{Binding GroupViewModel.ErrorMessage, Converter={StaticResource NullToVis}, ConverterParameter=invert}" />
 
                     <!-- Group list -->
-                    <ListBox ItemsSource="{Binding GroupViewModel.Groups}"
+                    <ListBox ItemsSource="{Binding GroupViewModel.VisibleGroups}"
                              SelectedItem="{Binding GroupViewModel.SelectedGroup, Mode=TwoWay}"
                              Style="{StaticResource BareListBox}"
                              ItemContainerStyle="{StaticResource BareListItem}"
@@ -2248,18 +2335,18 @@
                     </ListBox>
 
                     <!-- Empty state -->
-                    <Border Visibility="{Binding GroupViewModel.Groups.Count, Converter={StaticResource IntToVis}, ConverterParameter=invert}"
+                    <Border Visibility="{Binding GroupViewModel.VisibleGroups.Count, Converter={StaticResource IntToVis}, ConverterParameter=invert}"
                             Style="{StaticResource EmptyStateCard}">
                         <StackPanel>
                             <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets"
                                        FontSize="32" Foreground="{StaticResource MutedBrush}"
                                        HorizontalAlignment="Center" />
-                            <TextBlock Text="No groups found."
+                            <TextBlock Text="{Binding GroupViewModel.GroupListEmptyText}"
                                        FontSize="14" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextBrush}"
                                        HorizontalAlignment="Center"
                                        Margin="0,10,0,4" />
-                            <TextBlock Text="Create your first group to get started."
+                            <TextBlock Text="{Binding GroupViewModel.GroupListEmptyHint}"
                                        Style="{StaticResource MutedText}"
                                        HorizontalAlignment="Center" />
                         </StackPanel>

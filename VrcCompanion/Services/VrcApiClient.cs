@@ -1655,6 +1655,34 @@ public sealed class VrcApiClient : IDisposable
         return Deserialize<Group>(body);
     }
 
+    /// <summary>
+    /// Searches public groups by name or short code. A full group ID is looked
+    /// up directly because the search endpoint only matches searchable names.
+    /// </summary>
+    public async Task<IReadOnlyList<Group>> SearchGroupsAsync(
+        string query,
+        CancellationToken cancellationToken = default)
+    {
+        var trimmed = query.Trim();
+        if (trimmed.Length == 0)
+        {
+            return Array.Empty<Group>();
+        }
+
+        if (trimmed.StartsWith("grp_", StringComparison.OrdinalIgnoreCase))
+        {
+            var group = await GetGroupAsync(trimmed, cancellationToken);
+            return group is null ? Array.Empty<Group>() : new[] { group };
+        }
+
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            $"groups?query={Uri.EscapeDataString(trimmed)}&n=50&offset=0",
+            null,
+            cancellationToken);
+        return DeserializeList<Group>(body);
+    }
+
     /// <summary>Active instances the group is currently hosting.</summary>
     public async Task<IReadOnlyList<GroupInstance>> GetGroupInstancesAsync(
         string groupId,

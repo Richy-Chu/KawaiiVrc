@@ -20,6 +20,12 @@ public sealed class GroupViewModel : ViewModelBase
     private readonly VrcApiClient _api;
 
     private ObservableCollection<Group> _groups = new();
+    private ObservableCollection<Group> _visibleGroups = new();
+    private string _groupFilterText = string.Empty;
+    private string _groupDiscoveryQuery = string.Empty;
+    private ObservableCollection<Group> _groupSearchResults = new();
+    private bool _isSearchingGroups;
+    private string _groupSearchMessage = string.Empty;
     private Group? _selectedGroup;
     private ObservableCollection<GroupMember> _members = new();
     private bool _isBusy;
@@ -65,6 +71,12 @@ public sealed class GroupViewModel : ViewModelBase
         RefreshMembersCommand = Track(new AsyncRelayCommand(LoadGroupMembersAsync, () => SelectedGroup is not null && !IsBusy));
         OpenSelectedGroupCommand = Track(new RelayCommand(OpenSelectedGroupInBrowser, () => SelectedGroup is not null));
         OpenGroupCommand = Track(new RelayCommand<Group>(group => SelectedGroup = group, group => group is not null));
+        SearchGroupsCommand = Track(new AsyncRelayCommand(
+            SearchGroupsAsync,
+            () => !IsSearchingGroups && !string.IsNullOrWhiteSpace(GroupDiscoveryQuery)));
+        OpenDiscoveredGroupCommand = Track(new AsyncRelayCommand<Group>(
+            group => OpenGroupInfoAsync(group.EffectiveId),
+            group => group is not null && !IsGroupInfoBusy));
         OpenSelectedGroupInfoCommand = Track(new RelayCommand(
             () =>
             {
@@ -93,7 +105,78 @@ public sealed class GroupViewModel : ViewModelBase
     public ObservableCollection<Group> Groups
     {
         get => _groups;
-        set => SetProperty(ref _groups, value);
+        set
+        {
+            if (SetProperty(ref _groups, value))
+            {
+                ApplyGroupFilter();
+            }
+        }
+    }
+
+    /// <summary>The joined groups matching <see cref="GroupFilterText"/>.</summary>
+    public ObservableCollection<Group> VisibleGroups
+    {
+        get => _visibleGroups;
+        private set => SetProperty(ref _visibleGroups, value);
+    }
+
+    public string GroupFilterText
+    {
+        get => _groupFilterText;
+        set
+        {
+            if (SetProperty(ref _groupFilterText, value))
+            {
+                ApplyGroupFilter();
+                OnPropertyChanged(nameof(GroupListEmptyText));
+                OnPropertyChanged(nameof(GroupListEmptyHint));
+            }
+        }
+    }
+
+    public string GroupListEmptyText => string.IsNullOrWhiteSpace(GroupFilterText)
+        ? "No groups found."
+        : "No joined groups match that search.";
+
+    public string GroupListEmptyHint => string.IsNullOrWhiteSpace(GroupFilterText)
+        ? "Create your first group to get started."
+        : "Try another group name.";
+
+    public string GroupDiscoveryQuery
+    {
+        get => _groupDiscoveryQuery;
+        set
+        {
+            if (SetProperty(ref _groupDiscoveryQuery, value))
+            {
+                SearchGroupsCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public ObservableCollection<Group> GroupSearchResults
+    {
+        get => _groupSearchResults;
+        private set => SetProperty(ref _groupSearchResults, value);
+    }
+
+    public bool IsSearchingGroups
+    {
+        get => _isSearchingGroups;
+        private set
+        {
+            if (SetProperty(ref _isSearchingGroups, value))
+            {
+                RaiseCommandStates();
+            }
+        }
+    }
+
+    public string GroupSearchMessage
+    {
+        get => _groupSearchMessage;
+        private set => SetProperty(ref _groupSearchMessage, value);
     }
 
     public Group? SelectedGroup
@@ -378,6 +461,10 @@ public sealed class GroupViewModel : ViewModelBase
 
     public RelayCommand<Group> OpenGroupCommand { get; }
 
+    public AsyncRelayCommand SearchGroupsCommand { get; }
+
+    public AsyncRelayCommand<Group> OpenDiscoveredGroupCommand { get; }
+
     public RelayCommand OpenSelectedGroupInfoCommand { get; }
 
     private void OpenSelectedGroupInBrowser()
@@ -473,6 +560,7 @@ public sealed class GroupViewModel : ViewModelBase
     public void Reset()
     {
         SelectedGroup = null;
+        GroupFilterText = string.Empty;
         Groups = new ObservableCollection<Group>();
         Members = new ObservableCollection<GroupMember>();
         Instances = new ObservableCollection<GroupInstance>();
@@ -481,8 +569,70 @@ public sealed class GroupViewModel : ViewModelBase
         IsLeaveGroupConfirmOpen = false;
         GroupInfoInstances = new ObservableCollection<GroupInstance>();
         GroupInstancesHidden = false;
+        GroupDiscoveryQuery = string.Empty;
+        GroupSearchResults = new ObservableCollection<Group>();
+        GroupSearchMessage = string.Empty;
         HasLoaded = false;
         ErrorMessage = null;
+    }
+
+    private void ApplyGroupFilter()
+    {
+        var query = GroupFilterText.Trim();
+        var filtered = query.Length == 0
+            ? Groups
+            : Groups.Where(group =>
+                group.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                group.EffectiveId.Contains(query, StringComparison.OrdinalIgnoreCase));
+        VisibleGroups = new ObservableCollection<Group>(filtered);
+    }
+
+    private async Task SearchGroupsAsync()
+    {
+        var query = GroupDiscoveryQuery.Trim();
+        if (query.Length == 0)
+        {
+            return;
+        }
+
+        IsSearchingGroups = true;
+        GroupSearchMessage = "Searching VRChat…";
+        try
+        {
+            var results = await _api.SearchGroupsAsync(query);
+            GroupSearchResults = new ObservableCollection<Group>(
+                results.OrderByDescending(group => group.MemberCount));
+            GroupSearchMessage = results.Count == 0
+                ? "No groups found. Try another name or group ID."
+                : $"{results.Count} group{(results.Count == 1 ? string.Empty : "s")} found.";
+        }
+        catch (VrcApiException ex)
+        {
+            GroupSearchResults = new ObservableCollection<Group>();
+            GroupSearchMessage = query.StartsWith("grp_", StringComparison.OrdinalIgnoreCase)
+                ? "No group found with that ID."
+                : ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            GroupSearchResults = new ObservableCollection<Group>();
+            GroupSearchMessage = "Could not reach VRChat to search groups.";
+        }
+        catch (TaskCanceledException)
+        {
+            GroupSearchResults = new ObservableCollection<Group>();
+            GroupSearchMessage = "The group search timed out. Try again.";
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            GroupSearchResults = new ObservableCollection<Group>();
+            GroupSearchMessage = "Could not search for groups.";
+        }
+        finally
+        {
+            IsSearchingGroups = false;
+        }
     }
 
     private async Task LoadGroupInstancesAsync()

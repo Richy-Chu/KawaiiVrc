@@ -145,6 +145,31 @@ public class GroupInstanceTests
     }
 
     [Fact]
+    public async Task GroupDetailsLoadsInstancesAndJoinsThroughSharedLaunchChooser()
+    {
+        using var api = new VrcApiClient(null, new GroupInstanceHandler());
+        string? chosenLocation = null;
+        string? chosenLabel = null;
+        var vm = new GroupViewModel(api, (location, label) =>
+        {
+            chosenLocation = location;
+            chosenLabel = label;
+        });
+
+        await vm.OpenGroupInfoAsync("grp_1");
+
+        var instance = Assert.Single(vm.GroupInfoInstances);
+        Assert.Equal("The Great Pug", instance.WorldName);
+        Assert.Equal("1 open instance", vm.GroupInfoInstancesText);
+        Assert.True(instance.CanJoin);
+
+        vm.JoinGroupInstanceCommand.Execute(instance);
+
+        Assert.Equal(instance.Location, chosenLocation);
+        Assert.Equal("that group instance", chosenLabel);
+    }
+
+    [Fact]
     public async Task MembershipGroupInstancesSurviveGroupIdNormalization()
     {
         var api = new VrcApiClient(null, new GroupInstanceHandler());
@@ -167,7 +192,7 @@ public class GroupInstanceTests
 
         var instance = Assert.Single(vm.Instances);
         Assert.Equal("The Great Pug", instance.WorldName);
-        Assert.Equal("wrld_test:12345~group(grp_1)", instance.Location);
+        Assert.Equal("wrld_4432ea9b-729c-46e3-8eaf-846aa0a37fdd:12345~group(grp_1)", instance.Location);
     }
 
     [Fact]
@@ -187,13 +212,25 @@ public class GroupInstanceTests
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.EndsWith("/groups/grp_1", System.StringComparison.Ordinal))
+            {
+                return Json("""
+                    {
+                      "id": "grp_1",
+                      "name": "Test Group",
+                      "membershipStatus": "member",
+                      "joinState": "open"
+                    }
+                    """);
+            }
+
             if (path.Contains("/groups/grp_1/instances", System.StringComparison.Ordinal))
             {
                 return Json("""
                     [
                       {
                         "instanceId": "12345~group(grp_1)",
-                        "location": "wrld_test:12345~group(grp_1)",
+                        "location": "wrld_4432ea9b-729c-46e3-8eaf-846aa0a37fdd:12345~group(grp_1)",
                         "memberCount": 6,
                         "world": { "name": "The Great Pug" }
                       }
