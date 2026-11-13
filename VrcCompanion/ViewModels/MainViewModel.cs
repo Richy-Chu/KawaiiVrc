@@ -81,7 +81,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         private set => SetProperty(ref _avatarViewModel, value);
     }
 
-    public MediaLibraryViewModel MediaViewModel { get; }
+    public MediaLibraryViewModel MediaViewModel { get; private set; }
 
     public ChatboxViewModel ChatboxViewModel { get; }
 

@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.ExceptionServices;
-using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -25,48 +23,15 @@ public class MediaThumbnailRenderTests
     [Fact]
     public void Page20ThumbnailsRenderAndRenderAgainAfterLeavingMedia()
     {
-        RunOnSta(() =>
+        WpfTestHost.Run(() =>
         {
-            var application = Application.Current;
-            if (application is null)
-            {
-                application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-            }
-
-            if (!application.Resources.Contains("BoolToVis"))
-            {
-                application.Resources["BoolToVis"] = new BooleanToVisibilityConverter();
-            }
-
-            var root = Path.Combine(
-                Path.GetTempPath(),
-                "vrccompanion-media-render-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(root);
+            var root = CreateRoot();
             Window? window = null;
 
             try
             {
                 var expectedColors = CreatePage20Images(root);
-                var items = Enumerable.Range(0, PictureCount)
-                    .Select(index => new MediaItem(
-                        index >= LastPageStart
-                            ? Path.Combine(root, $"page20-{index:D3}.png")
-                            : Path.Combine(root, $"other-{index:D3}.png"),
-                        "VRChat",
-                        new DateTime(2025, 6, 1).AddMinutes(index)))
-                    .ToList();
-                var group = new MediaGroup(
-                    "VRChat · June 2025",
-                    "VRChat",
-                    new DateTime(2025, 6, 1),
-                    items);
-                var viewModel = new MediaLibraryViewModel(
-                    "C:\\pictures",
-                    (_, _) => new[] { group },
-                    cachePath: Path.Combine(root, "index.json"));
-
-                viewModel.LoadAsync(force: true).GetAwaiter().GetResult();
-                Assert.Equal(20, viewModel.PageCount);
+                var viewModel = CreatePage20ViewModel(root);
 
                 for (var page = 1; page < viewModel.PageCount; page++)
                 {
@@ -76,9 +41,6 @@ public class MediaThumbnailRenderTests
                 var pageCards = viewModel.PageCards.Where(card => card.HasItem).ToList();
                 Assert.Equal(LastPageCount, pageCards.Count);
                 Assert.Equal("Page 20 of 20", viewModel.PageText);
-
-                SynchronizationContext.SetSynchronizationContext(
-                    new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
 
                 var itemsControl = new ItemsControl
                 {
@@ -104,9 +66,7 @@ public class MediaThumbnailRenderTests
                 window.Show();
 
                 WaitForThumbnails(itemsControl);
-                var images = FindVisualChildren<AsyncImage>(itemsControl)
-                    .Where(image => image.SourceUrl is not null)
-                    .ToList();
+                var images = FindThumbnails(itemsControl, expectedColors);
                 Assert.Equal(LastPageCount, images.Count);
                 AssertThumbnailsRendered(images, expectedColors);
                 AssertCacheLimit();
@@ -123,9 +83,7 @@ public class MediaThumbnailRenderTests
 
                 itemsControl.Visibility = Visibility.Visible;
                 WaitForThumbnails(itemsControl);
-                var reenteredImages = FindVisualChildren<AsyncImage>(itemsControl)
-                    .Where(image => image.SourceUrl is not null)
-                    .ToList();
+                var reenteredImages = FindThumbnails(itemsControl, expectedColors);
                 Assert.Equal(LastPageCount, reenteredImages.Count);
                 AssertThumbnailsRendered(reenteredImages, expectedColors);
                 foreach (var image in reenteredImages)
@@ -139,15 +97,107 @@ public class MediaThumbnailRenderTests
             finally
             {
                 window?.Close();
-                try
-                {
-                    Directory.Delete(root, recursive: true);
-                }
-                catch (IOException)
-                {
-                }
+                DeleteRoot(root);
             }
         });
+    }
+
+    [Fact]
+    public void RealMainWindowMediaSectionRendersPage20WithTheSharedTemplate()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var root = CreateRoot();
+            Window? window = null;
+
+            try
+            {
+                var expectedColors = CreatePage20Images(root);
+                var media = CreatePage20ViewModel(root);
+                var shell = new MainViewModel();
+                TestHooks.AttachMediaViewModel(shell, media);
+                TestHooks.MarkInitialized(shell);
+                TestHooks.SetLoggedIn(shell);
+
+                window = new MainWindow(shell);
+                window.Show();
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "media");
+                WaitUntil(
+                    () => !media.IsBusy && media.PictureCount == PictureCount && media.CurrentPage == 1,
+                    "Timed out waiting for the real Media section to finish loading.");
+
+                for (var page = 1; page < media.PageCount; page++)
+                {
+                    media.NextPageCommand.Execute(null);
+                }
+
+                WaitUntil(
+                    () => media.CurrentPage == 20 &&
+                          media.PageText == "Page 20 of 20" &&
+                          !media.HasNextPage,
+                    "Timed out waiting for the real Media section to reach page 20.");
+
+                WaitForThumbnails(window, expectedColors);
+                var images = FindThumbnails(window, expectedColors);
+                Assert.Equal(LastPageCount, images.Count);
+                AssertThumbnailsRendered(images, expectedColors);
+                AssertCacheLimit();
+            }
+            finally
+            {
+                window?.Close();
+                DeleteRoot(root);
+            }
+        });
+    }
+
+    private static string CreateRoot()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "vrccompanion-media-render-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static void DeleteRoot(string root)
+    {
+        try
+        {
+            Directory.Delete(root, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private static MediaLibraryViewModel CreatePage20ViewModel(string root)
+    {
+        var items = Enumerable.Range(0, PictureCount)
+            .Select(index => new MediaItem(
+                index >= LastPageStart
+                    ? Path.Combine(root, $"page20-{index:D3}.png")
+                    : Path.Combine(root, $"other-{index:D3}.png"),
+                "VRChat",
+                new DateTime(2025, 6, 1).AddMinutes(index)))
+            .ToList();
+        var group = new MediaGroup(
+            "VRChat · June 2025",
+            "VRChat",
+            new DateTime(2025, 6, 1),
+            items);
+        var viewModel = new MediaLibraryViewModel(
+            "C:\\pictures",
+            (_, _) => new[] { group },
+            cachePath: Path.Combine(root, "index.json"));
+
+        var load = viewModel.LoadAsync(force: true);
+        WaitUntil(() => load.IsCompleted, "Timed out loading the Media test library.");
+        load.GetAwaiter().GetResult();
+
+        Assert.Equal(20, viewModel.PageCount);
+        return viewModel;
     }
 
     private static Dictionary<string, Color> CreatePage20Images(string root)
@@ -209,13 +259,24 @@ public class MediaThumbnailRenderTests
         return Assert.IsType<DataTemplate>(resources["MediaCardTemplate"]);
     }
 
-    private static void WaitForThumbnails(ItemsControl itemsControl)
+    private static List<AsyncImage> FindThumbnails(
+        DependencyObject root,
+        IReadOnlyDictionary<string, Color> expectedColors)
+        => FindVisualChildren<AsyncImage>(root)
+            .Where(image => image.SourceUrl is not null && expectedColors.ContainsKey(image.SourceUrl))
+            .ToList();
+
+    private static void WaitForThumbnails(
+        DependencyObject root,
+        IReadOnlyDictionary<string, Color>? expectedColors = null)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (true)
         {
-            var images = FindVisualChildren<AsyncImage>(itemsControl)
-                .Where(image => image.SourceUrl is not null)
+            var images = (expectedColors is null
+                    ? FindVisualChildren<AsyncImage>(root)
+                        .Where(image => image.SourceUrl is not null)
+                    : FindThumbnails(root, expectedColors))
                 .ToList();
             if (images.Count == LastPageCount &&
                 images.All(image => image.LoadedImage is not null && image.ImageOpacity > 0.99))
@@ -231,7 +292,7 @@ public class MediaThumbnailRenderTests
                         $"{Path.GetFileName(image.SourceUrl)}: loaded={image.LoadedImage is not null}, visible={image.IsVisible}, loadedEvent={image.IsLoaded}, opacity={image.ImageOpacity:F2}"));
                 Assert.Fail(
                     $"Timed out waiting for the page-20 thumbnails to decode. " +
-                    $"Visible={itemsControl.IsVisible}, images={images.Count}; {details}");
+                    $"Visible={(root as FrameworkElement)?.IsVisible}, images={images.Count}; {details}");
             }
 
             PumpDispatcher();
@@ -336,30 +397,5 @@ public class MediaThumbnailRenderTests
     private sealed class MediaHostData
     {
         public MediaLibraryViewModel MediaViewModel { get; init; } = null!;
-    }
-
-    private static void RunOnSta(Action action)
-    {
-        ExceptionDispatchInfo? failure = null;
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                action();
-            }
-            catch (Exception ex)
-            {
-                failure = ExceptionDispatchInfo.Capture(ex);
-            }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-
-        if (!thread.Join(TimeSpan.FromSeconds(30)))
-        {
-            throw new TimeoutException("Media thumbnail render test did not finish.");
-        }
-
-        failure?.Throw();
     }
 }

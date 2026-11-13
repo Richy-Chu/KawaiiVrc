@@ -25,10 +25,15 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
 
     public MainWindow()
+        : this(new MainViewModel())
+    {
+    }
+
+    internal MainWindow(MainViewModel viewModel)
     {
         InitializeComponent();
 
-        _viewModel = new MainViewModel();
+        _viewModel = viewModel;
         DataContext = _viewModel;
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         ShowSelectedSection();
