@@ -467,14 +467,11 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         }
     }
 
-    private bool ExitFocus()
+    private void ExitFocus()
     {
-        if (_viewModel?.IsFocusMode != true)
+        if (_viewModel?.IsFocusMode == true)
         {
-            return false;
+            _viewModel.IsFocusMode = false;
         }
-
-        _viewModel.IsFocusMode = false;
-        return true;
     }
 }

@@ -15,7 +15,7 @@ public class EmbeddedBrowserEscapeTests
     {
         WpfTestHost.RunAsync(async () =>
         {
-            var host = new TestBrowserHost { IsFocusMode = true };
+            var host = new BraveBrowserViewModel { IsFocusMode = true };
             var browser = new EmbeddedBrowser { DataContext = host };
             var window = new Window
             {
@@ -67,32 +67,5 @@ public class EmbeddedBrowserEscapeTests
                 window.Close();
             }
         });
-    }
-
-    private sealed class TestBrowserHost : IEmbeddedBrowserHost
-    {
-        public event Action<string>? BrowserNavigationRequested
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsBrowserOpen => false;
-
-        public bool IsFocusMode { get; set; }
-
-        public string BrowserUrl => "about:blank";
-
-        public void SetBrowserLocation(string url, string title)
-        {
-        }
-
-        public void SetBrowserError(string message)
-        {
-        }
-
-        public void SetDownloadStatus(string message, bool isError = false, string? downloadedPath = null)
-        {
-        }
     }
 }
