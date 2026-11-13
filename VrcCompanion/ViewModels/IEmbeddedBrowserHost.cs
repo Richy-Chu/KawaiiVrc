@@ -11,6 +11,8 @@ public interface IEmbeddedBrowserHost
 
     bool IsBrowserOpen { get; }
 
+    bool IsFocusMode { get; set; }
+
     string BrowserUrl { get; }
 
     void SetBrowserLocation(string url, string title);

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -116,6 +117,10 @@ public class MainWindowLayoutTests
                     .Single(element => Equals(element.Tag, paneTag));
                 var toggle = FindVisualChildren<ToggleButton>(window)
                     .Single(element => Equals(element.Tag, toggleTag));
+                var focusToolbar = FindVisualChildren<Border>(window)
+                    .Single(element => Equals(element.Tag, "BrowserFocusToolbar"));
+                var normalToolbar = FindVisualChildren<StackPanel>(window)
+                    .Single(element => Equals(element.Tag, "BrowserNormalToolbar"));
                 var expander = FindVisualChildren<Expander>(window).SingleOrDefault();
                 var appHeader = (Border)window.FindName("AppHeader");
                 var appFooter = (Border)window.FindName("AppFooter");
@@ -139,6 +144,8 @@ public class MainWindowLayoutTests
                     Assert.Equal(Visibility.Collapsed, expander.Visibility);
                 }
                 AssertChrome(Visibility.Collapsed);
+                Assert.Equal(Visibility.Visible, focusToolbar.Visibility);
+                Assert.Equal(Visibility.Collapsed, normalToolbar.Visibility);
 
                 shell.SelectedSection = profileSection;
                 window.UpdateLayout();
@@ -153,9 +160,21 @@ public class MainWindowLayoutTests
                     $"Before={normalHeight:F1}, after={pane.ActualHeight:F1}.");
                 AssertChrome(Visibility.Collapsed);
 
-                toggle.IsChecked = false;
+                var escape = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window)!,
+                    0,
+                    Key.Escape)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent
+                };
+                window.RaiseEvent(escape);
                 window.UpdateLayout();
+                Assert.True(escape.Handled, "Escape should exit focus mode.");
+                Assert.False(toggle.IsChecked == true, "Escape should clear the focus toggle.");
                 AssertChrome(Visibility.Visible);
+                Assert.Equal(Visibility.Collapsed, focusToolbar.Visibility);
+                Assert.Equal(Visibility.Visible, normalToolbar.Visibility);
             }
             finally
             {

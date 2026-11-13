@@ -105,6 +105,12 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 return;
             }
+
+            if (_viewModel.ExitBrowserFocus())
+            {
+                e.Handled = true;
+                return;
+            }
         }
 
         base.OnPreviewKeyDown(e);

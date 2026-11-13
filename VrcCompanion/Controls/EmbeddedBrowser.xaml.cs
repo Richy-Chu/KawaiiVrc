@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
@@ -18,6 +19,14 @@ namespace VrcCompanion.Controls;
 /// </summary>
 public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 {
+    private const string EscapeShortcutScript = """
+        window.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            window.chrome.webview.postMessage('browser-focus-escape');
+          }
+        }, true);
+        """;
+
     private IEmbeddedBrowserHost? _viewModel;
     private Task? _initialization;
     private string? _pendingUrl;
@@ -233,6 +242,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
                 core.DownloadStarting -= OnDownloadStarting;
                 core.SourceChanged -= OnSourceChanged;
                 core.DocumentTitleChanged -= OnDocumentTitleChanged;
+                core.WebMessageReceived -= OnWebMessageReceived;
             }
 
             Browser.Dispose();
@@ -258,6 +268,15 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         core.DownloadStarting += OnDownloadStarting;
         core.SourceChanged += OnSourceChanged;
         core.DocumentTitleChanged += OnDocumentTitleChanged;
+        core.WebMessageReceived += OnWebMessageReceived;
+        try
+        {
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(EscapeShortcutScript);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
         UpdateMemoryTargetLevel();
     }
 
@@ -421,5 +440,49 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     private void Refresh_Click(object sender, RoutedEventArgs e)
     {
         Browser.CoreWebView2?.Reload();
+    }
+
+    private void ExitFocus_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is { IsFocusMode: true })
+        {
+            _viewModel.IsFocusMode = false;
+        }
+    }
+
+    private void Browser_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || _viewModel?.IsFocusMode != true)
+        {
+            return;
+        }
+
+        _viewModel.IsFocusMode = false;
+        e.Handled = true;
+    }
+
+    private void OnWebMessageReceived(
+        object? sender,
+        CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        if (_viewModel?.IsFocusMode != true)
+        {
+            return;
+        }
+
+        try
+        {
+            if (string.Equals(
+                    e.TryGetWebMessageAsString(),
+                    "browser-focus-escape",
+                    StringComparison.Ordinal))
+            {
+                _viewModel.IsFocusMode = false;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // The page posted a non-string message; it is not our shortcut.
+        }
     }
 }

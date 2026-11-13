@@ -430,6 +430,29 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _ => false
     };
 
+    public bool ExitBrowserFocus()
+    {
+        if (!IsAnyBrowserFocused)
+        {
+            return false;
+        }
+
+        switch (SelectedSection.Key)
+        {
+            case "brave":
+                BraveBrowserViewModel.IsFocusMode = false;
+                return true;
+            case "discord":
+                DiscordBrowserViewModel.IsFocusMode = false;
+                return true;
+            case "resources":
+                CreatorResourcesViewModel.IsFocusMode = false;
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public NavItem SelectedSection
     {
         get => _selectedSection;

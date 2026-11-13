@@ -8,19 +8,88 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+
+        <StackPanel x:Name="NormalToolbar"
+                    Tag="BrowserNormalToolbar"
+                    Orientation="Horizontal"
+                    Margin="0,0,0,8"
+                    Visibility="{Binding IsFocusMode, Converter={StaticResource InverseBoolToVis}}">
             <Button Content="Back"
                     Style="{StaticResource SmallButton}"
                     Margin="0,0,6,0"
+                    AutomationProperties.Name="Back"
                     Click="Back_Click" />
             <Button Content="Forward"
                     Style="{StaticResource SmallButton}"
                     Margin="0,0,6,0"
+                    AutomationProperties.Name="Forward"
                     Click="Forward_Click" />
             <Button Content="Refresh"
                     Style="{StaticResource SmallButton}"
+                    AutomationProperties.Name="Refresh"
                     Click="Refresh_Click" />
         </StackPanel>
-        <wv2:WebView2 x:Name="Browser" Grid.Row="1" />
+
+        <Border x:Name="FocusToolbar"
+                Tag="BrowserFocusToolbar"
+                Margin="0,0,0,8"
+                Padding="6,4"
+                Background="{StaticResource InputBrush}"
+                BorderBrush="{StaticResource SoftBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Visibility="{Binding IsFocusMode, Converter={StaticResource BoolToVis}}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="&#xE72B;"
+                            Style="{StaticResource SmallButton}"
+                            Padding="7,3"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="12"
+                            Margin="0,0,4,0"
+                            ToolTip="Back"
+                            AutomationProperties.AutomationId="BrowserFocusBackButton"
+                            AutomationProperties.Name="Back"
+                            Click="Back_Click" />
+                    <Button Content="&#xE72A;"
+                            Style="{StaticResource SmallButton}"
+                            Padding="7,3"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="12"
+                            Margin="0,0,4,0"
+                            ToolTip="Forward"
+                            AutomationProperties.AutomationId="BrowserFocusForwardButton"
+                            AutomationProperties.Name="Forward"
+                            Click="Forward_Click" />
+                    <Button Content="&#xE72C;"
+                            Style="{StaticResource SmallButton}"
+                            Padding="7,3"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="12"
+                            ToolTip="Refresh"
+                            AutomationProperties.AutomationId="BrowserFocusRefreshButton"
+                            AutomationProperties.Name="Refresh"
+                            Click="Refresh_Click" />
+                </StackPanel>
+
+                <Button Grid.Column="1"
+                        AutomationProperties.AutomationId="BrowserFocusExitButton"
+                        Content="Exit focus"
+                        Style="{StaticResource SmallButton}"
+                        Padding="8,3"
+                        ToolTip="Exit focus mode (Esc)"
+                        AutomationProperties.Name="Exit focus"
+                        Click="ExitFocus_Click" />
+            </Grid>
+        </Border>
+
+        <wv2:WebView2 x:Name="Browser"
+                     Grid.Row="1"
+                     PreviewKeyDown="Browser_PreviewKeyDown" />
     </Grid>
 </UserControl>
