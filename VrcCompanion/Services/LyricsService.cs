@@ -148,6 +148,52 @@ public sealed record LyricsLookupResult(
     bool TemporaryFailure = false,
     string? Match = null);
 
+public sealed record LyricsCandidate(
+    long Id,
+    string Title,
+    string Artist,
+    string Album,
+    TimeSpan Duration,
+    bool Instrumental,
+    bool HasSyncedLyrics,
+    bool HasPlainLyrics)
+{
+    public string DisplayText => string.IsNullOrWhiteSpace(Artist)
+        ? Title
+        : $"{Artist} — {Title}";
+
+    public string DetailText
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (Duration > TimeSpan.Zero)
+            {
+                parts.Add($"{(int)Duration.TotalMinutes}:{Duration.Seconds:00}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(Album))
+            {
+                parts.Add(Album);
+            }
+
+            parts.Add(Instrumental
+                ? "Instrumental"
+                : HasSyncedLyrics
+                    ? "Synced lyrics"
+                    : HasPlainLyrics
+                        ? "Plain lyrics"
+                        : "No lyrics");
+            return string.Join(" · ", parts);
+        }
+    }
+}
+
+public sealed record LyricsSearchResult(
+    IReadOnlyList<LyricsCandidate> Candidates,
+    string Status,
+    bool TemporaryFailure = false);
+
 /// <summary>Formats a VRChat chatbox line containing the song and, if present, a lyric.</summary>
 public static class ChatboxLyrics
 {
@@ -306,13 +352,7 @@ public sealed class LyricsService
                 return new LyricsLookupResult(null, "This track is instrumental.");
             }
 
-            var lyrics = LyricsDocument.Parse(record.SyncedLyrics, record.PlainLyrics);
-            return lyrics is null
-                ? new LyricsLookupResult(null, "No free lyrics found for this track.")
-                : new LyricsLookupResult(
-                    lyrics,
-                    lyrics.IsSynced ? "Synced lyrics · LRCLIB" : "Plain lyrics · LRCLIB",
-                    Match: DescribeMatch(record, title, artist));
+            return BuildResult(record, title, artist);
         }
         catch (OperationCanceledException)
         {
@@ -332,6 +372,106 @@ public sealed class LyricsService
         }
     }
 
+    public async Task<LyricsSearchResult> SearchCandidatesAsync(
+        string query,
+        CancellationToken cancellationToken = default)
+    {
+        query = query.Trim();
+        if (query.Length == 0)
+        {
+            return new LyricsSearchResult(Array.Empty<LyricsCandidate>(), "Type a song or artist to search LRCLIB.");
+        }
+
+        try
+        {
+            using var response = await _http.GetAsync(
+                $"/api/search?q={Uri.EscapeDataString(query)}",
+                cancellationToken);
+            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            {
+                return new LyricsSearchResult(
+                    Array.Empty<LyricsCandidate>(),
+                    "The free lyrics service is busy. Try again shortly.",
+                    true);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new LyricsSearchResult(Array.Empty<LyricsCandidate>(), "Could not search LRCLIB.");
+            }
+
+            var records = await response.Content.ReadFromJsonAsync<List<LrcLibRecord>>(
+                cancellationToken: cancellationToken);
+            var candidates = (records ?? new List<LrcLibRecord>())
+                .Where(record =>
+                    record.Id > 0 &&
+                    !string.IsNullOrWhiteSpace(record.TrackName) &&
+                    (record.Instrumental ||
+                     !string.IsNullOrWhiteSpace(record.SyncedLyrics) ||
+                     !string.IsNullOrWhiteSpace(record.PlainLyrics)))
+                .GroupBy(record => record.Id)
+                .Select(group => group.First())
+                .Take(30)
+                .Select(ToCandidate)
+                .ToList();
+
+            return candidates.Count == 0
+                ? new LyricsSearchResult(candidates, "No LRCLIB matches found. Try a different search.")
+                : new LyricsSearchResult(
+                    candidates,
+                    $"{candidates.Count} LRCLIB match{(candidates.Count == 1 ? string.Empty : "es")} found. Pick the right one.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return new LyricsSearchResult(
+                Array.Empty<LyricsCandidate>(),
+                "Could not reach the free lyrics service.",
+                true);
+        }
+    }
+
+    public async Task<LyricsLookupResult> GetByIdAsync(
+        long id,
+        string title,
+        string artist,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var response = await _http.GetAsync($"/api/get/{id}", cancellationToken);
+            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            {
+                return new LyricsLookupResult(
+                    null,
+                    "The free lyrics service is busy. Try again shortly.",
+                    true);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new LyricsLookupResult(null, "That LRCLIB match could not be loaded.");
+            }
+
+            var record = await response.Content.ReadFromJsonAsync<LrcLibRecord>(
+                cancellationToken: cancellationToken);
+            return record is null
+                ? new LyricsLookupResult(null, "That LRCLIB match could not be loaded.")
+                : BuildResult(record, title, artist);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return new LyricsLookupResult(null, "Could not reach the free lyrics service.", true);
+        }
+    }
+
     private static bool DurationMatches(LrcLibRecord record, TimeSpan duration) =>
         duration <= TimeSpan.Zero ||
         (record.Duration > 0 && Math.Abs(record.Duration - duration.TotalSeconds) <= 15);
@@ -348,6 +488,32 @@ public sealed class LyricsService
 
         return name;
     }
+
+    private static LyricsLookupResult BuildResult(LrcLibRecord record, string title, string artist)
+    {
+        if (record.Instrumental)
+        {
+            return new LyricsLookupResult(null, "This track is instrumental.", Match: DescribeMatch(record, title, artist));
+        }
+
+        var lyrics = LyricsDocument.Parse(record.SyncedLyrics, record.PlainLyrics);
+        return lyrics is null
+            ? new LyricsLookupResult(null, "No free lyrics found for this track.")
+            : new LyricsLookupResult(
+                lyrics,
+                lyrics.IsSynced ? "Synced lyrics · LRCLIB" : "Plain lyrics · LRCLIB",
+                Match: DescribeMatch(record, title, artist));
+    }
+
+    private static LyricsCandidate ToCandidate(LrcLibRecord record) => new(
+        record.Id,
+        record.TrackName?.Trim() ?? string.Empty,
+        record.ArtistName?.Trim() ?? string.Empty,
+        record.AlbumName?.Trim() ?? string.Empty,
+        record.Duration > 0 ? TimeSpan.FromSeconds(record.Duration) : TimeSpan.Zero,
+        record.Instrumental,
+        !string.IsNullOrWhiteSpace(record.SyncedLyrics),
+        !string.IsNullOrWhiteSpace(record.PlainLyrics));
 
     internal static IEnumerable<(string Title, string Artist)> BuildCandidates(string title, string artist)
     {
@@ -498,11 +664,17 @@ public sealed class LyricsService
 
     private sealed class LrcLibRecord
     {
+        [JsonPropertyName("id")]
+        public long Id { get; set; }
+
         [JsonPropertyName("trackName")]
         public string? TrackName { get; set; }
 
         [JsonPropertyName("artistName")]
         public string? ArtistName { get; set; }
+
+        [JsonPropertyName("albumName")]
+        public string? AlbumName { get; set; }
 
         [JsonPropertyName("duration")]
         public double Duration { get; set; }

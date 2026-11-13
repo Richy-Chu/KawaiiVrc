@@ -68,6 +68,40 @@ public class ChatboxLyricsPauseTests
         Assert.Contains("Ain't My Fault", vm.LyricsMatchText);
     }
 
+    [Fact]
+    public async Task ManualSearchShowsCandidatesAndAppliesTheSelectedMatch()
+    {
+        using var fixture = new ViewModelFixture();
+        var handler = new ManualSearchHandler();
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://lrclib.net")
+        };
+        var lyrics = new LyricsService(http);
+        var vm = fixture.CreateViewModel(lyrics);
+        vm.SetTrackForTest(new NowPlayingInfo(
+            "Ain't My Fault",
+            "Zara Larsson",
+            "YouTube",
+            Duration: TimeSpan.FromSeconds(223)));
+        await vm.LyricsLoadTaskForTest!;
+
+        vm.LyricsSearchQuery = "Ain't My Fault";
+        await vm.SearchLyricsForTestAsync();
+
+        Assert.Equal(2, vm.LyricsCandidates.Count);
+        Assert.Null(vm.SelectedLyricsCandidate);
+        Assert.Equal("Zara Larsson — Ain't My Fault", vm.LyricsCandidates[0].DisplayText);
+        Assert.Contains("Synced lyrics", vm.LyricsCandidates[0].DetailText);
+
+        vm.SelectedLyricsCandidate = vm.LyricsCandidates[1];
+        await vm.UseSelectedLyricsForTestAsync();
+
+        Assert.Equal("Selected line", vm.LyricsText);
+        Assert.Contains("Selected Artist — Selected Song", vm.LyricsMatchText);
+        Assert.Contains("Using", vm.LyricsSearchStatusText);
+    }
+
     private sealed class ViewModelFixture : IDisposable
     {
         private readonly string _settingsPath =
@@ -123,6 +157,36 @@ public class ChatboxLyricsPauseTests
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
             });
         }
+    }
+
+    private sealed class ManualSearchHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            return Task.FromResult(path switch
+            {
+                "/api/search" => Json("""
+                    [
+                      {"id":1,"trackName":"Ain't My Fault","artistName":"Zara Larsson","albumName":"So Good","duration":223.0,"instrumental":false,"plainLyrics":null,"syncedLyrics":"[00:01.00]Automatic line"},
+                      {"id":2,"trackName":"Selected Song","artistName":"Selected Artist","albumName":"Selected Album","duration":224.0,"instrumental":false,"plainLyrics":null,"syncedLyrics":"[00:01.00]Selected line"}
+                    ]
+                    """),
+                "/api/get/2" => Json("""
+                    {"id":2,"trackName":"Selected Song","artistName":"Selected Artist","albumName":"Selected Album","duration":224.0,"instrumental":false,"plainLyrics":null,"syncedLyrics":"[00:01.00]Selected line"}
+                    """),
+                _ => Json("""
+                    {"id":1,"trackName":"Ain't My Fault","artistName":"Zara Larsson","albumName":"So Good","duration":223.0,"instrumental":false,"plainLyrics":null,"syncedLyrics":"[00:01.00]Automatic line"}
+                    """)
+            });
+        }
+
+        private static HttpResponseMessage Json(string json) => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
     }
 
     private sealed class FakeChatboxSender : IChatboxSender

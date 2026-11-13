@@ -34,6 +34,13 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private string _lyricsStatusText = "Play a track to look for free lyrics.";
     private string _lyricsMatchText = string.Empty;
     private Task? _lyricsLoadTask;
+    private string _lyricsSearchQuery = string.Empty;
+    private string _lyricsSearchStatusText = string.Empty;
+    private LyricsCandidate? _selectedLyricsCandidate;
+    private bool _isSearchingLyrics;
+    private bool _isApplyingLyrics;
+    private CancellationTokenSource? _lyricsSearchCancellation;
+    private CancellationTokenSource? _lyricsSelectionCancellation;
     private int _plainLyricIndex;
     private string? _lastVrchatLyric;
     private DateTime _lastOscSend = DateTime.MinValue;
@@ -118,6 +125,14 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         SendLyricCommand = new RelayCommand(SendLyric, () => HasLyrics);
         ResumeLyricsCommand = new RelayCommand(ResumeLyricsNow, () => ShowLyricsOnVrchat && CurrentTrack is not null);
         RetryLyricsCommand = new RelayCommand(RetryLyrics, () => CurrentTrack is not null);
+        SearchLyricsCommand = new AsyncRelayCommand(
+            SearchLyricsAsync,
+            () => !IsSearchingLyrics &&
+                  (!string.IsNullOrWhiteSpace(LyricsSearchQuery) || CurrentTrack is not null));
+        UseSelectedLyricsCommand = new AsyncRelayCommand(
+            UseSelectedLyricsAsync,
+            () => SelectedLyricsCandidate is not null && !IsApplyingLyrics);
+        LyricsCandidates = new ObservableCollection<LyricsCandidate>();
 
         if (startTimers)
         {
@@ -135,6 +150,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     public ObservableCollection<string> RotationMessages { get; }
 
+    public ObservableCollection<LyricsCandidate> LyricsCandidates { get; }
+
     public RelayCommand SendCommand { get; }
 
     public RelayCommand AddToRotationCommand { get; }
@@ -150,6 +167,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     public RelayCommand ResumeLyricsCommand { get; }
 
     public RelayCommand RetryLyricsCommand { get; }
+
+    public AsyncRelayCommand SearchLyricsCommand { get; }
+
+    public AsyncRelayCommand UseSelectedLyricsCommand { get; }
 
     public NowPlayingInfo? CurrentTrack
     {
@@ -170,6 +191,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             AddNowPlayingToRotationCommand.RaiseCanExecuteChanged();
             ResumeLyricsCommand.RaiseCanExecuteChanged();
             RetryLyricsCommand.RaiseCanExecuteChanged();
+            SearchLyricsCommand.RaiseCanExecuteChanged();
+            UseSelectedLyricsCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(LyricsText));
             OnPropertyChanged(nameof(HasLyrics));
             OnPropertyChanged(nameof(RemainingText));
@@ -443,6 +466,62 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     public bool HasLyricsMatch => _lyricsMatchText.Length > 0;
 
+    public string LyricsSearchQuery
+    {
+        get => _lyricsSearchQuery;
+        set
+        {
+            if (SetProperty(ref _lyricsSearchQuery, value))
+            {
+                SearchLyricsCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string LyricsSearchStatusText
+    {
+        get => _lyricsSearchStatusText;
+        private set => SetProperty(ref _lyricsSearchStatusText, value);
+    }
+
+    public LyricsCandidate? SelectedLyricsCandidate
+    {
+        get => _selectedLyricsCandidate;
+        set
+        {
+            if (SetProperty(ref _selectedLyricsCandidate, value))
+            {
+                UseSelectedLyricsCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool IsSearchingLyrics
+    {
+        get => _isSearchingLyrics;
+        private set
+        {
+            if (SetProperty(ref _isSearchingLyrics, value))
+            {
+                SearchLyricsCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool IsApplyingLyrics
+    {
+        get => _isApplyingLyrics;
+        private set
+        {
+            if (SetProperty(ref _isApplyingLyrics, value))
+            {
+                UseSelectedLyricsCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool HasLyricsCandidates => LyricsCandidates.Count > 0;
+
     public bool HasLyrics => _lyrics?.HasLyrics == true;
 
     public int RotationSeconds
@@ -623,6 +702,134 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         StatusText = "Retrying lyrics…";
     }
 
+    private async Task SearchLyricsAsync()
+    {
+        var query = LyricsSearchQuery.Trim();
+        if (query.Length == 0 && CurrentTrack is not null)
+        {
+            query = string.Join(" ", new[] { CurrentTrack.Artist, CurrentTrack.Title }
+                .Where(part => !string.IsNullOrWhiteSpace(part)));
+        }
+
+        if (query.Length == 0)
+        {
+            LyricsSearchStatusText = "Type a song or artist to search LRCLIB.";
+            return;
+        }
+
+        LyricsSearchQuery = query;
+        _lyricsSearchCancellation?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        _lyricsSearchCancellation = cancellation;
+        IsSearchingLyrics = true;
+        LyricsSearchStatusText = "Searching LRCLIB…";
+        LyricsCandidates.Clear();
+        SelectedLyricsCandidate = null;
+        OnPropertyChanged(nameof(HasLyricsCandidates));
+
+        try
+        {
+            var result = await _lyricsService.SearchCandidatesAsync(query, cancellation.Token);
+            if (cancellation.IsCancellationRequested || _lyricsSearchCancellation != cancellation)
+            {
+                return;
+            }
+
+            foreach (var candidate in result.Candidates)
+            {
+                LyricsCandidates.Add(candidate);
+            }
+
+            LyricsSearchStatusText = result.Status;
+            OnPropertyChanged(nameof(HasLyricsCandidates));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            LyricsSearchStatusText = "Could not search LRCLIB.";
+        }
+        finally
+        {
+            if (_lyricsSearchCancellation == cancellation)
+            {
+                IsSearchingLyrics = false;
+            }
+        }
+    }
+
+    private async Task UseSelectedLyricsAsync()
+    {
+        var candidate = SelectedLyricsCandidate;
+        var track = CurrentTrack;
+        if (candidate is null)
+        {
+            return;
+        }
+
+        if (track is null)
+        {
+            LyricsSearchStatusText = "Play a track before choosing lyrics.";
+            return;
+        }
+
+        var trackKey = LyricsTrackKey(track);
+        _lyricsSelectionCancellation?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        _lyricsSelectionCancellation = cancellation;
+        IsApplyingLyrics = true;
+        LyricsSearchStatusText = $"Loading {candidate.DisplayText}…";
+
+        try
+        {
+            var result = await _lyricsService.GetByIdAsync(
+                candidate.Id,
+                candidate.Title,
+                candidate.Artist,
+                cancellation.Token);
+            if (cancellation.IsCancellationRequested ||
+                CurrentTrack is null ||
+                LyricsTrackKey(CurrentTrack) != trackKey)
+            {
+                return;
+            }
+
+            if (result.Lyrics is null)
+            {
+                LyricsSearchStatusText = result.Status;
+                return;
+            }
+
+            _lyrics = result.Lyrics;
+            _lastVrchatLyric = null;
+            SetLyricsMatch(result.Match);
+            LyricsStatusText = result.Status;
+            LyricsSearchStatusText = $"Using {candidate.DisplayText}.";
+            OnPropertyChanged(nameof(LyricsText));
+            OnPropertyChanged(nameof(HasLyrics));
+            SendLyricCommand.RaiseCanExecuteChanged();
+            if (ShowLyricsOnVrchat)
+            {
+                UpdateVrchatLyrics(force: true);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            LyricsSearchStatusText = "Could not load that LRCLIB match.";
+        }
+        finally
+        {
+            if (_lyricsSelectionCancellation == cancellation)
+            {
+                IsApplyingLyrics = false;
+            }
+        }
+    }
+
     private void ResumeLyricsNow()
     {
         _lyricsPause.Resume();
@@ -664,6 +871,13 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             _lyrics = null;
             _lyricsTrackKey = null;
             _lyricsLoadTask = null;
+            _lyricsSearchCancellation?.Cancel();
+            _lyricsSelectionCancellation?.Cancel();
+            LyricsCandidates.Clear();
+            SelectedLyricsCandidate = null;
+            LyricsSearchQuery = string.Empty;
+            LyricsSearchStatusText = string.Empty;
+            OnPropertyChanged(nameof(HasLyricsCandidates));
             SetLyricsMatch(null);
             LyricsStatusText = "Play a track to look for free lyrics.";
             OnPropertyChanged(nameof(LyricsText));
@@ -672,7 +886,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var key = $"{track.Title}\u001f{track.Artist}\u001f{(track.Duration > TimeSpan.Zero ? "known" : "unknown")}";
+        var key = LyricsTrackKey(track);
         if (!force && key == _lyricsTrackKey)
         {
             OnPropertyChanged(nameof(LyricsText));
@@ -682,7 +896,23 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _lyricsCancellation?.Cancel();
         _lyricsTrackKey = key;
         _lastVrchatLyric = null;
+        ResetLyricsSearch(track);
         _lyricsLoadTask = LoadLyricsAsync(track, key);
+    }
+
+    private static string LyricsTrackKey(NowPlayingInfo track) =>
+        $"{track.Title}\u001f{track.Artist}\u001f{(track.Duration > TimeSpan.Zero ? "known" : "unknown")}";
+
+    private void ResetLyricsSearch(NowPlayingInfo track)
+    {
+        _lyricsSearchCancellation?.Cancel();
+        _lyricsSelectionCancellation?.Cancel();
+        LyricsCandidates.Clear();
+        SelectedLyricsCandidate = null;
+        LyricsSearchStatusText = string.Empty;
+        OnPropertyChanged(nameof(HasLyricsCandidates));
+        LyricsSearchQuery = string.Join(" ", new[] { track.Artist, track.Title }
+            .Where(part => !string.IsNullOrWhiteSpace(part)));
     }
 
     private async Task LoadLyricsAsync(NowPlayingInfo track, string key)
@@ -774,6 +1004,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     internal void SetTrackForTest(NowPlayingInfo? track) => CurrentTrack = track;
 
     internal Task? LyricsLoadTaskForTest => _lyricsLoadTask;
+
+    internal Task SearchLyricsForTestAsync() => SearchLyricsAsync();
+
+    internal Task UseSelectedLyricsForTestAsync() => UseSelectedLyricsAsync();
 
     private void SetLyricsMatch(string? match)
     {
