@@ -18,6 +18,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
     private string _browserError = string.Empty;
     private string _downloadStatus = string.Empty;
     private bool _downloadStatusIsError;
+    private string _downloadedFilePath = string.Empty;
 
     public CreatorResourcesViewModel()
     {
@@ -76,6 +77,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
         SearchCommand = new RelayCommand<CreatorResource>(Search);
         BrowseCommand = new RelayCommand<CreatorResource>(Browse);
         CloseBrowserCommand = new RelayCommand(CloseBrowser);
+        OpenDownloadFolderCommand = new RelayCommand(OpenDownloadFolder);
     }
 
     /// <summary>Raised when a page should be loaded in the embedded WebView2.</summary>
@@ -125,6 +127,20 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
         private set => SetProperty(ref _downloadStatusIsError, value);
     }
 
+    public string DownloadedFilePath
+    {
+        get => _downloadedFilePath;
+        private set
+        {
+            if (SetProperty(ref _downloadedFilePath, value))
+            {
+                OnPropertyChanged(nameof(CanOpenDownloadFolder));
+            }
+        }
+    }
+
+    public bool CanOpenDownloadFolder => !string.IsNullOrWhiteSpace(DownloadedFilePath);
+
     public RelayCommand<CreatorResource> OpenCommand { get; }
 
     public RelayCommand<CreatorResource> SearchCommand { get; }
@@ -133,13 +149,16 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
 
     public RelayCommand CloseBrowserCommand { get; }
 
+    public RelayCommand OpenDownloadFolderCommand { get; }
+
     public void SetBrowserError(string message)
         => BrowserError = message;
 
-    public void SetDownloadStatus(string message, bool isError = false)
+    public void SetDownloadStatus(string message, bool isError = false, string? downloadedPath = null)
     {
         DownloadStatus = message;
         DownloadStatusIsError = isError;
+        DownloadedFilePath = downloadedPath ?? string.Empty;
     }
 
     private void Open(CreatorResource? resource)
@@ -184,4 +203,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
         BrowserError = string.Empty;
         SetDownloadStatus(string.Empty);
     }
+
+    private void OpenDownloadFolder()
+        => LaunchService.OpenFolder(DownloadedFilePath);
 }

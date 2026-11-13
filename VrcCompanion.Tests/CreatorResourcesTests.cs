@@ -89,6 +89,23 @@ public class CreatorResourcesTests
         Assert.Equal(7, vm.Resources.Count);
     }
 
+    [Fact]
+    public void CompletedDownloadExposesItsFolderAction()
+    {
+        var vm = new CreatorResourcesViewModel();
+        var path = @"D:\Downloads\avatar.zip";
+
+        vm.SetDownloadStatus($"Downloaded to {path}", downloadedPath: path);
+
+        Assert.True(vm.CanOpenDownloadFolder);
+        Assert.Equal(path, vm.DownloadedFilePath);
+
+        vm.SetDownloadStatus("Download failed: access was denied.", true);
+
+        Assert.False(vm.CanOpenDownloadFolder);
+        Assert.Empty(vm.DownloadedFilePath);
+    }
+
     private static CreatorResource Resource(CreatorResourcesViewModel vm, string name)
         => vm.Resources.Single(resource => resource.Name == name);
 }

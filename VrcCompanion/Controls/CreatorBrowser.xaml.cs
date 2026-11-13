@@ -173,7 +173,9 @@ public partial class CreatorBrowser : UserControl
         switch (operation.State)
         {
             case CoreWebView2DownloadState.Completed:
-                SetDownloadStatus($"Downloaded to {operation.ResultFilePath}");
+                SetDownloadStatus(
+                    $"Downloaded to {operation.ResultFilePath}",
+                    downloadedPath: operation.ResultFilePath);
                 break;
             case CoreWebView2DownloadState.Interrupted
                 when operation.InterruptReason == CoreWebView2DownloadInterruptReason.UserCanceled:
@@ -185,15 +187,15 @@ public partial class CreatorBrowser : UserControl
         }
     }
 
-    private void SetDownloadStatus(string message, bool isError = false)
+    private void SetDownloadStatus(string message, bool isError = false, string? downloadedPath = null)
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.BeginInvoke(() => _viewModel?.SetDownloadStatus(message, isError));
+            Dispatcher.BeginInvoke(() => _viewModel?.SetDownloadStatus(message, isError, downloadedPath));
             return;
         }
 
-        _viewModel?.SetDownloadStatus(message, isError);
+        _viewModel?.SetDownloadStatus(message, isError, downloadedPath);
     }
 
     private static string Describe(CoreWebView2DownloadInterruptReason reason)

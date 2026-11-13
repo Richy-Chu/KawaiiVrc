@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
@@ -58,6 +59,21 @@ public static class LaunchService
     public static bool IsWebUrl(string? url)
         => Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    /// <summary>Opens Explorer with the downloaded file selected.</summary>
+    public static bool OpenFolder(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            return false;
+        }
+
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"")
+        {
+            UseShellExecute = true
+        });
+        return true;
+    }
 
     // wrld_ plus a UUID, then an instance id made of the characters VRChat uses
     // (numbers, ~region(us), ~private(usr_…)) and nothing that could rewrite the
