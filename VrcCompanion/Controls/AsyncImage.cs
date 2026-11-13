@@ -41,6 +41,8 @@ public sealed class AsyncImage : FrameworkElement
     private ImageSource? _image;
     private bool _isLoaded;
 
+    internal ImageSource? LoadedImage => _image;
+
     public AsyncImage()
     {
         SnapsToDevicePixels = true;

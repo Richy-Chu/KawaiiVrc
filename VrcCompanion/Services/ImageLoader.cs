@@ -36,6 +36,19 @@ public sealed class ImageLoader : IDisposable
     private readonly object _memoryGate = new();
     private const long MaxMemoryBytes = 64L * 1024 * 1024;
     private const int MaxMemoryEntries = 96;
+
+    internal static long MemoryCacheLimitBytes => MaxMemoryBytes;
+
+    internal long MemoryCacheBytes
+    {
+        get
+        {
+            lock (_memoryGate)
+            {
+                return _memoryBytes;
+            }
+        }
+    }
     private long _memoryBytes;
     private readonly SemaphoreSlim _gate = new(4, 4);
     private readonly SemaphoreSlim _fileGate = new(3, 3);
