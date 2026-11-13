@@ -62,6 +62,32 @@ public class LyricsTests
     }
 
     [Fact]
+    public void MediaTimelineWithZeroPositionAdvancesFromLastUpdated()
+    {
+        var lastUpdated = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var position = NowPlayingService.ResolveTimelinePosition(
+            TimeSpan.Zero,
+            lastUpdated,
+            lastUpdated.AddSeconds(75),
+            TimeSpan.FromMinutes(3));
+
+        Assert.Equal(75, position.TotalSeconds, 3);
+    }
+
+    [Fact]
+    public void MediaTimelineIsClampedToTheTrackEnd()
+    {
+        var lastUpdated = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var position = NowPlayingService.ResolveTimelinePosition(
+            TimeSpan.FromSeconds(10),
+            lastUpdated,
+            lastUpdated.AddSeconds(500),
+            TimeSpan.FromMinutes(3));
+
+        Assert.Equal(TimeSpan.FromMinutes(3), position);
+    }
+
+    [Fact]
     public void PlaybackPositionKeepsAdvancingWhenMediaSessionIsStale()
     {
         var estimator = new PlaybackPositionEstimator();
@@ -136,6 +162,17 @@ public class LyricsTests
         policy.Resume();
 
         Assert.False(policy.IsPaused(now.AddSeconds(1)));
+    }
+
+    [Fact]
+    public void BrowserTitleWithChannelSuffixProducesArtistAndTrackCandidates()
+    {
+        var candidates = LyricsService.BuildCandidates(
+            "Zara Larsson - Ain't My Fault (Official Video) - ZaraLarssonMusicVEVO",
+            "");
+
+        Assert.Contains(candidates, candidate =>
+            candidate.Title == "Ain't My Fault" && candidate.Artist == "Zara Larsson");
     }
 
     [Theory]

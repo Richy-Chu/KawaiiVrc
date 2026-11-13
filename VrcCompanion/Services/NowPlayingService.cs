@@ -182,7 +182,11 @@ public sealed class NowPlayingService
             {
                 info = info with
                 {
-                    Position = timeline.Position,
+                    Position = ResolveTimelinePosition(
+                        timeline.Position,
+                        timeline.LastUpdatedTime,
+                        DateTimeOffset.UtcNow,
+                        timeline.EndTime),
                     Duration = timeline.EndTime > timeline.StartTime
                         ? timeline.EndTime - timeline.StartTime
                         : TimeSpan.Zero
@@ -197,6 +201,31 @@ public sealed class NowPlayingService
             // Windows builds and can fail while a player is starting.
             return null;
         }
+    }
+
+    /// <summary>
+    /// Some players (notably Chromium) report a timeline only once and leave
+    /// Position at zero. LastUpdatedTime lets us advance to the real position.
+    /// </summary>
+    internal static TimeSpan ResolveTimelinePosition(
+        TimeSpan reportedPosition,
+        DateTimeOffset lastUpdated,
+        DateTimeOffset now,
+        TimeSpan end)
+    {
+        var elapsed = now - lastUpdated;
+        if (elapsed < TimeSpan.Zero)
+        {
+            elapsed = TimeSpan.Zero;
+        }
+
+        var position = reportedPosition + elapsed;
+        if (end > TimeSpan.Zero && position > end)
+        {
+            position = end;
+        }
+
+        return position;
     }
 }
 

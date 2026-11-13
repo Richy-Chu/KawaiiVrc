@@ -64,11 +64,22 @@ public static class OscMessage
     }
 }
 
+public interface IChatboxSender
+{
+    string Host { get; set; }
+
+    int Port { get; set; }
+
+    void SendChatbox(string text, bool sendImmediately = true);
+
+    void SendTyping(bool typing);
+}
+
 /// <summary>
 /// Sends chatbox messages to the local VRChat client over UDP OSC.
 /// OSC must be enabled in VRChat (Action Menu → Options → OSC).
 /// </summary>
-public sealed class OscChatboxService : IDisposable
+public sealed class OscChatboxService : IChatboxSender, IDisposable
 {
     private readonly UdpClient _udp = new();
     private readonly object _sync = new();

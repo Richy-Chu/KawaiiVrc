@@ -14,7 +14,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     private readonly SettingsStore _store;
     private readonly CompanionSettings _settings;
-    private readonly OscChatboxService _osc;
+    private readonly IChatboxSender _osc;
     private readonly NowPlayingService _nowPlaying;
     private readonly LyricsService _lyricsService;
     private readonly DispatcherTimer _timer;
@@ -47,9 +47,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     public ChatboxViewModel(
         SettingsStore? store = null,
-        OscChatboxService? osc = null,
+        IChatboxSender? osc = null,
         NowPlayingService? nowPlaying = null,
-        LyricsService? lyrics = null)
+        LyricsService? lyrics = null,
+        bool startTimers = true)
     {
         _store = store ?? SettingsStore.Shared;
         _settings = _store.Settings;
@@ -97,9 +98,14 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _lyricsDisplayTimer.Tick += (_, _) =>
         {
             OnPropertyChanged(nameof(LyricsText));
+            OnPropertyChanged(nameof(RemainingText));
             UpdateVrchatLyrics();
         };
-        _lyricsDisplayTimer.Start();
+        if (startTimers)
+        {
+            _lyricsDisplayTimer.Start();
+        }
+
         _statusText = "Ready. Enable OSC in VRChat: Action Menu → Options → OSC.";
 
         SendCommand = new RelayCommand(Send, () => !string.IsNullOrWhiteSpace(MessageText));
@@ -110,13 +116,11 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         SendLyricCommand = new RelayCommand(SendLyric, () => HasLyrics);
         ResumeLyricsCommand = new RelayCommand(ResumeLyricsNow, () => ShowLyricsOnVrchat && CurrentTrack is not null);
 
-        _nowPlayingTimer.Start();
-        if (_showLyricsOnVrchat)
+        if (startTimers)
         {
-            _lyricsDisplayTimer.Start();
+            _nowPlayingTimer.Start();
+            _ = PollNowPlayingAsync();
         }
-
-        _ = PollNowPlayingAsync();
 
         if (_settings.ChatboxRotateEnabled && RotationMessages.Count > 0)
         {
@@ -162,6 +166,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             ResumeLyricsCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(LyricsText));
             OnPropertyChanged(nameof(HasLyrics));
+            OnPropertyChanged(nameof(RemainingText));
             OnPropertyChanged(nameof(IsLyricsPaused));
             TrackChanged();
         }
@@ -170,6 +175,25 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     public string NowPlayingText => CurrentTrack?.DisplayText ?? "Nothing playing right now.";
 
     public string NowPlayingSource => CurrentTrack?.Source ?? string.Empty;
+
+    public string RemainingText
+    {
+        get
+        {
+            if (CurrentTrack is null || CurrentTrack.Duration <= TimeSpan.Zero)
+            {
+                return string.Empty;
+            }
+
+            var remaining = CurrentTrack.Duration - EstimatedPosition();
+            if (remaining < TimeSpan.Zero)
+            {
+                remaining = TimeSpan.Zero;
+            }
+
+            return $"{(int)remaining.TotalMinutes}:{remaining.Seconds:00} left";
+        }
+    }
 
     public bool HasNowPlaying => CurrentTrack is not null;
 
@@ -563,10 +587,12 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             _osc.SendChatbox(message);
             _lastOscSend = now;
             _lastVrchatLyric = message;
-            var preview = message.Length > 52 ? message[..52] + "…" : message;
+            var preview = line is null
+                ? message.Length > 52 ? message[..52] + "…" : message
+                : line.Length > 58 ? line[..58] + "…" : line;
             StatusText = line is null
                 ? $"Now playing on VRChat: {preview}"
-                : $"Song + lyrics on VRChat: {preview}";
+                : $"VRChat lyric: {preview}";
         }
         catch (Exception ex)
         {
@@ -714,6 +740,9 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>Runs one real rotation tick (for tests).</summary>
+    internal void RotateNextForTest() => RotateNext();
+
     private void RemoveMessage(string? message)
     {
         if (message is null)
@@ -822,7 +851,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _lyricsDisplayTimer.Stop();
         _lyricsCancellation?.Cancel();
         _lyricsCancellation?.Dispose();
-        _osc.Dispose();
+        if (_osc is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
     }
 }
 

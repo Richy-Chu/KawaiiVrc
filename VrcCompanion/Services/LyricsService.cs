@@ -236,14 +236,20 @@ public sealed class LyricsService
     {
         try
         {
+            var candidates = BuildCandidates(title, artist).ToList();
             LrcLibRecord? record = null;
-            if (!string.IsNullOrWhiteSpace(artist))
+
+            foreach (var candidate in candidates.Where(candidate => !string.IsNullOrWhiteSpace(candidate.Artist)))
             {
-                var url = $"/api/get?track_name={Uri.EscapeDataString(title)}&artist_name={Uri.EscapeDataString(artist)}";
+                var url = $"/api/get?track_name={Uri.EscapeDataString(candidate.Title)}&artist_name={Uri.EscapeDataString(candidate.Artist)}";
                 using var response = await Http.GetAsync(url, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
                     record = await response.Content.ReadFromJsonAsync<LrcLibRecord>(cancellationToken: cancellationToken);
+                    if (record is not null)
+                    {
+                        break;
+                    }
                 }
                 else if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
                 {
@@ -251,7 +257,18 @@ public sealed class LyricsService
                 }
             }
 
-            record ??= await SearchAsync(title, artist, cancellationToken);
+            if (record is null)
+            {
+                foreach (var candidate in candidates)
+                {
+                    record = await SearchAsync(candidate.Title, candidate.Artist, cancellationToken);
+                    if (record is not null)
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (record is null)
             {
                 return new LyricsLookupResult(null, "No free lyrics found for this track.");
@@ -276,6 +293,39 @@ public sealed class LyricsService
         catch
         {
             return new LyricsLookupResult(null, "Could not reach the free lyrics service.");
+        }
+    }
+
+    internal static IEnumerable<(string Title, string Artist)> BuildCandidates(string title, string artist)
+    {
+        var clean = CleanTrackTitle(title, artist);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (seen.Add($"{clean}\u001f{artist.Trim()}"))
+        {
+            yield return (clean, artist.Trim());
+        }
+
+        var parts = clean.Split(" - ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length >= 2)
+        {
+            if (!string.IsNullOrWhiteSpace(artist) && seen.Add($"{parts[0]}\u001f{artist}"))
+            {
+                // Browser titles often append the channel: "Song - Channel".
+                yield return (parts[0], artist.Trim());
+            }
+            else if (string.IsNullOrWhiteSpace(artist))
+            {
+                var inferredArtist = parts[0];
+                var inferredTitle = parts.Length >= 3
+                    ? string.Join(" - ", parts[1..^1])
+                    : parts[1];
+
+                if (seen.Add($"{inferredTitle}\u001f{inferredArtist}"))
+                {
+                    yield return (inferredTitle, inferredArtist);
+                }
+            }
         }
     }
 
@@ -321,36 +371,39 @@ public sealed class LyricsService
             clean = clean[(artist.Trim().Length + 3)..].Trim();
         }
 
-        var decorations = new[]
-        {
-            "official video", "official music video", "official audio", "lyric video",
-            "lyrics", "remaster", "remastered", "4k", "hd", "visualizer", "music video"
-        };
-
-        while (clean.Length > 0)
-        {
-            var open = clean.LastIndexOfAny(['(', '[']);
-            if (open < 0)
-            {
-                break;
-            }
-
-            var close = clean[^1] is ')' or ']' ? clean.Length - 1 : -1;
-            if (close < 0)
-            {
-                break;
-            }
-
-            var inside = clean[(open + 1)..close];
-            if (!decorations.Any(decoration => inside.Contains(decoration, StringComparison.OrdinalIgnoreCase)))
-            {
-                break;
-            }
-
-            clean = clean[..open].TrimEnd();
-        }
+        clean = RemoveDecorations(clean).Trim();
+        clean = string.Join(' ', clean.Split(' ', StringSplitOptions.RemoveEmptyEntries));
 
         return clean.Length > 0 ? clean : title.Trim();
+    }
+
+    private static string RemoveDecorations(string text)
+    {
+        var decorations = new[]
+        {
+            "official", "video", "audio", "lyric", "remaster", "4k", "hd", "visualizer"
+        };
+        var result = new System.Text.StringBuilder(text.Length);
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] is '(' or '[')
+            {
+                var close = text.IndexOf(text[i] == '(' ? ')' : ']', i + 1);
+                if (close > i)
+                {
+                    var inside = text[(i + 1)..close];
+                    if (decorations.Any(decoration => inside.Contains(decoration, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        i = close;
+                        continue;
+                    }
+                }
+            }
+
+            result.Append(text[i]);
+        }
+
+        return result.ToString();
     }
 
     private sealed class LrcLibRecord

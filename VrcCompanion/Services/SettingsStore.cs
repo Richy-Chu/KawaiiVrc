@@ -100,11 +100,24 @@ public sealed class SettingsStore
     private readonly string _path;
 
     public SettingsStore()
+        : this(null)
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "VrcCompanion");
-        _path = Path.Combine(directory, "settings.json");
+    }
+
+    public SettingsStore(string? path)
+    {
+        if (path is null)
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VrcCompanion");
+            _path = Path.Combine(directory, "settings.json");
+        }
+        else
+        {
+            _path = path;
+        }
+
         Settings = Load();
     }
 
