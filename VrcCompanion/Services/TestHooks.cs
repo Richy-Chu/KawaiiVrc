@@ -55,6 +55,17 @@ internal static class TestHooks
         setter.Invoke(shell, new object?[] { groups });
     }
 
+    /// <summary>Sets the signed-in user on an API client for request-level tests.</summary>
+    public static void SetCurrentUser(VrcApiClient api, VrcUser user)
+    {
+        var setter = typeof(VrcApiClient)
+            .GetProperty(nameof(VrcApiClient.CurrentUser))
+            ?.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException("VrcApiClient.CurrentUser setter not found.");
+
+        setter.Invoke(api, new object?[] { user });
+    }
+
     /// <summary>Attaches an open friend profile to the shell through its private setter.</summary>
     public static void AttachFriendDetail(MainViewModel shell, FriendDetailViewModel profile)
     {

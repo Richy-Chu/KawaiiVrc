@@ -63,6 +63,28 @@ public class FriendDetailNoteTests : IDisposable
     }
 
     [Fact]
+    public void RepresentedGroupIsIncludedOnce()
+    {
+        var profile = new VrcProfile
+        {
+            RepresentedGroup = new VrcProfileGroup { Id = "grp_represented", Name = "Represented" },
+            Groups = new VrcProfileGroups
+            {
+                Count = 1,
+                List = { new VrcProfileGroup { Id = "grp_other", Name = "Other" } }
+            }
+        };
+
+        Assert.True(FriendDetailViewModel.IncludeRepresentedGroup(profile));
+        Assert.Equal(2, profile.Groups.List.Count);
+        Assert.Equal("grp_represented", profile.Groups.List[0].Id);
+        Assert.Equal(2, profile.Groups.Count);
+
+        Assert.False(FriendDetailViewModel.IncludeRepresentedGroup(profile));
+        Assert.Equal(2, profile.Groups.List.Count);
+    }
+
+    [Fact]
     public void FullGroupListIsOnlyNeededWhenThePayloadIsShort()
     {
         var shortPayload = new VrcProfile

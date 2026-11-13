@@ -56,9 +56,14 @@ public sealed class VrcApiClient : IDisposable
     private DateTimeOffset _lastRequestAt = DateTimeOffset.MinValue;
 
     public VrcApiClient(SessionStore? sessionStore = null)
+        : this(sessionStore, null)
+    {
+    }
+
+    internal VrcApiClient(SessionStore? sessionStore, HttpMessageHandler? handler)
     {
         _sessionStore = sessionStore ?? new SessionStore();
-        var handler = new HttpClientHandler
+        handler ??= new HttpClientHandler
         {
             UseCookies = true,
             CookieContainer = _cookies,

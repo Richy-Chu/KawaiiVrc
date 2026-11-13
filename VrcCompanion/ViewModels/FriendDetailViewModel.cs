@@ -314,6 +314,28 @@ public sealed class FriendDetailViewModel : ViewModelBase
     internal static bool NeedsFullGroupList(VrcProfile? profile)
         => profile?.Groups is { } groups && groups.Count > groups.List.Count;
 
+    /// <summary>
+    /// VRChat may leave the represented group out of the payload's short list.
+    /// It still belongs in the profile's groups so its chip is always shown.
+    /// </summary>
+    internal static bool IncludeRepresentedGroup(VrcProfile? profile)
+    {
+        if (profile?.RepresentedGroup is not { } represented || string.IsNullOrWhiteSpace(represented.Id))
+        {
+            return false;
+        }
+
+        profile.Groups ??= new VrcProfileGroups();
+        if (profile.Groups.List.Any(group => string.Equals(group.Id, represented.Id, StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        profile.Groups.List.Insert(0, represented);
+        profile.Groups.Count = Math.Max(profile.Groups.Count, profile.Groups.List.Count);
+        return true;
+    }
+
     public enum ProfileGroupsTab
     {
         Profile,
@@ -595,6 +617,13 @@ public sealed class FriendDetailViewModel : ViewModelBase
             {
                 ErrorMessage = "VRChat did not return this profile. Showing the friend-list details instead.";
             }
+            else if (IncludeRepresentedGroup(profile))
+            {
+                OnPropertyChanged(nameof(Groups));
+                OnPropertyChanged(nameof(TheirGroupsTabText));
+                OnPropertyChanged(nameof(ProfileGroupsTabText));
+                OnPropertyChanged(nameof(GroupsSummary));
+            }
 
             _ = LoadImagesAsync(profile, cancellationToken);
             _ = AnnotateGroupsAsync(cancellationToken);
@@ -730,6 +759,8 @@ public sealed class FriendDetailViewModel : ViewModelBase
                     .ToList();
                 payload.Count = payload.List.Count;
             }
+
+            IncludeRepresentedGroup(Profile);
 
             var groups = Groups;
             var ids = mine.Select(group => group.EffectiveId).ToHashSet(StringComparer.Ordinal);
