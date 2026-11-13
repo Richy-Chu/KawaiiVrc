@@ -1,0 +1,336 @@
+using System.Globalization;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json.Serialization;
+
+namespace VrcCompanion.Services;
+
+/// <summary>A single timed lyric line (LRC).</summary>
+public sealed record LyricLine(TimeSpan Time, string Text);
+
+/// <summary>Lyrics fetched from the free LRCLIB database.</summary>
+public sealed class LyricsDocument
+{
+    private LyricsDocument(IReadOnlyList<LyricLine> synced, IReadOnlyList<string> plain)
+    {
+        SyncedLines = synced;
+        PlainLines = plain;
+    }
+
+    public IReadOnlyList<LyricLine> SyncedLines { get; }
+
+    public IReadOnlyList<string> PlainLines { get; }
+
+    public bool IsSynced => SyncedLines.Count > 0;
+
+    public bool HasLyrics => IsSynced || PlainLines.Count > 0;
+
+    public string? PreviewLine(TimeSpan position)
+    {
+        if (IsSynced)
+        {
+            return LineAt(position);
+        }
+
+        return PlainLines.Count > 0 ? PlainLines[0] : null;
+    }
+
+    public string? LineAt(TimeSpan position)
+    {
+        if (SyncedLines.Count == 0)
+        {
+            return null;
+        }
+
+        var current = SyncedLines[0].Text;
+        foreach (var line in SyncedLines)
+        {
+            if (line.Time > position + TimeSpan.FromMilliseconds(350))
+            {
+                break;
+            }
+
+            current = line.Text;
+        }
+
+        return current;
+    }
+
+    public static LyricsDocument? Parse(string? syncedLyrics, string? plainLyrics)
+    {
+        var synced = ParseLrc(syncedLyrics);
+        var plain = (plainLyrics ?? string.Empty)
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0)
+            .ToList();
+
+        if (synced.Count == 0 && plain.Count == 0)
+        {
+            return null;
+        }
+
+        return new LyricsDocument(synced, plain);
+    }
+
+    private static List<LyricLine> ParseLrc(string? lrc)
+    {
+        var lines = new List<LyricLine>();
+        if (string.IsNullOrWhiteSpace(lrc))
+        {
+            return lines;
+        }
+
+        foreach (var raw in lrc.Split('\n'))
+        {
+            var line = raw.Trim();
+            var times = new List<TimeSpan>();
+            while (line.StartsWith('['))
+            {
+                var close = line.IndexOf(']');
+                if (close < 0)
+                {
+                    break;
+                }
+
+                var tag = line[1..close];
+                if (TryParseTimestamp(tag, out var time))
+                {
+                    times.Add(time);
+                }
+
+                line = line[(close + 1)..].TrimStart();
+            }
+
+            if (times.Count == 0 || line.Length == 0)
+            {
+                continue;
+            }
+
+            foreach (var time in times)
+            {
+                lines.Add(new LyricLine(time, line));
+            }
+        }
+
+        return lines.OrderBy(line => line.Time).ToList();
+    }
+
+    private static bool TryParseTimestamp(string tag, out TimeSpan time)
+    {
+        time = default;
+        var colon = tag.IndexOf(':');
+        if (colon <= 0)
+        {
+            return false;
+        }
+
+        if (!int.TryParse(tag[..colon], NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes) ||
+            !double.TryParse(tag[(colon + 1)..], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds))
+        {
+            return false;
+        }
+
+        if (minutes < 0 || seconds < 0 || seconds >= 60)
+        {
+            return false;
+        }
+
+        time = TimeSpan.FromMinutes(minutes) + TimeSpan.FromSeconds(seconds);
+        return true;
+    }
+}
+
+public sealed record LyricsLookupResult(LyricsDocument? Lyrics, string Status);
+
+/// <summary>
+/// Fetches lyrics from LRCLIB (https://lrclib.net), a free, keyless, open
+/// lyrics database. Lookups are best effort and never block the UI.
+/// </summary>
+public sealed class LyricsService
+{
+    private static readonly HttpClient Http = new()
+    {
+        BaseAddress = new Uri("https://lrclib.net"),
+        Timeout = TimeSpan.FromSeconds(10)
+    };
+
+    private readonly Dictionary<string, LyricsLookupResult> _cache = new(StringComparer.OrdinalIgnoreCase);
+
+    static LyricsService()
+    {
+        Http.DefaultRequestHeaders.UserAgent.ParseAdd("VrcCompanion/1.0");
+        Http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+    }
+
+    public async Task<LyricsLookupResult> GetForTrackAsync(
+        string title,
+        string artist,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return new LyricsLookupResult(null, "No track to look up.");
+        }
+
+        var cleanTitle = CleanTrackTitle(title, artist);
+        var key = $"{cleanTitle}\u001f{artist}";
+        lock (_cache)
+        {
+            if (_cache.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        var result = await FetchAsync(cleanTitle, artist, cancellationToken);
+        lock (_cache)
+        {
+            if (_cache.Count > 100)
+            {
+                _cache.Clear();
+            }
+
+            _cache[key] = result;
+        }
+
+        return result;
+    }
+
+    private static async Task<LyricsLookupResult> FetchAsync(
+        string title,
+        string artist,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            LrcLibRecord? record = null;
+            if (!string.IsNullOrWhiteSpace(artist))
+            {
+                var url = $"/api/get?track_name={Uri.EscapeDataString(title)}&artist_name={Uri.EscapeDataString(artist)}";
+                using var response = await Http.GetAsync(url, cancellationToken);
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    record = await response.Content.ReadFromJsonAsync<LrcLibRecord>(cancellationToken: cancellationToken);
+                }
+                else if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+                {
+                    return new LyricsLookupResult(null, "The free lyrics service is busy. Try again shortly.");
+                }
+            }
+
+            record ??= await SearchAsync(title, artist, cancellationToken);
+            if (record is null)
+            {
+                return new LyricsLookupResult(null, "No free lyrics found for this track.");
+            }
+
+            if (record.Instrumental)
+            {
+                return new LyricsLookupResult(null, "This track is instrumental.");
+            }
+
+            var lyrics = LyricsDocument.Parse(record.SyncedLyrics, record.PlainLyrics);
+            return lyrics is null
+                ? new LyricsLookupResult(null, "No free lyrics found for this track.")
+                : new LyricsLookupResult(
+                    lyrics,
+                    lyrics.IsSynced ? "Synced lyrics · LRCLIB" : "Plain lyrics · LRCLIB");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return new LyricsLookupResult(null, "Could not reach the free lyrics service.");
+        }
+    }
+
+    private static async Task<LrcLibRecord?> SearchAsync(
+        string title,
+        string artist,
+        CancellationToken cancellationToken)
+    {
+        var query = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
+        var url = $"/api/search?q={Uri.EscapeDataString(query)}";
+        using var response = await Http.GetAsync(url, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var results = await response.Content.ReadFromJsonAsync<List<LrcLibRecord>>(cancellationToken: cancellationToken);
+        return results?
+            .FirstOrDefault(result =>
+                !result.Instrumental &&
+                (!string.IsNullOrWhiteSpace(result.SyncedLyrics) ||
+                 !string.IsNullOrWhiteSpace(result.PlainLyrics)));
+    }
+
+    /// <summary>
+    /// YouTube titles often look like "Artist - Song (Official Video) (4K)".
+    /// Strip those decorations so LRCLIB can find the real track title.
+    /// </summary>
+    public static string CleanTrackTitle(string title, string artist)
+    {
+        var clean = title.Trim();
+        foreach (var suffix in new[] { " - YouTube Music", " - YouTube", " | YouTube Music", " | YouTube" })
+        {
+            if (clean.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean[..^suffix.Length].Trim();
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(artist) &&
+            clean.StartsWith(artist.Trim() + " - ", StringComparison.OrdinalIgnoreCase))
+        {
+            clean = clean[(artist.Trim().Length + 3)..].Trim();
+        }
+
+        var decorations = new[]
+        {
+            "official video", "official music video", "official audio", "lyric video",
+            "lyrics", "remaster", "remastered", "4k", "hd", "visualizer", "music video"
+        };
+
+        while (clean.Length > 0)
+        {
+            var open = clean.LastIndexOfAny(['(', '[']);
+            if (open < 0)
+            {
+                break;
+            }
+
+            var close = clean[^1] is ')' or ']' ? clean.Length - 1 : -1;
+            if (close < 0)
+            {
+                break;
+            }
+
+            var inside = clean[(open + 1)..close];
+            if (!decorations.Any(decoration => inside.Contains(decoration, StringComparison.OrdinalIgnoreCase)))
+            {
+                break;
+            }
+
+            clean = clean[..open].TrimEnd();
+        }
+
+        return clean.Length > 0 ? clean : title.Trim();
+    }
+
+    private sealed class LrcLibRecord
+    {
+        [JsonPropertyName("instrumental")]
+        public bool Instrumental { get; set; }
+
+        [JsonPropertyName("plainLyrics")]
+        public string? PlainLyrics { get; set; }
+
+        [JsonPropertyName("syncedLyrics")]
+        public string? SyncedLyrics { get; set; }
+    }
+}

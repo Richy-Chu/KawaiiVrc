@@ -68,6 +68,9 @@ public sealed class CompanionSettings
 
     [JsonPropertyName("chatboxIncludeNowPlaying")]
     public bool ChatboxIncludeNowPlaying { get; set; }
+
+    [JsonPropertyName("chatboxShowLyrics")]
+    public bool ChatboxShowLyrics { get; set; }
 }
 
 /// <summary>

@@ -16,10 +16,17 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private readonly CompanionSettings _settings;
     private readonly OscChatboxService _osc;
     private readonly NowPlayingService _nowPlaying;
+    private readonly LyricsService _lyricsService;
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _nowPlayingTimer;
     private NowPlayingInfo? _currentTrack;
     private bool _pollingNowPlaying;
+    private LyricsDocument? _lyrics;
+    private string? _lyricsTrackKey;
+    private CancellationTokenSource? _lyricsCancellation;
+    private bool _showLyrics;
+    private string _lyricsStatusText = "Play a track to look for free lyrics.";
+    private int _plainLyricIndex;
     private string _messageText = string.Empty;
     private string _statusText;
     private bool _isRotating;
@@ -33,12 +40,14 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     public ChatboxViewModel(
         SettingsStore? store = null,
         OscChatboxService? osc = null,
-        NowPlayingService? nowPlaying = null)
+        NowPlayingService? nowPlaying = null,
+        LyricsService? lyrics = null)
     {
         _store = store ?? SettingsStore.Shared;
         _settings = _store.Settings;
         _osc = osc ?? new OscChatboxService();
         _nowPlaying = nowPlaying ?? new NowPlayingService();
+        _lyricsService = lyrics ?? new LyricsService();
         _host = string.IsNullOrWhiteSpace(_settings.OscHost) ? "127.0.0.1" : _settings.OscHost;
         _port = Math.Clamp(_settings.OscPort, 1, 65535);
         _rotationSeconds = Math.Clamp(_settings.ChatboxRotationSeconds, MinimumRotationSeconds, 600);
@@ -60,6 +69,12 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             RotationMessages.Add("{music}");
         }
 
+        _showLyrics = _settings.ChatboxShowLyrics;
+        if (_showLyrics && !RotationMessages.Contains("{lyrics}", StringComparer.OrdinalIgnoreCase))
+        {
+            RotationMessages.Add("{lyrics}");
+        }
+
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(_rotationSeconds) };
         _timer.Tick += (_, _) => RotateNext();
         _nowPlayingTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
@@ -71,6 +86,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         RemoveMessageCommand = new RelayCommand<string>(RemoveMessage, message => message is not null);
         UseNowPlayingCommand = new RelayCommand(UseNowPlaying, () => CurrentTrack is not null);
         AddNowPlayingToRotationCommand = new RelayCommand(AddNowPlayingToRotation, () => CurrentTrack is not null);
+        SendLyricCommand = new RelayCommand(SendLyric, () => HasLyrics);
 
         _nowPlayingTimer.Start();
         _ = PollNowPlayingAsync();
@@ -95,6 +111,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     public RelayCommand AddNowPlayingToRotationCommand { get; }
 
+    public RelayCommand SendLyricCommand { get; }
+
     public NowPlayingInfo? CurrentTrack
     {
         get => _currentTrack;
@@ -111,6 +129,9 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(HasNothingPlaying));
             UseNowPlayingCommand.RaiseCanExecuteChanged();
             AddNowPlayingToRotationCommand.RaiseCanExecuteChanged();
+            OnPropertyChanged(nameof(LyricsText));
+            OnPropertyChanged(nameof(HasLyrics));
+            TrackChanged();
         }
     }
 
@@ -214,6 +235,77 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             }
         }
     }
+
+    /// <summary>Shows the current lyric line in the chatbox through {lyrics}.</summary>
+    public bool ShowLyricsInRotation
+    {
+        get => _showLyrics;
+        set
+        {
+            if (!SetProperty(ref _showLyrics, value))
+            {
+                return;
+            }
+
+            _settings.ChatboxShowLyrics = value;
+            if (value)
+            {
+                if (!RotationMessages.Contains("{lyrics}", StringComparer.OrdinalIgnoreCase))
+                {
+                    RotationMessages.Add("{lyrics}");
+                }
+
+                if (_lyrics is null && CurrentTrack is not null)
+                {
+                    TrackChanged(force: true);
+                }
+            }
+            else
+            {
+                for (var i = RotationMessages.Count - 1; i >= 0; i--)
+                {
+                    if (RotationMessages[i].Equals("{lyrics}", StringComparison.OrdinalIgnoreCase))
+                    {
+                        RotationMessages.RemoveAt(i);
+                    }
+                }
+            }
+
+            SaveMessages();
+            OnPropertyChanged(nameof(HasRotationMessages));
+            OnPropertyChanged(nameof(HasNoRotationMessages));
+            if (RotationMessages.Count == 0)
+            {
+                IsRotating = false;
+            }
+        }
+    }
+
+    public string LyricsText
+    {
+        get
+        {
+            if (CurrentTrack is null)
+            {
+                return "Play a track to look for free lyrics.";
+            }
+
+            if (_lyrics is null)
+            {
+                return _lyricsStatusText;
+            }
+
+            return _lyrics.PreviewLine(CurrentTrack.Position) ?? _lyricsStatusText;
+        }
+    }
+
+    public string LyricsStatusText
+    {
+        get => _lyricsStatusText;
+        private set => SetProperty(ref _lyricsStatusText, value);
+    }
+
+    public bool HasLyrics => _lyrics?.HasLyrics == true;
 
     public int RotationSeconds
     {
@@ -337,6 +429,108 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void SendLyric()
+    {
+        var line = GetCurrentLyricLine(advancePlain: true);
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            StatusText = "No lyric line is available for this track.";
+            return;
+        }
+
+        SendText(line);
+        StatusText = "Sent lyric line.";
+    }
+
+    private void TrackChanged(bool force = false)
+    {
+        var track = CurrentTrack;
+
+        if (track is null)
+        {
+            _lyricsCancellation?.Cancel();
+            _lyrics = null;
+            _lyricsTrackKey = null;
+            LyricsStatusText = "Play a track to look for free lyrics.";
+            OnPropertyChanged(nameof(LyricsText));
+            OnPropertyChanged(nameof(HasLyrics));
+            SendLyricCommand.RaiseCanExecuteChanged();
+            return;
+        }
+
+        var key = $"{track.Title}\u001f{track.Artist}";
+        if (!force && key == _lyricsTrackKey)
+        {
+            OnPropertyChanged(nameof(LyricsText));
+            return;
+        }
+
+        _lyricsCancellation?.Cancel();
+        _lyricsTrackKey = key;
+        _ = LoadLyricsAsync(track, key);
+    }
+
+    private async Task LoadLyricsAsync(NowPlayingInfo track, string key)
+    {
+        var cancellation = new CancellationTokenSource();
+        _lyricsCancellation = cancellation;
+        _lyrics = null;
+        LyricsStatusText = "Looking for free lyrics…";
+        OnPropertyChanged(nameof(LyricsText));
+        OnPropertyChanged(nameof(HasLyrics));
+        SendLyricCommand.RaiseCanExecuteChanged();
+
+        try
+        {
+            var result = await _lyricsService.GetForTrackAsync(
+                track.Title,
+                track.Artist,
+                cancellation.Token);
+
+            if (cancellation.IsCancellationRequested || key != _lyricsTrackKey)
+            {
+                return;
+            }
+
+            _lyrics = result.Lyrics;
+            LyricsStatusText = result.Status;
+            OnPropertyChanged(nameof(LyricsText));
+            OnPropertyChanged(nameof(HasLyrics));
+            SendLyricCommand.RaiseCanExecuteChanged();
+        }
+        catch (OperationCanceledException)
+        {
+            // A new track replaced this lookup.
+        }
+    }
+
+    private string? GetCurrentLyricLine(bool advancePlain)
+    {
+        if (_lyrics is null || !_lyrics.HasLyrics)
+        {
+            return null;
+        }
+
+        if (_lyrics.IsSynced)
+        {
+            return _lyrics.LineAt(CurrentTrack?.Position ?? TimeSpan.Zero);
+        }
+
+        var lines = _lyrics.PlainLines;
+        if (lines.Count == 0)
+        {
+            return null;
+        }
+
+        var line = lines[_plainLyricIndex % lines.Count];
+        if (advancePlain)
+        {
+            _plainLyricIndex++;
+        }
+
+        return line;
+    }
+
     private async Task PollNowPlayingAsync()
     {
         if (_pollingNowPlaying)
@@ -389,7 +583,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     private void SendText(string text, bool rotating = false)
     {
-        text = ExpandMusicToken(text);
+        text = ExpandTokens(text);
         try
         {
             _osc.SendChatbox(text);
@@ -404,15 +598,23 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private string ExpandMusicToken(string text)
+    private string ExpandTokens(string text)
     {
-        if (!text.Contains("{music}", StringComparison.OrdinalIgnoreCase))
+        if (text.Contains("{music}", StringComparison.OrdinalIgnoreCase))
         {
-            return text;
+            var track = CurrentTrack?.ChatboxText ?? "♪ Nothing playing";
+            text = text.Replace("{music}", track, StringComparison.OrdinalIgnoreCase);
         }
 
-        var track = CurrentTrack?.ChatboxText ?? "♪ Nothing playing";
-        return text.Replace("{music}", track, StringComparison.OrdinalIgnoreCase);
+        if (text.Contains("{lyrics}", StringComparison.OrdinalIgnoreCase))
+        {
+            var line = GetCurrentLyricLine(advancePlain: true) ??
+                       CurrentTrack?.ChatboxText ??
+                       "♪ Nothing playing";
+            text = text.Replace("{lyrics}", line, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return text;
     }
 
     private void SaveMessages()
@@ -432,6 +634,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _disposed = true;
         _timer.Stop();
         _nowPlayingTimer.Stop();
+        _lyricsCancellation?.Cancel();
+        _lyricsCancellation?.Dispose();
         _osc.Dispose();
     }
 }

@@ -7,7 +7,12 @@ namespace VrcCompanion.Services;
 /// <summary>
 /// One track reported by a Windows media session (Spotify, a browser tab, etc.).
 /// </summary>
-public sealed record NowPlayingInfo(string Title, string Artist, string Source)
+public sealed record NowPlayingInfo(
+    string Title,
+    string Artist,
+    string Source,
+    TimeSpan Position = default,
+    TimeSpan Duration = default)
 {
     public bool HasArtist => !string.IsNullOrWhiteSpace(Artist);
 
@@ -170,6 +175,18 @@ public sealed class NowPlayingService
                 {
                     info = info with { Source = service };
                 }
+            }
+
+            var timeline = session.GetTimelineProperties();
+            if (info is not null)
+            {
+                info = info with
+                {
+                    Position = timeline.Position,
+                    Duration = timeline.EndTime > timeline.StartTime
+                        ? timeline.EndTime - timeline.StartTime
+                        : TimeSpan.Zero
+                };
             }
 
             return info;

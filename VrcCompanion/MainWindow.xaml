@@ -2939,6 +2939,36 @@
 
                     <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                         <StackPanel>
+                            <TextBlock Text="Lyrics" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="{Binding ChatboxViewModel.LyricsText}"
+                                       Foreground="{StaticResource TextBrush}"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="Wrap"
+                                       Margin="0,5,0,0" />
+                            <TextBlock Text="{Binding ChatboxViewModel.LyricsStatusText}"
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,4,0,0" />
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <Button Content="Send lyric line"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="12,6"
+                                        FontSize="11"
+                                        Margin="0,0,8,0"
+                                        Command="{Binding ChatboxViewModel.SendLyricCommand}" />
+                            </StackPanel>
+                            <CheckBox Content="Show lyrics in rotation ({lyrics})"
+                                      Style="{StaticResource FriendlyCheckBox}"
+                                      IsChecked="{Binding ChatboxViewModel.ShowLyricsInRotation, Mode=TwoWay}"
+                                      Margin="0,8,0,0" />
+                            <TextBlock Text="Free lyrics come from LRCLIB when a track is playing."
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,6,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
                             <TextBlock Text="Rotation" Style="{StaticResource SectionTitle}" />
                             <TextBlock Text="Cycle through these lines so the chatbox keeps changing."
                                        Style="{StaticResource MutedText}"
