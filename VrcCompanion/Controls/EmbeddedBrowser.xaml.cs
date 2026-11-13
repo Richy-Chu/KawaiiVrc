@@ -582,13 +582,16 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
     private void FocusPage()
     {
-        if (_viewModel?.IsFocusMode != true || !IsVisible)
-        {
-            return;
-        }
-
         Dispatcher.InvokeAsync(
-            () => Browser.Focus(),
+            () =>
+            {
+                if (_viewModel?.IsFocusMode != true || !IsVisible)
+                {
+                    return;
+                }
+
+                Browser.Focus();
+            },
             DispatcherPriority.Input);
     }
 

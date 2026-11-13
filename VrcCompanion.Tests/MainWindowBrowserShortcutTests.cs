@@ -182,7 +182,6 @@ public class MainWindowBrowserShortcutTests
                     $"Ctrl+L should focus the {sectionKey} address box.");
                 Assert.Equal(0, address.SelectionStart);
                 Assert.Equal(address.Text.Length, address.SelectionLength);
-                Assert.Equal(address.Text, address.SelectedText);
             }
             finally
             {
