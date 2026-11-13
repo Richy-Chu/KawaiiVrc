@@ -85,7 +85,7 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
-        if (_viewModel.IsAnyBrowserFocused && TryHandleBrowserFocusShortcut(e))
+        if (TryHandleBrowserFocusShortcut(e))
         {
             e.Handled = true;
             return;

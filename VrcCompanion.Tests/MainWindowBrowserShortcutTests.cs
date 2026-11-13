@@ -94,9 +94,25 @@ public class MainWindowBrowserShortcutTests
                 Assert.True(browser.CanGoBack, "Alt+Right should restore Back history.");
 
                 await NavigateAsync(() =>
-                    Assert.True(window.TryHandleBrowserFocusShortcut(Key.F5, ModifierKeys.None)));
+                {
+                    var f5 = new KeyEventArgs(
+                        Keyboard.PrimaryDevice,
+                        PresentationSource.FromVisual(window)!,
+                        0,
+                        Key.F5)
+                    {
+                        RoutedEvent = Keyboard.PreviewKeyDownEvent
+                    };
+                    window.RaiseEvent(f5);
+                    Assert.True(f5.Handled, "F5 should be handled by the window shortcut path.");
+                });
                 await NavigateAsync(() =>
                     Assert.True(window.TryHandleBrowserFocusShortcut(Key.R, ModifierKeys.Control)));
+
+                shell.BraveBrowserViewModel.IsFocusMode = false;
+                Assert.False(
+                    window.TryHandleBrowserFocusShortcut(Key.Left, ModifierKeys.Alt),
+                    "Shortcuts should be ignored when no browser is focused.");
             }
             finally
             {
