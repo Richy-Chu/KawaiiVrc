@@ -155,11 +155,6 @@ public sealed class AsyncImage : FrameworkElement
         var url = SourceUrl;
         if (!_isLoaded || !IsVisible || string.IsNullOrWhiteSpace(url))
         {
-            if (_image is not null)
-            {
-                _image = null;
-                InvalidateVisual();
-            }
             return;
         }
 

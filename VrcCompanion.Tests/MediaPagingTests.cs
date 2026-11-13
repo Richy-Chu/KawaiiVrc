@@ -88,6 +88,27 @@ public class MediaPagingTests
     }
 
     [Fact]
+    public async Task LastPage_HasTheRemainingPicturesAndNoNextPage()
+    {
+        var viewModel = await LoadAsync(Group("VRChat", 937));
+
+        Assert.Equal(20, viewModel.PageCount);
+        Assert.Equal(1, viewModel.CurrentPage);
+
+        for (var page = 1; page < viewModel.PageCount; page++)
+        {
+            viewModel.NextPageCommand.Execute(null);
+        }
+
+        Assert.Equal(20, viewModel.CurrentPage);
+        Assert.Equal("Page 20 of 20", viewModel.PageText);
+        Assert.False(viewModel.HasNextPage);
+        Assert.False(viewModel.NextPageCommand.CanExecute(null));
+        Assert.Equal(25, viewModel.PageCards.Count(card => card.HasItem));
+        Assert.All(viewModel.PageCards.Where(card => !card.HasItem), card => Assert.Null(card.Path));
+    }
+
+    [Fact]
     public async Task EmptyLibrary_HasNoPagesAndNoCards()
     {
         var viewModel = await LoadAsync(Array.Empty<MediaGroup>());

@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using VrcCompanion.Services;
@@ -25,6 +26,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private bool _loaded;
     private bool _isBusy;
     private int _pageIndex;
+    private int _pageGeneration;
     private int _foundCount;
     private string? _errorMessage;
     private MediaItem? _selectedMedia;
@@ -60,8 +62,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     /// The fixed 48 card slots used by the page. Cards are reused across pages
     /// so a page flip never builds or abandons a visual tree of decoded images.
     /// </summary>
-    public ObservableCollection<MediaCard> PageCards { get; } = new(
-        Enumerable.Range(0, PageSize).Select(_ => new MediaCard()));
+    public IReadOnlyList<MediaCard> PageCards { get; } =
+        Enumerable.Range(0, PageSize).Select(_ => new MediaCard()).ToList();
 
     public RelayCommand PreviousPageCommand { get; }
 
@@ -370,6 +372,23 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasNextPage));
         PreviousPageCommand.RaiseCanExecuteChanged();
         NextPageCommand.RaiseCanExecuteChanged();
+
+        // WPF bitmaps are finalized off the UI thread. Debounce a background
+        // collection so rapid page flips do not queue collections, while the
+        // UI thread is never blocked by one.
+        var generation = Interlocked.Increment(ref _pageGeneration);
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(250).ConfigureAwait(false);
+            if (Volatile.Read(ref _pageGeneration) != generation)
+            {
+                return;
+            }
+
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+        });
     }
 
     // ------------------------------------------------------------- actions
