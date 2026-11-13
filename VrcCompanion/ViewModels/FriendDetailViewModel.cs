@@ -174,7 +174,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
     public VrcProfile? Profile
     {
         get => _profile;
-        private set
+        internal set
         {
             if (SetProperty(ref _profile, value))
             {
@@ -402,6 +402,13 @@ public sealed class FriendDetailViewModel : ViewModelBase
             profileGroup.IsMutual = isMember && !IsSelf;
         }
 
+        // The Mutual tab disappears when its last group is left; don't strand the
+        // popup on an empty list, show the profile's groups instead.
+        if (GroupsTab == ProfileGroupsTab.Mutual && MutualGroupCount == 0)
+        {
+            GroupsTab = ProfileGroupsTab.Profile;
+        }
+
         OnPropertyChanged(nameof(Groups));
         OnPropertyChanged(nameof(MyGroups));
         OnPropertyChanged(nameof(VisibleGroups));
@@ -455,7 +462,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
                 return string.Empty;
             }
 
-            var summary = $"{groups.Count} public group{(groups.Count == 1 ? string.Empty : "s")}";
+            var summary = $"{groups.Count} group{(groups.Count == 1 ? string.Empty : "s")}";
             return IsSelf || MutualGroupCount == 0
                 ? summary
                 : $"{summary} · {MutualGroupCount} mutual";
@@ -677,12 +684,47 @@ public sealed class FriendDetailViewModel : ViewModelBase
     /// </summary>
     private async Task AnnotateGroupsAsync(CancellationToken cancellationToken)
     {
-        var groups = Groups;
         try
         {
             // Load every group on the account, not just the ones shown on this
             // profile: the popup offers a "My groups" tab with the full list.
             var mine = await _api.GetMyGroupsAsync(cancellationToken);
+
+            // A profile payload ships only a few of the user's groups (the count
+            // says how many exist), so read the full membership list instead.
+            IReadOnlyList<Group>? allProfileGroups = IsSelf ? mine : null;
+            if (!IsSelf)
+            {
+                try
+                {
+                    allProfileGroups = await _api.GetUserGroupsAsync(Id, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                }
+            }
+
+            if (allProfileGroups is { Count: > 0 } && Profile?.Groups is { } payload)
+            {
+                payload.List = allProfileGroups
+                    .Select(group => new VrcProfileGroup
+                    {
+                        Id = group.EffectiveId,
+                        Name = group.Name,
+                        IconUrl = group.IconUrl
+                    })
+                    .Where(group => !string.IsNullOrWhiteSpace(group.Name))
+                    .OrderBy(group => group.Name, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList();
+                payload.Count = payload.List.Count;
+            }
+
+            var groups = Groups;
             var ids = mine.Select(group => group.EffectiveId).ToHashSet(StringComparer.Ordinal);
             var profileIds = groups.Select(group => group.Id).ToHashSet(StringComparer.Ordinal);
 

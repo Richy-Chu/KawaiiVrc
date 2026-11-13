@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Runtime.ExceptionServices;
 using System.Threading;
@@ -11,6 +12,41 @@ namespace VrcCompanion.Tests;
 
 public class MainViewModelSectionTests
 {
+    [Fact]
+    public void MembershipEventFromTheGroupViewModelUpdatesTheOpenProfile()
+    {
+        RunOnSta(() =>
+        {
+            var shell = new MainViewModel();
+            var groups = new GroupViewModel(new VrcApiClient());
+            var notesDirectory = Path.Combine(Path.GetTempPath(), "vrccompanion-event-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(notesDirectory);
+            try
+            {
+                var profile = new FriendDetailViewModel(
+                    new FriendItem(new VrcUser { Id = "usr_event", DisplayName = "Event", Username = "event" }),
+                    new VrcApiClient(),
+                    ImageLoader.Shared,
+                    new FriendNotesStore(Path.Combine(notesDirectory, "notes.json")));
+
+                TestHooks.AttachGroupViewModel(shell, groups);
+                TestHooks.AttachFriendDetail(shell, profile);
+
+                var group = new Group { Id = "grp_event", Name = "Event Group" };
+                groups.PublishMembershipChanged(group, isMember: true);
+                Assert.Single(profile.MyGroups);
+                Assert.Equal("Event Group", profile.MyGroups[0].Name);
+
+                groups.PublishMembershipChanged(group, isMember: false);
+                Assert.Empty(profile.MyGroups);
+            }
+            finally
+            {
+                Directory.Delete(notesDirectory, recursive: true);
+            }
+        });
+    }
+
     [Fact]
     public void SwitchingSectionsTogglesBrowseTabVisibility()
     {

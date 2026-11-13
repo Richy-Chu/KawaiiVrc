@@ -1587,6 +1587,28 @@ public sealed class VrcApiClient : IDisposable
         return DeserializeList<Group>(body);
     }
 
+    /// <summary>
+    /// Every group on another user's profile. The profile payload only carries a
+    /// handful of groups (its count can be much higher), so the user groups
+    /// endpoint supplies the full membership list.
+    /// </summary>
+    public async Task<IReadOnlyList<Group>> GetUserGroupsAsync(
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Array.Empty<Group>();
+        }
+
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            $"users/{Uri.EscapeDataString(userId)}/groups?n=100&offset=0",
+            null,
+            cancellationToken);
+        return DeserializeList<Group>(body);
+    }
+
     public async Task<Group?> GetGroupAsync(
         string groupId,
         CancellationToken cancellationToken = default)

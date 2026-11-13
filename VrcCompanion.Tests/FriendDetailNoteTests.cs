@@ -63,6 +63,32 @@ public class FriendDetailNoteTests : IDisposable
     }
 
     [Fact]
+    public void LeavingTheLastMutualGroupReturnsToTheirGroupsTab()
+    {
+        var profile = CreateProfile(new FriendNotesStore(NotesPath));
+        profile.Profile = new VrcProfile
+        {
+            Groups = new VrcProfileGroups
+            {
+                Count = 1,
+                List =
+                {
+                    new VrcProfileGroup { Id = "grp_age_gated", Name = "Age Gated", IsMine = true, IsMutual = true }
+                }
+            }
+        };
+
+        profile.GroupsTab = FriendDetailViewModel.ProfileGroupsTab.Mutual;
+        Assert.Single(profile.VisibleGroups);
+
+        profile.ApplyGroupMembership(new Group { Id = "grp_age_gated", Name = "Age Gated" }, isMember: false);
+
+        Assert.Empty(profile.MyGroups);
+        Assert.Equal(FriendDetailViewModel.ProfileGroupsTab.Profile, profile.GroupsTab);
+        Assert.Single(profile.VisibleGroups);
+    }
+
+    [Fact]
     public void OwnProfile_IsMarkedAsSelfAndKeepsTheNoteEditorOutOfThePopup()
     {
         var store = new FriendNotesStore(NotesPath);

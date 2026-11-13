@@ -78,8 +78,27 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public GroupViewModel? GroupViewModel
     {
         get => _groupViewModel;
-        private set => SetProperty(ref _groupViewModel, value);
+        private set
+        {
+            if (ReferenceEquals(_groupViewModel, value))
+            {
+                return;
+            }
+
+            if (_groupViewModel is not null)
+            {
+                _groupViewModel.MembershipChanged -= OnGroupMembershipChanged;
+            }
+
+            if (SetProperty(ref _groupViewModel, value) && value is not null)
+            {
+                value.MembershipChanged += OnGroupMembershipChanged;
+            }
+        }
     }
+
+    private void OnGroupMembershipChanged(Group group, bool isMember)
+        => SelectedFriendDetail?.ApplyGroupMembership(group, isMember);
 
     public ActivityFeedViewModel? ActivityFeedViewModel
     {
@@ -1464,8 +1483,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         GroupViewModel = new GroupViewModel(
             _api,
             () => IsDesktopDefault ? LaunchMode.Desktop : LaunchMode.Vr);
-        GroupViewModel.MembershipChanged += (group, isMember) =>
-            SelectedFriendDetail?.ApplyGroupMembership(group, isMember);
         ActivityFeedViewModel = new ActivityFeedViewModel(_api);
         MultiAccountViewModel = new MultiAccountViewModel(_api);
         MultiAccountViewModel.SessionSwitched += OnAccountSessionSwitched;

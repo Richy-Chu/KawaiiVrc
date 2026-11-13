@@ -42,6 +42,31 @@ internal static class TestHooks
     }
 
     /// <summary>
+    /// Attaches a group view model to the shell through its private setter so the
+    /// shell subscribes to membership changes exactly as it does after sign-in.
+    /// </summary>
+    public static void AttachGroupViewModel(MainViewModel shell, GroupViewModel groups)
+    {
+        var setter = typeof(MainViewModel)
+            .GetProperty(nameof(MainViewModel.GroupViewModel))
+            ?.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException("MainViewModel.GroupViewModel setter not found.");
+
+        setter.Invoke(shell, new object?[] { groups });
+    }
+
+    /// <summary>Attaches an open friend profile to the shell through its private setter.</summary>
+    public static void AttachFriendDetail(MainViewModel shell, FriendDetailViewModel profile)
+    {
+        var setter = typeof(MainViewModel)
+            .GetProperty(nameof(MainViewModel.SelectedFriendDetail))
+            ?.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException("MainViewModel.SelectedFriendDetail setter not found.");
+
+        setter.Invoke(shell, new object?[] { profile });
+    }
+
+    /// <summary>
     /// Clock behind the browse backoff. Tests move it forward instead of waiting,
     /// and must restore it with <see cref="ResetClock"/>.
     /// </summary>
