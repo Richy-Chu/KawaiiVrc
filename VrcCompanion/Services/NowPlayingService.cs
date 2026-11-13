@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Windows.Automation;
 using Windows.Media.Control;
 
 namespace VrcCompanion.Services;
@@ -8,6 +10,8 @@ namespace VrcCompanion.Services;
 public sealed record NowPlayingInfo(string Title, string Artist, string Source)
 {
     public bool HasArtist => !string.IsNullOrWhiteSpace(Artist);
+
+    public bool IsBrowserSource => Source is "Chrome" or "Edge" or "Firefox" or "Brave" or "Opera" or "Browser";
 
     public string DisplayText => HasArtist ? $"{Title} — {Artist}" : Title;
 
@@ -148,16 +152,142 @@ public sealed class NowPlayingService
             }
 
             var properties = await session.TryGetMediaPropertiesAsync();
-            return NowPlayingInfo.FromSession(
+            var info = NowPlayingInfo.FromSession(
                 session.SourceAppUserModelId,
                 properties?.Title,
                 properties?.Artist);
+
+            // Browsers report the page's raw media title, which often has no
+            // "YouTube"/"Spotify" marker. Their open tabs do, so use those to
+            // label the service instead of showing just "Chrome"/"Brave".
+            if (info is { IsBrowserSource: true })
+            {
+                var service = BrowserTabDetector.FindService(
+                    session.SourceAppUserModelId,
+                    info.Title);
+
+                if (service is not null)
+                {
+                    info = info with { Source = service };
+                }
+            }
+
+            return info;
         }
         catch
         {
             // Media session APIs are best effort: they are unavailable on older
             // Windows builds and can fail while a player is starting.
             return null;
+        }
+    }
+}
+
+/// <summary>
+/// Finds the browser tab that is playing a track and reads its site label.
+/// </summary>
+internal static class BrowserTabDetector
+{
+    public static string? FindService(string? appId, string title)
+    {
+        if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(appId))
+        {
+            return null;
+        }
+
+        foreach (var processName in ProcessNamesFor(appId))
+        {
+            Process[] processes;
+            try
+            {
+                processes = Process.GetProcessesByName(processName);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var process in processes)
+            {
+                using (process)
+                {
+                    if (process.MainWindowHandle == IntPtr.Zero)
+                    {
+                        continue;
+                    }
+
+                    var service = FindInWindow(process.MainWindowHandle, title);
+                    if (service is not null)
+                    {
+                        return service;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string? FindInWindow(IntPtr handle, string title)
+    {
+        try
+        {
+            var root = AutomationElement.FromHandle(handle);
+            var tabCondition = new PropertyCondition(
+                AutomationElement.ControlTypeProperty,
+                ControlType.TabItem);
+            var tabs = root.FindAll(TreeScope.Descendants, tabCondition);
+
+            foreach (AutomationElement tab in tabs)
+            {
+                var tabName = tab.Current.Name;
+                if (string.IsNullOrWhiteSpace(tabName) ||
+                    !tabName.Contains(title, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (tabName.Contains("YouTube", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "YouTube";
+                }
+
+                if (tabName.Contains("Spotify", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "Spotify";
+                }
+            }
+        }
+        catch
+        {
+            // The browser may be closing or using a UI that does not expose tabs.
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> ProcessNamesFor(string appId)
+    {
+        var app = appId.ToLowerInvariant();
+        if (app.Contains("brave"))
+        {
+            yield return "brave";
+        }
+        else if (app.Contains("msedge"))
+        {
+            yield return "msedge";
+        }
+        else if (app.Contains("chrome"))
+        {
+            yield return "chrome";
+        }
+        else if (app.Contains("firefox"))
+        {
+            yield return "firefox";
+        }
+        else if (app.Contains("opera"))
+        {
+            yield return "opera";
         }
     }
 }
