@@ -142,7 +142,7 @@ public sealed class LyricsDocument
     }
 }
 
-public sealed record LyricsLookupResult(LyricsDocument? Lyrics, string Status);
+public sealed record LyricsLookupResult(LyricsDocument? Lyrics, string Status, bool TemporaryFailure = false);
 
 /// <summary>Formats a VRChat chatbox line containing the song and, if present, a lyric.</summary>
 public static class ChatboxLyrics
@@ -181,24 +181,36 @@ public static class ChatboxLyrics
 /// </summary>
 public sealed class LyricsService
 {
-    private static readonly HttpClient Http = new()
+    private static readonly HttpClient SharedHttp = new()
     {
         BaseAddress = new Uri("https://lrclib.net"),
         Timeout = TimeSpan.FromSeconds(10)
     };
 
+    private readonly HttpClient _http;
     private readonly Dictionary<string, LyricsLookupResult> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     static LyricsService()
     {
-        Http.DefaultRequestHeaders.UserAgent.ParseAdd("VrcCompanion/1.0");
-        Http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        SharedHttp.DefaultRequestHeaders.UserAgent.ParseAdd("VrcCompanion/1.0");
+        SharedHttp.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+    }
+
+    public LyricsService()
+        : this(SharedHttp)
+    {
+    }
+
+    internal LyricsService(HttpClient http)
+    {
+        _http = http;
     }
 
     public async Task<LyricsLookupResult> GetForTrackAsync(
         string title,
         string artist,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan duration = default)
     {
         if (string.IsNullOrWhiteSpace(title))
         {
@@ -206,7 +218,7 @@ public sealed class LyricsService
         }
 
         var cleanTitle = CleanTrackTitle(title, artist);
-        var key = $"{cleanTitle}\u001f{artist}";
+        var key = $"{cleanTitle}\u001f{artist}\u001f{(int)duration.TotalSeconds}";
         lock (_cache)
         {
             if (_cache.TryGetValue(key, out var cached))
@@ -215,23 +227,27 @@ public sealed class LyricsService
             }
         }
 
-        var result = await FetchAsync(cleanTitle, artist, cancellationToken);
-        lock (_cache)
+        var result = await FetchAsync(cleanTitle, artist, duration, cancellationToken);
+        if (!result.TemporaryFailure)
         {
-            if (_cache.Count > 100)
+            lock (_cache)
             {
-                _cache.Clear();
-            }
+                if (_cache.Count > 100)
+                {
+                    _cache.Clear();
+                }
 
-            _cache[key] = result;
+                _cache[key] = result;
+            }
         }
 
         return result;
     }
 
-    private static async Task<LyricsLookupResult> FetchAsync(
+    private async Task<LyricsLookupResult> FetchAsync(
         string title,
         string artist,
+        TimeSpan duration,
         CancellationToken cancellationToken)
     {
         try
@@ -242,18 +258,25 @@ public sealed class LyricsService
             foreach (var candidate in candidates.Where(candidate => !string.IsNullOrWhiteSpace(candidate.Artist)))
             {
                 var url = $"/api/get?track_name={Uri.EscapeDataString(candidate.Title)}&artist_name={Uri.EscapeDataString(candidate.Artist)}";
-                using var response = await Http.GetAsync(url, cancellationToken);
+                if (duration > TimeSpan.Zero)
+                {
+                    url += $"&duration={(int)Math.Round(duration.TotalSeconds)}";
+                }
+
+                using var response = await _http.GetAsync(url, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
                     record = await response.Content.ReadFromJsonAsync<LrcLibRecord>(cancellationToken: cancellationToken);
-                    if (record is not null)
+                    if (record is not null && DurationMatches(record, duration))
                     {
                         break;
                     }
+
+                    record = null;
                 }
                 else if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
                 {
-                    return new LyricsLookupResult(null, "The free lyrics service is busy. Try again shortly.");
+                    return new LyricsLookupResult(null, "The free lyrics service is busy. Try again shortly.", true);
                 }
             }
 
@@ -261,7 +284,7 @@ public sealed class LyricsService
             {
                 foreach (var candidate in candidates)
                 {
-                    record = await SearchAsync(candidate.Title, candidate.Artist, cancellationToken);
+                    record = await SearchAsync(candidate.Title, candidate.Artist, duration, cancellationToken);
                     if (record is not null)
                     {
                         break;
@@ -292,9 +315,21 @@ public sealed class LyricsService
         }
         catch
         {
-            return new LyricsLookupResult(null, "Could not reach the free lyrics service.");
+            return new LyricsLookupResult(null, "Could not reach the free lyrics service.", true);
         }
     }
+
+    public void ClearCache()
+    {
+        lock (_cache)
+        {
+            _cache.Clear();
+        }
+    }
+
+    private static bool DurationMatches(LrcLibRecord record, TimeSpan duration) =>
+        duration <= TimeSpan.Zero ||
+        (record.Duration > 0 && Math.Abs(record.Duration - duration.TotalSeconds) <= 15);
 
     internal static IEnumerable<(string Title, string Artist)> BuildCandidates(string title, string artist)
     {
@@ -329,14 +364,15 @@ public sealed class LyricsService
         }
     }
 
-    private static async Task<LrcLibRecord?> SearchAsync(
+    private async Task<LrcLibRecord?> SearchAsync(
         string title,
         string artist,
+        TimeSpan duration,
         CancellationToken cancellationToken)
     {
         var query = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
         var url = $"/api/search?q={Uri.EscapeDataString(query)}";
-        using var response = await Http.GetAsync(url, cancellationToken);
+        using var response = await _http.GetAsync(url, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             return null;
@@ -344,11 +380,47 @@ public sealed class LyricsService
 
         var results = await response.Content.ReadFromJsonAsync<List<LrcLibRecord>>(cancellationToken: cancellationToken);
         return results?
-            .FirstOrDefault(result =>
-                !result.Instrumental &&
+            .Where(result =>
                 (!string.IsNullOrWhiteSpace(result.SyncedLyrics) ||
-                 !string.IsNullOrWhiteSpace(result.PlainLyrics)));
+                 !string.IsNullOrWhiteSpace(result.PlainLyrics)) &&
+                DurationMatches(result, duration) &&
+                MatchesIdentity(result, title, artist))
+            .OrderBy(result =>
+                duration > TimeSpan.Zero && result.Duration > 0
+                    ? Math.Abs(result.Duration - duration.TotalSeconds)
+                    : 0)
+            .ThenByDescending(result => !string.IsNullOrWhiteSpace(result.SyncedLyrics))
+            .FirstOrDefault();
     }
+
+    private static bool MatchesIdentity(LrcLibRecord record, string title, string artist)
+    {
+        var wantedTitle = NormaliseForMatch(title);
+        var foundTitle = NormaliseForMatch(record.TrackName);
+        if (wantedTitle.Length == 0 || foundTitle.Length == 0 ||
+            !(foundTitle.Contains(wantedTitle, StringComparison.Ordinal) ||
+              wantedTitle.Contains(foundTitle, StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(artist))
+        {
+            return true;
+        }
+
+        var wantedArtist = NormaliseForMatch(artist);
+        var foundArtist = NormaliseForMatch(record.ArtistName);
+        return wantedArtist.Length == 0 || foundArtist.Length == 0 ||
+               foundArtist.Contains(wantedArtist, StringComparison.Ordinal) ||
+               wantedArtist.Contains(foundArtist, StringComparison.Ordinal);
+    }
+
+    private static string NormaliseForMatch(string? value) =>
+        new string((value ?? string.Empty)
+            .ToLowerInvariant()
+            .Where(char.IsLetterOrDigit)
+            .ToArray());
 
     /// <summary>
     /// YouTube titles often look like "Artist - Song (Official Video) (4K)".
@@ -408,6 +480,15 @@ public sealed class LyricsService
 
     private sealed class LrcLibRecord
     {
+        [JsonPropertyName("trackName")]
+        public string? TrackName { get; set; }
+
+        [JsonPropertyName("artistName")]
+        public string? ArtistName { get; set; }
+
+        [JsonPropertyName("duration")]
+        public double Duration { get; set; }
+
         [JsonPropertyName("instrumental")]
         public bool Instrumental { get; set; }
 

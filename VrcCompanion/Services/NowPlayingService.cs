@@ -18,7 +18,7 @@ public sealed record NowPlayingInfo(
 
     public bool IsBrowserSource => Source is "Chrome" or "Edge" or "Firefox" or "Brave" or "Opera" or "Browser";
 
-    public string DisplayText => HasArtist ? $"{Title} — {Artist}" : Title;
+    public string DisplayText => HasArtist ? $"{Artist} — {Title}" : Title;
 
     public string ChatboxText
     {
@@ -60,6 +60,10 @@ public sealed record NowPlayingInfo(
         {
             source = "YouTube";
         }
+        else if (lowerApp.Contains("freebuff"))
+        {
+            source = "Browser";
+        }
         else if (isBrowser)
         {
             source = lowerApp switch
@@ -77,9 +81,12 @@ public sealed record NowPlayingInfo(
             source = CleanAppName(appId);
         }
 
-        if (source is "YouTube" or "Browser")
+        if (isBrowser || source is "YouTube" or "Browser" || lowerApp.Contains("freebuff"))
         {
             cleanTitle = StripYouTubeSuffix(cleanTitle);
+            var normalised = NormaliseBrowserTitle(cleanTitle, artist, isBrowser || lowerApp.Contains("freebuff"));
+            cleanTitle = normalised.Title;
+            artist = normalised.Artist;
         }
 
         // A browser's generic player page title carries no track information.
@@ -91,6 +98,39 @@ public sealed record NowPlayingInfo(
         }
 
         return new NowPlayingInfo(cleanTitle, (artist ?? string.Empty).Trim(), source);
+    }
+
+    private static (string Title, string Artist) NormaliseBrowserTitle(
+        string title,
+        string? artist,
+        bool isBrowser)
+    {
+        if (!isBrowser)
+        {
+            return (title, artist ?? string.Empty);
+        }
+
+        var clean = LyricsService.CleanTrackTitle(title, artist ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(artist))
+        {
+            var remainder = clean.Split(" - ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (remainder.Length == 2 &&
+                (remainder[1].Contains("VEVO", StringComparison.OrdinalIgnoreCase) ||
+                 remainder[1].EndsWith(" - Topic", StringComparison.OrdinalIgnoreCase)))
+            {
+                clean = remainder[0];
+            }
+
+            return (clean, artist);
+        }
+
+        var parts = clean.Split(" - ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length switch
+        {
+            >= 3 => (string.Join(" - ", parts[1..^1]), parts[0]),
+            2 => (parts[1], parts[0]),
+            _ => (clean, string.Empty)
+        };
     }
 
     private static string StripYouTubeSuffix(string title)
@@ -140,6 +180,11 @@ public sealed class NowPlayingService
         {
             var manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
             var session = manager.GetCurrentSession();
+            if (session is not null && IsIgnoredSource(session.SourceAppUserModelId))
+            {
+                session = null;
+            }
+
             if (session is null ||
                 session.GetPlaybackInfo().PlaybackStatus !=
                 GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
@@ -147,6 +192,7 @@ public sealed class NowPlayingService
                 session = manager
                     .GetSessions()
                     .FirstOrDefault(candidate =>
+                        !IsIgnoredSource(candidate.SourceAppUserModelId) &&
                         candidate.GetPlaybackInfo().PlaybackStatus ==
                         GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing);
             }
@@ -202,6 +248,9 @@ public sealed class NowPlayingService
             return null;
         }
     }
+
+    private static bool IsIgnoredSource(string? appId) =>
+        appId?.Contains("freebuff", StringComparison.OrdinalIgnoreCase) == true;
 
     /// <summary>
     /// Some players (notably Chromium) report a timeline only once and leave

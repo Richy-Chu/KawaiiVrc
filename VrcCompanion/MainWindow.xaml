@@ -2960,6 +2960,12 @@
                                           IsChecked="{Binding ChatboxViewModel.ShowLyricsOnVrchat, Mode=TwoWay}"
                                           Margin="0,0,12,0"
                                           VerticalAlignment="Center" />
+                                <Button Content="Retry lyrics"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="12,6"
+                                        FontSize="11"
+                                        Margin="0,0,8,0"
+                                        Command="{Binding ChatboxViewModel.RetryLyricsCommand}" />
                                 <Button Content="Send lyric line"
                                         Style="{StaticResource SecondaryButton}"
                                         Padding="12,6"

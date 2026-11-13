@@ -16,7 +16,7 @@ public class NowPlayingTests
         Assert.NotNull(info);
         Assert.Equal("YouTube", info.Source);
         Assert.Equal("Lo-fi Beats", info.Title);
-        Assert.Equal("♪ Lo-fi Beats — Chill Channel · YouTube", info.ChatboxText);
+        Assert.Equal("♪ Chill Channel — Lo-fi Beats · YouTube", info.ChatboxText);
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public class NowPlayingTests
 
         Assert.NotNull(info);
         Assert.Equal("Spotify", info.Source);
-        Assert.Equal("♪ Starboy — The Weeknd · Spotify", info.ChatboxText);
+        Assert.Equal("♪ The Weeknd — Starboy · Spotify", info.ChatboxText);
     }
 
     [Fact]
@@ -72,7 +72,36 @@ public class NowPlayingTests
 
         Assert.NotNull(info);
         Assert.Equal("Brave", info.Source);
-        Assert.Equal("♪ Some Song — Artist · Brave", info.ChatboxText);
+        Assert.Equal("♪ Artist — Some Song · Brave", info.ChatboxText);
+    }
+
+    [Fact]
+    public void BrowserChannelSuffixIsRemovedFromArtistAndSong()
+    {
+        var info = NowPlayingInfo.FromSession(
+            "chrome.exe",
+            "Zara Larsson - Ain't My Fault (Official Video) - ZaraLarssonMusicVEVO",
+            null);
+
+        Assert.NotNull(info);
+        Assert.Equal("Zara Larsson", info.Artist);
+        Assert.Equal("Ain't My Fault", info.Title);
+        Assert.Equal("Zara Larsson — Ain't My Fault", info.DisplayText);
+        Assert.DoesNotContain("VEVO", info.DisplayText);
+        Assert.DoesNotContain("Official", info.DisplayText);
+    }
+
+    [Fact]
+    public void FreebuffBrowserIsNotShownAsASourceName()
+    {
+        var info = NowPlayingInfo.FromSession(
+            "com.freebuff.desktop",
+            "Zara Larsson - Ain't My Fault (Official Video) - ZaraLarssonMusicVEVO",
+            null);
+
+        Assert.NotNull(info);
+        Assert.Equal("Browser", info.Source);
+        Assert.DoesNotContain("freebuff", info.ChatboxText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

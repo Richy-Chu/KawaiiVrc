@@ -115,6 +115,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         AddNowPlayingToRotationCommand = new RelayCommand(AddNowPlayingToRotation, () => CurrentTrack is not null);
         SendLyricCommand = new RelayCommand(SendLyric, () => HasLyrics);
         ResumeLyricsCommand = new RelayCommand(ResumeLyricsNow, () => ShowLyricsOnVrchat && CurrentTrack is not null);
+        RetryLyricsCommand = new RelayCommand(RetryLyrics, () => CurrentTrack is not null);
 
         if (startTimers)
         {
@@ -146,6 +147,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     public RelayCommand ResumeLyricsCommand { get; }
 
+    public RelayCommand RetryLyricsCommand { get; }
+
     public NowPlayingInfo? CurrentTrack
     {
         get => _currentTrack;
@@ -164,6 +167,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             UseNowPlayingCommand.RaiseCanExecuteChanged();
             AddNowPlayingToRotationCommand.RaiseCanExecuteChanged();
             ResumeLyricsCommand.RaiseCanExecuteChanged();
+            RetryLyricsCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(LyricsText));
             OnPropertyChanged(nameof(HasLyrics));
             OnPropertyChanged(nameof(RemainingText));
@@ -600,6 +604,19 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void RetryLyrics()
+    {
+        if (CurrentTrack is null)
+        {
+            return;
+        }
+
+        _lyricsService.ClearCache();
+        _lastVrchatLyric = null;
+        TrackChanged(force: true);
+        StatusText = "Retrying lyrics…";
+    }
+
     private void ResumeLyricsNow()
     {
         _lyricsPause.Resume();
@@ -647,7 +664,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var key = $"{track.Title}\u001f{track.Artist}";
+        var key = $"{track.Title}\u001f{track.Artist}\u001f{(track.Duration > TimeSpan.Zero ? "known" : "unknown")}";
         if (!force && key == _lyricsTrackKey)
         {
             OnPropertyChanged(nameof(LyricsText));
@@ -675,7 +692,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             var result = await _lyricsService.GetForTrackAsync(
                 track.Title,
                 track.Artist,
-                cancellation.Token);
+                cancellation.Token,
+                track.Duration);
 
             if (cancellation.IsCancellationRequested || key != _lyricsTrackKey)
             {
