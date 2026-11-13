@@ -125,9 +125,17 @@ public partial class MainWindow : Window
     }
 
     private bool TryHandleBrowserFocusShortcut(KeyEventArgs e)
+        => TryHandleBrowserFocusShortcut(
+            e.Key == Key.System ? e.SystemKey : e.Key,
+            Keyboard.Modifiers);
+
+    internal bool TryHandleBrowserFocusShortcut(Key key, ModifierKeys modifiers)
     {
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        var modifiers = Keyboard.Modifiers;
+        if (!_viewModel.IsAnyBrowserFocused)
+        {
+            return false;
+        }
+
         var browser = FindVisibleBrowser();
         if (browser is null)
         {
