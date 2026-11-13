@@ -38,6 +38,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private string _statusMessageInput = string.Empty;
     private bool _isStatusDirty;
     private bool _loadingRemainingFriends;
+    private Task? _fullFriendLoad;
     private bool _suppressStatusDirty;
     private bool _initialized;
     private bool _worldsLoaded;
@@ -438,9 +439,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     break;
                 case "groups" when GroupViewModel is { HasLoaded: false, IsBusy: false }:
                     _ = GroupViewModel.LoadAsync();
-                    break;
-                case "activity" when ActivityFeedViewModel is { HasLoaded: false, IsBusy: false }:
-                    _ = ActivityFeedViewModel.LoadAsync();
                     break;
             }
         }
@@ -1034,7 +1032,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public string LaunchModeLabel => DefaultLaunchMode == LaunchMode.Desktop ? "Desktop" : "VR";
 
-    public string LaunchDefaultText => $"Friend joins use {LaunchModeLabel}. Choose a mode when opening VRChat.";
+    public string LaunchDefaultText => $"Every join asks desktop or VR. Last used: {LaunchModeLabel}.";
 
     public bool IsLaunchChooserOpen
     {
@@ -1580,8 +1578,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         AvatarViewModel = new AvatarViewModel(_api);
         GroupViewModel = new GroupViewModel(
             _api,
-            () => IsDesktopDefault ? LaunchMode.Desktop : LaunchMode.Vr);
+            () => IsDesktopDefault ? LaunchMode.Desktop : LaunchMode.Vr,
+            OpenLaunchChooser);
         ActivityFeedViewModel = new ActivityFeedViewModel(_api);
+        ActivityFeedViewModel.RefreshRequested = LoadAllFriendsAsync;
         ActivityFeedViewModel.FriendListChanged += OnFriendListChanged;
         MultiAccountViewModel = new MultiAccountViewModel(_api);
         MultiAccountViewModel.SessionSwitched += OnAccountSessionSwitched;
@@ -1726,19 +1726,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _loadingRemainingFriends = true;
         try
         {
-            // Publish once at the end: re-syncing thousands of rows per page costs
-            // more time than it saves, and online friends are already on screen.
-            var friends = await _api.GetFriendsAsync(forceRefresh: true);
-
-            if (!IsLoggedIn)
-            {
-                return;
-            }
-
-            UpdateFriends(friends);
-            ActivityFeedViewModel?.ApplyFriends(friends);
-            _lastUpdated = DateTimeOffset.Now;
-            OnPropertyChanged(nameof(LastUpdatedText));
+            await LoadAllFriendsAsync();
         }
         catch (Exception ex)
         {
@@ -1749,6 +1737,48 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             _loadingRemainingFriends = false;
         }
+    }
+
+    /// <summary>
+    /// Fetches the complete friend list once and hands the same result to the
+    /// friend list and the activity feed. Concurrent callers share this task,
+    /// so the activity tab and Friend changes cannot observe separate snapshots.
+    /// </summary>
+    private async Task LoadAllFriendsAsync()
+    {
+        if (_fullFriendLoad is { } inFlight)
+        {
+            await inFlight;
+            return;
+        }
+
+        var task = LoadAllFriendsCoreAsync();
+        _fullFriendLoad = task;
+        try
+        {
+            await task;
+        }
+        finally
+        {
+            if (ReferenceEquals(_fullFriendLoad, task))
+            {
+                _fullFriendLoad = null;
+            }
+        }
+    }
+
+    private async Task LoadAllFriendsCoreAsync()
+    {
+        var friends = await _api.GetFriendsAsync(forceRefresh: true);
+        if (!IsLoggedIn)
+        {
+            return;
+        }
+
+        UpdateFriends(friends);
+        ActivityFeedViewModel?.ApplyFriends(friends);
+        _lastUpdated = DateTimeOffset.Now;
+        OnPropertyChanged(nameof(LastUpdatedText));
     }
 
     private async Task RefreshDataAsync(bool refreshUser, bool includeOfflineFriends = true)
@@ -1796,6 +1826,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             var notifications = await _api.GetNotificationsAsync();
 
             UpdateFriends(friends, keepMissing: true);
+            if (ActivityFeedViewModel is { HasLoaded: false })
+            {
+                ActivityFeedViewModel.ShowOnlineFriends(friends);
+            }
             UpdateNotifications(notifications);
 
             _lastUpdated = DateTimeOffset.Now;
@@ -2694,8 +2728,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // Joins use the app-wide launch mode, not a per-friend chooser.
-        LaunchLocation(friend.Location, DefaultLaunchMode);
+        // Every join asks desktop or VR; the choice becomes the next default.
+        OpenLaunchChooser(friend.Location, friend.DisplayName);
         await Task.CompletedTask;
     }
 

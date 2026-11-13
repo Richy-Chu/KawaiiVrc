@@ -30,6 +30,7 @@ public sealed class GroupViewModel : ViewModelBase
     private bool _showCreateDialog;
     private bool _hasLoaded;
     private readonly Func<LaunchMode> _launchMode;
+    private readonly Action<string, string>? _openLaunchChooser;
     private ObservableCollection<GroupInstance> _instances = new();
     private bool _isLoadingInstances;
     private Group? _groupInfo;
@@ -50,10 +51,14 @@ public sealed class GroupViewModel : ViewModelBase
     internal void PublishMembershipChanged(Group group, bool isMember)
         => MembershipChanged?.Invoke(group, isMember);
 
-    public GroupViewModel(VrcApiClient api, Func<LaunchMode>? launchMode = null)
+    public GroupViewModel(
+        VrcApiClient api,
+        Func<LaunchMode>? launchMode = null,
+        Action<string, string>? openLaunchChooser = null)
     {
         _api = api;
         _launchMode = launchMode ?? (() => LaunchMode.Vr);
+        _openLaunchChooser = openLaunchChooser;
 
         LoadGroupsCommand = Track(new AsyncRelayCommand(() => LoadGroupsAsync(), () => !IsBusy));
         CreateGroupCommand = Track(new AsyncRelayCommand(CreateGroupAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(CreateName)));
@@ -519,6 +524,12 @@ public sealed class GroupViewModel : ViewModelBase
     {
         if (instance is null || !instance.CanJoin)
         {
+            return;
+        }
+
+        if (_openLaunchChooser is not null)
+        {
+            _openLaunchChooser(instance.Location, "that group instance");
             return;
         }
 

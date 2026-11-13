@@ -37,6 +37,12 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     /// </summary>
     public event Action<FriendListDelta>? FriendListChanged;
 
+    /// <summary>
+    /// The main view model owns the one full friend-list fetch. The feed asks
+    /// for that load instead of fetching the same list itself.
+    /// </summary>
+    public Func<Task>? RefreshRequested { get; set; }
+
     public ActivityFeedViewModel(VrcApiClient api)
     {
         _feedService = new ActivityFeedService();
@@ -133,7 +139,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
     public async Task LoadAsync()
     {
-        if (IsBusy)
+        if (IsBusy || RefreshRequested is null)
         {
             return;
         }
@@ -143,15 +149,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
         try
         {
-            // Online friends arrive first, so the feed can render before the
-            // offline pages (large accounts need dozens of requests) finish.
-            var friends = await _api.GetFriendsAsync(forceRefresh: true, onPartial: partial =>
-            {
-                _allEntries = _feedService.BuildFeedFromFriends(partial.ToList());
-                ApplyFilterAndSearch();
-            });
-
-            SetFeed(friends);
+            await RefreshRequested();
         }
         catch (VrcApiException ex)
         {
@@ -185,24 +183,26 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     /// </summary>
     public void ApplyFriends(IReadOnlyList<VrcUser> friends)
     {
-        if (IsBusy)
-        {
-            return;
-        }
-
         SetFeed(friends);
+    }
+
+    /// <summary>
+    /// Shows the online portion of the friend list while the complete list is
+    /// loading. This deliberately does not advance the snapshot, so a partial
+    /// list can never be mistaken for friends who were removed.
+    /// </summary>
+    public void ShowOnlineFriends(IReadOnlyList<VrcUser> friends)
+    {
+        var current = friends.ToList();
+        RenderFeed(current, previous: null);
     }
 
     private void SetFeed(IReadOnlyList<VrcUser> friends)
     {
         var current = friends.ToList();
         var previous = _previousFriends;
-        _allEntries = _feedService.BuildFeedFromFriends(current, previous);
         _previousFriends = current;
-        ApplyFilterAndSearch();
-        HasLoaded = true;
-        ErrorMessage = null;
-        _ = HydrateAvatarNamesAsync(_allEntries);
+        RenderFeed(current, previous);
 
         if (previous is not null)
         {
@@ -212,6 +212,15 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 FriendListChanged?.Invoke(delta);
             }
         }
+    }
+
+    private void RenderFeed(IReadOnlyList<VrcUser> friends, IReadOnlyList<VrcUser>? previous)
+    {
+        _allEntries = _feedService.BuildFeedFromFriends(friends, previous);
+        ApplyFilterAndSearch();
+        HasLoaded = true;
+        ErrorMessage = null;
+        _ = HydrateAvatarNamesAsync(_allEntries);
     }
 
     private async Task HydrateAvatarNamesAsync(IReadOnlyList<ActivityEntry> entries)
