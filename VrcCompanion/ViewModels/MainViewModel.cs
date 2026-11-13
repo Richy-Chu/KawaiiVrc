@@ -123,8 +123,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     public MainViewModel()
+        : this(new VrcApiClient())
     {
-        _api = new VrcApiClient();
+    }
+
+    internal MainViewModel(VrcApiClient api)
+    {
+        _api = api;
         _images = ImageLoader.Shared;
         _settingsStore = SettingsStore.Shared;
         _settings = _settingsStore.Settings;

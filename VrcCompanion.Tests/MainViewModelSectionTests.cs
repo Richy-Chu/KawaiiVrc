@@ -17,6 +17,37 @@ namespace VrcCompanion.Tests;
 public class MainViewModelSectionTests
 {
     [Fact]
+    public void ActivityEntryOpensTheSharedProfileWithItsLocation()
+    {
+        RunOnSta(() =>
+        {
+            var handler = new ActivityProfileHandler();
+            using var api = new VrcApiClient(null, handler);
+            var shell = new MainViewModel(api);
+            TestHooks.SetLoggedIn(shell, true);
+            const string location =
+                "wrld_4432ea9b-729c-46e3-8eaf-846aa0a37fdd:12345~group(grp_test)";
+            var entry = new ActivityEntry
+            {
+                UserId = "usr_activity",
+                DisplayName = "Activity Person",
+                UserName = "activity",
+                Location = location
+            };
+
+            shell.OpenActivityUserCommand.Execute(entry);
+            WaitUntil(() => handler.ProfileGets == 1 &&
+                            shell.SelectedFriendDetail?.Profile is not null);
+
+            var profile = Assert.IsType<FriendDetailViewModel>(shell.SelectedFriendDetail);
+            Assert.Equal("usr_activity", profile.Id);
+            Assert.Equal("Live Activity", profile.DisplayName);
+            Assert.Equal(location, profile.JoinLocation);
+            Assert.True(profile.CanJoin);
+        });
+    }
+
+    [Fact]
     public void RefreshFriendProfileBypassesBothGroupCaches()
     {
         RunOnSta(() =>
@@ -155,6 +186,41 @@ public class MainViewModelSectionTests
         }
 
         failure?.Throw();
+    }
+
+    private sealed class ActivityProfileHandler : HttpMessageHandler
+    {
+        private int _profileGets;
+
+        public int ProfileGets => Volatile.Read(ref _profileGets);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.Contains("/profile/usr_activity", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _profileGets);
+                return Json("""
+                    {
+                      "id": "usr_activity",
+                      "displayName": "Live Activity",
+                      "bio": "Fetched from VRChat",
+                      "groups": { "count": 0, "list": [] },
+                      "representedGroup": null
+                    }
+                    """);
+            }
+
+            return Json("{}");
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
     }
 
     private sealed class RefreshHandler : HttpMessageHandler

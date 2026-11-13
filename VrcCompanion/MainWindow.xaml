@@ -2406,11 +2406,8 @@
                                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                                 <TextBlock Text="{Binding WorldName}" FontSize="11.5" FontWeight="SemiBold"
                                                                            Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0">
-                                                                    <Run Text="{Binding UsersText}" />
-                                                                    <Run Text=" · " />
-                                                                    <Run Text="{Binding AccessText}" />
-                                                                </TextBlock>
+                                                                <TextBlock Text="{Binding DetailsText}" FontSize="10"
+                                                                           Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" />
                                                             </StackPanel>
                                                             <Button Grid.Column="2"
                                                                     Content="Join"

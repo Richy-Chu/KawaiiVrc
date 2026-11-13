@@ -27,6 +27,9 @@ public sealed class GroupInstance
     [JsonIgnore]
     public string UsersText => MemberCount == 1 ? "1 person here" : $"{MemberCount} people here";
 
+    [JsonIgnore]
+    public string DetailsText => $"{UsersText} · {AccessText}";
+
     /// <summary>Turns VRChat's location tags into a short access label.</summary>
     [JsonIgnore]
     public string AccessText

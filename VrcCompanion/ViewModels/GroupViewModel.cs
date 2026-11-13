@@ -497,7 +497,7 @@ public sealed class GroupViewModel : ViewModelBase
         try
         {
             var instances = await _api.GetGroupInstancesAsync(groupId);
-            if (SelectedGroup?.Id != groupId)
+            if (SelectedGroup?.EffectiveId != groupId)
             {
                 return; // selection changed while loading
             }

@@ -1,5 +1,9 @@
 using System.Collections.Generic;
+using System.Net;
+using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -141,6 +145,32 @@ public class GroupInstanceTests
     }
 
     [Fact]
+    public async Task MembershipGroupInstancesSurviveGroupIdNormalization()
+    {
+        var api = new VrcApiClient(null, new GroupInstanceHandler());
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group
+            {
+                Id = "gmem_1",
+                GroupId = "grp_1",
+                Name = "Test Group",
+                MembershipStatus = "member"
+            }
+        };
+
+        var deadline = System.DateTime.UtcNow.AddSeconds(3);
+        while (vm.Instances.Count == 0 && System.DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        var instance = Assert.Single(vm.Instances);
+        Assert.Equal("The Great Pug", instance.WorldName);
+        Assert.Equal("wrld_test:12345~group(grp_1)", instance.Location);
+    }
+
+    [Fact]
     public void InvalidOrMissingLocationsCannotBeJoined()
     {
         var instance = new GroupInstance { Location = "not-a-location" };
@@ -148,5 +178,36 @@ public class GroupInstanceTests
         Assert.False(instance.CanJoin);
         Assert.Equal("Unknown world", instance.WorldName);
         Assert.Equal("Public", instance.AccessText);
+    }
+
+    private sealed class GroupInstanceHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.Contains("/groups/grp_1/instances", System.StringComparison.Ordinal))
+            {
+                return Json("""
+                    [
+                      {
+                        "instanceId": "12345~group(grp_1)",
+                        "location": "wrld_test:12345~group(grp_1)",
+                        "memberCount": 6,
+                        "world": { "name": "The Great Pug" }
+                      }
+                    ]
+                    """);
+            }
+
+            return Json("[]");
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
     }
 }
