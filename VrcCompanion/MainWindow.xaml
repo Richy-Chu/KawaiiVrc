@@ -2981,6 +2981,13 @@
                                            Style="{StaticResource MutedText}"
                                            VerticalAlignment="Center" />
                             </WrapPanel>
+                            <Button Content="Resume lyrics now"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Padding="12,6"
+                                    FontSize="11"
+                                    Margin="0,8,0,0"
+                                    HorizontalAlignment="Left"
+                                    Command="{Binding ChatboxViewModel.ResumeLyricsCommand}" />
                             <CheckBox Content="Show lyrics in rotation ({lyrics})"
                                       Style="{StaticResource FriendlyCheckBox}"
                                       IsChecked="{Binding ChatboxViewModel.ShowLyricsInRotation, Mode=TwoWay}"

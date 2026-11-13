@@ -29,7 +29,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private bool _showLyricsOnVrchat;
     private bool _pauseLyricsAfterMessage;
     private int _lyricsPauseSeconds;
-    private DateTime _lyricsPausedUntil = DateTime.MinValue;
+    private readonly LyricsPausePolicy _lyricsPause = new();
+    private readonly PlaybackPositionEstimator _position = new();
     private string _lyricsStatusText = "Play a track to look for free lyrics.";
     private int _plainLyricIndex;
     private string? _lastVrchatLyric;
@@ -93,7 +94,12 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _nowPlayingTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _nowPlayingTimer.Tick += (_, _) => _ = PollNowPlayingAsync();
         _lyricsDisplayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _lyricsDisplayTimer.Tick += (_, _) => UpdateVrchatLyrics();
+        _lyricsDisplayTimer.Tick += (_, _) =>
+        {
+            OnPropertyChanged(nameof(LyricsText));
+            UpdateVrchatLyrics();
+        };
+        _lyricsDisplayTimer.Start();
         _statusText = "Ready. Enable OSC in VRChat: Action Menu → Options → OSC.";
 
         SendCommand = new RelayCommand(Send, () => !string.IsNullOrWhiteSpace(MessageText));
@@ -102,6 +108,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         UseNowPlayingCommand = new RelayCommand(UseNowPlaying, () => CurrentTrack is not null);
         AddNowPlayingToRotationCommand = new RelayCommand(AddNowPlayingToRotation, () => CurrentTrack is not null);
         SendLyricCommand = new RelayCommand(SendLyric, () => HasLyrics);
+        ResumeLyricsCommand = new RelayCommand(ResumeLyricsNow, () => ShowLyricsOnVrchat && CurrentTrack is not null);
 
         _nowPlayingTimer.Start();
         if (_showLyricsOnVrchat)
@@ -133,6 +140,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     public RelayCommand SendLyricCommand { get; }
 
+    public RelayCommand ResumeLyricsCommand { get; }
+
     public NowPlayingInfo? CurrentTrack
     {
         get => _currentTrack;
@@ -147,10 +156,13 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(NowPlayingSource));
             OnPropertyChanged(nameof(HasNowPlaying));
             OnPropertyChanged(nameof(HasNothingPlaying));
+            _position.Update(value, DateTime.UtcNow);
             UseNowPlayingCommand.RaiseCanExecuteChanged();
             AddNowPlayingToRotationCommand.RaiseCanExecuteChanged();
+            ResumeLyricsCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(LyricsText));
             OnPropertyChanged(nameof(HasLyrics));
+            OnPropertyChanged(nameof(IsLyricsPaused));
             TrackChanged();
         }
     }
@@ -271,7 +283,9 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             _settings.ChatboxLyricsOnVrchat = value;
             _store.Save();
             _lastVrchatLyric = null;
-            _lyricsPausedUntil = DateTime.MinValue;
+            _lyricsPause.Resume();
+            OnPropertyChanged(nameof(IsLyricsPaused));
+            ResumeLyricsCommand.RaiseCanExecuteChanged();
 
             if (value)
             {
@@ -280,7 +294,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
                     IsRotating = false;
                 }
 
-                _lyricsDisplayTimer.Start();
                 StatusText = "Lyrics will appear on the VRChat chatbox. Typed messages still send.";
                 if (_lyrics is null && CurrentTrack is not null)
                 {
@@ -289,7 +302,6 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                _lyricsDisplayTimer.Stop();
                 StatusText = "VRChat lyrics display stopped.";
             }
         }
@@ -326,6 +338,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             _store.Save();
         }
     }
+
+    public bool IsLyricsPaused => _lyricsPause.IsPaused(DateTime.UtcNow);
 
     public bool ShowLyricsInRotation
     {
@@ -385,7 +399,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
                 return _lyricsStatusText;
             }
 
-            return _lyrics.PreviewLine(CurrentTrack.Position) ?? _lyricsStatusText;
+            return _lyrics.PreviewLine(EstimatedPosition()) ?? _lyricsStatusText;
         }
     }
 
@@ -519,7 +533,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void UpdateVrchatLyrics()
+    private void UpdateVrchatLyrics(bool force = false)
     {
         if (!_showLyricsOnVrchat || CurrentTrack is null)
         {
@@ -527,19 +541,19 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
 
         var now = DateTime.UtcNow;
-        if (now < _lyricsPausedUntil || now - _lastOscSend < TimeSpan.FromSeconds(5))
+        if (!force && (_lyricsPause.IsPaused(now) || now - _lastOscSend < TimeSpan.FromSeconds(5)))
         {
             return;
         }
 
         var line = _lyrics?.HasLyrics == true
             ? (_lyrics.IsSynced
-                ? _lyrics.LineAt(CurrentTrack.Position)
+                ? _lyrics.LineAt(EstimatedPosition())
                 : GetCurrentLyricLine(advancePlain: true))
             : null;
 
         var message = ChatboxLyrics.Compose(CurrentTrack.ChatboxText, line);
-        if (message == _lastVrchatLyric)
+        if (!force && message == _lastVrchatLyric)
         {
             return;
         }
@@ -557,6 +571,24 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             StatusText = $"Could not send lyrics to VRChat: {ex.Message}";
+        }
+    }
+
+    private void ResumeLyricsNow()
+    {
+        _lyricsPause.Resume();
+        OnPropertyChanged(nameof(IsLyricsPaused));
+        _lastVrchatLyric = null;
+        _lastOscSend = DateTime.MinValue;
+
+        if (_showLyricsOnVrchat && CurrentTrack is not null)
+        {
+            UpdateVrchatLyrics(force: true);
+            StatusText = "Lyrics resumed.";
+        }
+        else
+        {
+            StatusText = "Lyrics are not currently displayed.";
         }
     }
 
@@ -646,7 +678,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
         if (_lyrics.IsSynced)
         {
-            return _lyrics.LineAt(CurrentTrack?.Position ?? TimeSpan.Zero);
+            return _lyrics.LineAt(EstimatedPosition());
         }
 
         var lines = _lyrics.PlainLines;
@@ -727,10 +759,20 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
                 ? $"Sent rotation message: {preview}"
                 : $"Sent: {preview}";
 
-            if (pauseLyrics && !rotating && _showLyricsOnVrchat && _pauseLyricsAfterMessage)
+            if (_showLyricsOnVrchat && _pauseLyricsAfterMessage)
             {
-                _lyricsPausedUntil = DateTime.UtcNow.AddSeconds(_lyricsPauseSeconds);
-                StatusText += $" Lyrics paused for {_lyricsPauseSeconds}s.";
+                var kind = pauseLyrics && !rotating
+                    ? ChatboxMessageKind.Manual
+                    : rotating
+                        ? ChatboxMessageKind.Rotation
+                        : ChatboxMessageKind.Lyric;
+                _lyricsPause.OnMessageSent(kind, _lyricsPauseSeconds, DateTime.UtcNow);
+                OnPropertyChanged(nameof(IsLyricsPaused));
+
+                if (kind == ChatboxMessageKind.Manual)
+                {
+                    StatusText += $" Lyrics paused for {_lyricsPauseSeconds}s.";
+                }
             }
         }
         catch (Exception ex)
@@ -758,6 +800,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         return text;
     }
 
+    private TimeSpan EstimatedPosition() => _position.Estimate(CurrentTrack, DateTime.UtcNow);
+
     private void SaveMessages()
     {
         _settings.ChatboxMessages = RotationMessages.ToList();
@@ -780,4 +824,87 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _lyricsCancellation?.Dispose();
         _osc.Dispose();
     }
+}
+
+internal enum ChatboxMessageKind
+{
+    Manual,
+    Rotation,
+    Lyric
+}
+
+/// <summary>
+/// Decides when automatic lyrics should yield to a manual chatbox message.
+/// Rotation and explicit lyric sends deliberately do not pause the display.
+/// </summary>
+internal sealed class PlaybackPositionEstimator
+{
+    private string? _trackKey;
+    private TimeSpan _reportedPosition;
+    private TimeSpan _anchorPosition;
+    private DateTime _anchorAt;
+
+    public TimeSpan Update(NowPlayingInfo? track, DateTime now)
+    {
+        if (track is null)
+        {
+            _trackKey = null;
+            _reportedPosition = TimeSpan.Zero;
+            _anchorPosition = TimeSpan.Zero;
+            _anchorAt = now;
+            return TimeSpan.Zero;
+        }
+
+        var key = $"{track.Title}\u001f{track.Artist}";
+        if (key != _trackKey || track.Position != _reportedPosition)
+        {
+            _trackKey = key;
+            _reportedPosition = track.Position;
+            _anchorPosition = track.Position;
+            _anchorAt = now;
+        }
+
+        return Estimate(track, now);
+    }
+
+    public TimeSpan Estimate(NowPlayingInfo? track, DateTime now)
+    {
+        if (track is null)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var elapsed = now - _anchorAt;
+        if (elapsed < TimeSpan.Zero)
+        {
+            elapsed = TimeSpan.Zero;
+        }
+
+        var position = _anchorPosition + elapsed;
+        if (track.Duration > TimeSpan.Zero && position > track.Duration)
+        {
+            position = track.Duration;
+        }
+
+        return position;
+    }
+}
+
+internal sealed class LyricsPausePolicy
+{
+    public DateTime ResumeAt { get; private set; } = DateTime.MinValue;
+
+    public bool IsPaused(DateTime now) => now < ResumeAt;
+
+    public void OnMessageSent(ChatboxMessageKind kind, int pauseSeconds, DateTime now)
+    {
+        if (kind != ChatboxMessageKind.Manual)
+        {
+            return;
+        }
+
+        ResumeAt = now.AddSeconds(Math.Clamp(pauseSeconds, 5, 3600));
+    }
+
+    public void Resume() => ResumeAt = DateTime.MinValue;
 }
