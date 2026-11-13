@@ -19,14 +19,18 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private readonly LyricsService _lyricsService;
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _nowPlayingTimer;
+    private readonly DispatcherTimer _lyricsDisplayTimer;
     private NowPlayingInfo? _currentTrack;
     private bool _pollingNowPlaying;
     private LyricsDocument? _lyrics;
     private string? _lyricsTrackKey;
     private CancellationTokenSource? _lyricsCancellation;
     private bool _showLyrics;
+    private bool _showLyricsOnVrchat;
     private string _lyricsStatusText = "Play a track to look for free lyrics.";
     private int _plainLyricIndex;
+    private string? _lastVrchatLyric;
+    private DateTime _lastOscSend = DateTime.MinValue;
     private string _messageText = string.Empty;
     private string _statusText;
     private bool _isRotating;
@@ -75,10 +79,14 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             RotationMessages.Add("{lyrics}");
         }
 
+        _showLyricsOnVrchat = _settings.ChatboxLyricsOnVrchat;
+
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(_rotationSeconds) };
         _timer.Tick += (_, _) => RotateNext();
         _nowPlayingTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _nowPlayingTimer.Tick += (_, _) => _ = PollNowPlayingAsync();
+        _lyricsDisplayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _lyricsDisplayTimer.Tick += (_, _) => UpdateVrchatLyrics();
         _statusText = "Ready. Enable OSC in VRChat: Action Menu → Options → OSC.";
 
         SendCommand = new RelayCommand(Send, () => !string.IsNullOrWhiteSpace(MessageText));
@@ -89,6 +97,11 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         SendLyricCommand = new RelayCommand(SendLyric, () => HasLyrics);
 
         _nowPlayingTimer.Start();
+        if (_showLyricsOnVrchat)
+        {
+            _lyricsDisplayTimer.Start();
+        }
+
         _ = PollNowPlayingAsync();
 
         if (_settings.ChatboxRotateEnabled && RotationMessages.Count > 0)
@@ -237,6 +250,43 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Shows the current lyric line in the chatbox through {lyrics}.</summary>
+    /// <summary>Sends the current lyric line to the VRChat chatbox automatically.</summary>
+    public bool ShowLyricsOnVrchat
+    {
+        get => _showLyricsOnVrchat;
+        set
+        {
+            if (!SetProperty(ref _showLyricsOnVrchat, value))
+            {
+                return;
+            }
+
+            _settings.ChatboxLyricsOnVrchat = value;
+            _store.Save();
+            _lastVrchatLyric = null;
+
+            if (value)
+            {
+                if (IsRotating)
+                {
+                    IsRotating = false;
+                }
+
+                _lyricsDisplayTimer.Start();
+                StatusText = "Lyrics will appear on the VRChat chatbox. Typed messages still send.";
+                if (_lyrics is null && CurrentTrack is not null)
+                {
+                    TrackChanged(force: true);
+                }
+            }
+            else
+            {
+                _lyricsDisplayTimer.Stop();
+                StatusText = "VRChat lyrics display stopped.";
+            }
+        }
+    }
+
     public bool ShowLyricsInRotation
     {
         get => _showLyrics;
@@ -429,6 +479,42 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void UpdateVrchatLyrics()
+    {
+        if (!_showLyricsOnVrchat || CurrentTrack is null || _lyrics is null || !_lyrics.HasLyrics)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        if (now - _lastOscSend < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        var line = _lyrics.IsSynced
+            ? _lyrics.LineAt(CurrentTrack.Position)
+            : GetCurrentLyricLine(advancePlain: true);
+
+        if (string.IsNullOrWhiteSpace(line) || line == _lastVrchatLyric)
+        {
+            return;
+        }
+
+        try
+        {
+            _osc.SendChatbox(line);
+            _lastOscSend = now;
+            _lastVrchatLyric = line;
+            var preview = line.Length > 48 ? line[..48] + "…" : line;
+            StatusText = $"Lyrics on VRChat: {preview}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Could not send lyrics to VRChat: {ex.Message}";
+        }
+    }
+
     private void SendLyric()
     {
         var line = GetCurrentLyricLine(advancePlain: true);
@@ -467,6 +553,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
         _lyricsCancellation?.Cancel();
         _lyricsTrackKey = key;
+        _lastVrchatLyric = null;
         _ = LoadLyricsAsync(track, key);
     }
 
@@ -493,6 +580,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             }
 
             _lyrics = result.Lyrics;
+            _lastVrchatLyric = null;
             LyricsStatusText = result.Status;
             OnPropertyChanged(nameof(LyricsText));
             OnPropertyChanged(nameof(HasLyrics));
@@ -587,6 +675,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         try
         {
             _osc.SendChatbox(text);
+            _lastOscSend = DateTime.UtcNow;
+            _lastVrchatLyric = null;
             var preview = text.Length > 48 ? text[..48] + "…" : text;
             StatusText = rotating
                 ? $"Sent rotation message: {preview}"
@@ -634,6 +724,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _disposed = true;
         _timer.Stop();
         _nowPlayingTimer.Stop();
+        _lyricsDisplayTimer.Stop();
         _lyricsCancellation?.Cancel();
         _lyricsCancellation?.Dispose();
         _osc.Dispose();

@@ -71,6 +71,9 @@ public sealed class CompanionSettings
 
     [JsonPropertyName("chatboxShowLyrics")]
     public bool ChatboxShowLyrics { get; set; }
+
+    [JsonPropertyName("chatboxLyricsOnVrchat")]
+    public bool ChatboxLyricsOnVrchat { get; set; }
 }
 
 /// <summary>
