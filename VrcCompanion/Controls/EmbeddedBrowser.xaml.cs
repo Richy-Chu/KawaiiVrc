@@ -131,6 +131,9 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         }
     }
 
+    internal Task InitializeForTestAsync()
+        => EnsureBrowserAsync();
+
     private Task EnsureBrowserAsync()
         => _initialization ??= InitializeBrowserAsync();
 
@@ -443,33 +446,20 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     }
 
     private void ExitFocus_Click(object sender, RoutedEventArgs e)
-    {
-        if (_viewModel is { IsFocusMode: true })
-        {
-            _viewModel.IsFocusMode = false;
-        }
-    }
+        => ExitFocus();
 
     private void Browser_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Escape || _viewModel?.IsFocusMode != true)
+        if (e.Key == Key.Escape && ExitFocus())
         {
-            return;
+            e.Handled = true;
         }
-
-        _viewModel.IsFocusMode = false;
-        e.Handled = true;
     }
 
     private void OnWebMessageReceived(
         object? sender,
         CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (_viewModel?.IsFocusMode != true)
-        {
-            return;
-        }
-
         try
         {
             if (string.Equals(
@@ -477,12 +467,23 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
                     "browser-focus-escape",
                     StringComparison.Ordinal))
             {
-                _viewModel.IsFocusMode = false;
+                ExitFocus();
             }
         }
         catch (InvalidOperationException)
         {
             // The page posted a non-string message; it is not our shortcut.
         }
+    }
+
+    private bool ExitFocus()
+    {
+        if (_viewModel?.IsFocusMode != true)
+        {
+            return false;
+        }
+
+        _viewModel.IsFocusMode = false;
+        return true;
     }
 }

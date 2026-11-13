@@ -9,8 +9,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <StackPanel x:Name="NormalToolbar"
-                    Tag="BrowserNormalToolbar"
+        <StackPanel Tag="BrowserNormalToolbar"
                     Orientation="Horizontal"
                     Margin="0,0,0,8"
                     Visibility="{Binding IsFocusMode, Converter={StaticResource InverseBoolToVis}}">
@@ -30,8 +29,7 @@
                     Click="Refresh_Click" />
         </StackPanel>
 
-        <Border x:Name="FocusToolbar"
-                Tag="BrowserFocusToolbar"
+        <Border Tag="BrowserFocusToolbar"
                 Margin="0,0,0,8"
                 Padding="6,4"
                 Background="{StaticResource InputBrush}"

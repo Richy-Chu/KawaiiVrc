@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.ExceptionServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 using VrcCompanion;
@@ -37,6 +38,38 @@ internal static class WpfTestHost
         {
             ExceptionDispatchInfo.Capture(failure).Throw();
         }
+    }
+
+    public static void RunAsync(Func<Task> action)
+    {
+        Run(() =>
+        {
+            var frame = new DispatcherFrame();
+            Exception? failure = null;
+            Dispatcher.CurrentDispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(async () =>
+                {
+                    try
+                    {
+                        await action();
+                    }
+                    catch (Exception ex)
+                    {
+                        failure = ex;
+                    }
+                    finally
+                    {
+                        frame.Continue = false;
+                    }
+                }));
+            Dispatcher.PushFrame(frame);
+
+            if (failure is not null)
+            {
+                ExceptionDispatchInfo.Capture(failure).Throw();
+            }
+        });
     }
 
     private static Dispatcher EnsureStarted()
