@@ -3257,7 +3257,7 @@
                                                             ClipToBounds="True"
                                                             Background="#151A24">
                                                         <controls:AsyncImage SourceUrl="{Binding Path}"
-                                                                             DecodeWidth="320"
+                                                                             DecodeWidth="160"
                                                                              CornerRadius="8" />
                                                     </Border>
                                                 </Button>

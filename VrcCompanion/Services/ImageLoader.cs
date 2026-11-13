@@ -12,8 +12,8 @@ namespace VrcCompanion.Services;
 
 /// <summary>
 /// Shared avatar/world image cache. Images are downloaded outside the API
-/// throttle, decoded to the size the UI actually needs, kept in memory for the
-/// session, and written to a disk cache so reopening the app is instant.
+/// throttle, decoded to the size the UI actually needs, kept in a bounded
+/// in-memory cache, and written to a disk cache so reopening the app is instant.
 ///
 /// WPF's decoder is used first. VRChat increasingly serves WebP files, which
 /// older Windows installs cannot open, so SkiaSharp (MIT licensed) is used as
@@ -33,6 +33,10 @@ public sealed class ImageLoader : IDisposable
     private readonly HttpClient _http;
     private readonly ConcurrentDictionary<string, MemoryEntry> _memory = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Task<ImageSource?>> _inflight = new(StringComparer.Ordinal);
+    private readonly object _memoryGate = new();
+    private const long MaxMemoryBytes = 64L * 1024 * 1024;
+    private const int MaxMemoryEntries = 96;
+    private long _memoryBytes;
     private readonly SemaphoreSlim _gate = new(4, 4);
     private readonly SemaphoreSlim _fileGate = new(3, 3);
     private readonly SemaphoreSlim _decodeGate = new(3, 3);
@@ -404,21 +408,34 @@ public sealed class ImageLoader : IDisposable
 
     private void AddToMemory(string key, ImageSource image)
     {
-        _memory[key] = new MemoryEntry(image, DateTimeOffset.UtcNow);
-        if (_memory.Count <= 256)
+        var bytes = EstimateBytes(image);
+        lock (_memoryGate)
         {
-            return;
-        }
+            if (_memory.TryRemove(key, out var previous))
+            {
+                _memoryBytes -= previous.Bytes;
+            }
 
-        foreach (var entry in _memory
-                     .OrderBy(pair => pair.Value.UsedAt)
-                     .Take(64)
-                     .Select(pair => pair.Key)
-                     .ToList())
-        {
-            _memory.TryRemove(entry, out _);
+            _memory[key] = new MemoryEntry(image, DateTimeOffset.UtcNow, bytes);
+            _memoryBytes += bytes;
+
+            while (_memory.Count > MaxMemoryEntries || _memoryBytes > MaxMemoryBytes)
+            {
+                var oldest = _memory.OrderBy(pair => pair.Value.UsedAt).FirstOrDefault();
+                if (oldest.Key is null || !_memory.TryRemove(oldest.Key, out var removed))
+                {
+                    break;
+                }
+
+                _memoryBytes -= removed.Bytes;
+            }
         }
     }
+
+    private static long EstimateBytes(ImageSource image)
+        => image is BitmapSource bitmap
+            ? (long)bitmap.PixelWidth * bitmap.PixelHeight * 4
+            : 0;
 
     private string? GetCachePath(string url, string extension = ".img")
     {
@@ -472,13 +489,15 @@ public sealed class ImageLoader : IDisposable
 
     private sealed class MemoryEntry
     {
-        public MemoryEntry(ImageSource image, DateTimeOffset usedAt)
+        public MemoryEntry(ImageSource image, DateTimeOffset usedAt, long bytes)
         {
             Image = image;
             UsedAt = usedAt;
+            Bytes = bytes;
         }
 
         public ImageSource Image { get; }
         public DateTimeOffset UsedAt { get; set; }
+        public long Bytes { get; }
     }
 }

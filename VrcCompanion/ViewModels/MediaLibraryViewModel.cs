@@ -20,7 +20,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private readonly Func<string, IProgress<int>?, IReadOnlyList<MediaGroup>> _scan;
     private readonly Action<string> _openPath;
     private readonly string _cachePath;
-    private const int DisplayLimit = 240;
+    private const int DisplayLimit = 48;
 
     private bool _loaded;
     private bool _isBusy;
@@ -292,6 +292,16 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsShowingAll));
         OnPropertyChanged(nameof(ShowAllText));
         RebuildDisplayedGroups();
+    }
+
+    /// <summary>
+    /// Drops the rendered media cards when the tab is left. The grid is not
+    /// virtualized, so keeping its decoded thumbnails alive would retain the
+    /// whole picture library even while another section is on screen.
+    /// </summary>
+    public void UnloadDisplay()
+    {
+        DisplayedGroups.Clear();
     }
 
     private void RebuildDisplayedGroups()

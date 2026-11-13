@@ -414,9 +414,23 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         get => _selectedSection;
         set
         {
-            if (value is null || !SetProperty(ref _selectedSection, value))
+            if (value is null)
             {
                 return;
+            }
+
+            // Media is the one section that renders a whole grid of bitmap
+            // cards. Unload that visual tree as soon as the section is left so
+            // its decoded thumbnails are not kept for the rest of the session.
+            var leavingMedia = _selectedSection.Key == "media" && value.Key != "media";
+            if (!SetProperty(ref _selectedSection, value))
+            {
+                return;
+            }
+
+            if (leavingMedia)
+            {
+                MediaViewModel.UnloadDisplay();
             }
 
             OnPropertyChanged(nameof(SectionTitle));
