@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using VrcCompanion.Controls;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
 using Xunit;
@@ -175,6 +177,69 @@ public class MainWindowLayoutTests
                 AssertChrome(Visibility.Visible);
                 Assert.Equal(Visibility.Collapsed, focusToolbar.Visibility);
                 Assert.Equal(Visibility.Visible, normalToolbar.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void FocusToolbarShowsPageContextAndNavigationAvailability()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            var browserSection = shell.Sections.Single(section => section.Key == "brave");
+            var window = new MainWindow(shell, initializeOnLoad: false)
+            {
+                Width = 1100,
+                Height = 720,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = 100,
+                Top = 100
+            };
+
+            try
+            {
+                window.Show();
+                shell.SelectedSection = browserSection;
+                shell.BraveBrowserViewModel.SetBrowserLocation(
+                    "https://example.com/focus",
+                    "Focus page");
+                shell.BraveBrowserViewModel.IsFocusMode = true;
+                window.UpdateLayout();
+
+                var focusToolbar = FindVisualChildren<Border>(window)
+                    .Single(element => Equals(element.Tag, "BrowserFocusToolbar"));
+                var labels = FindVisualChildren<TextBlock>(focusToolbar)
+                    .Select(text => text.Text)
+                    .ToArray();
+                Assert.Contains("Focus page", labels);
+                Assert.Contains("https://example.com/focus", labels);
+
+                var back = FindVisualChildren<Button>(focusToolbar)
+                    .Single(button =>
+                        AutomationProperties.GetAutomationId(button) == "BrowserFocusBackButton");
+                var forward = FindVisualChildren<Button>(focusToolbar)
+                    .Single(button =>
+                        AutomationProperties.GetAutomationId(button) == "BrowserFocusForwardButton");
+                Assert.False(back.IsEnabled);
+                Assert.False(forward.IsEnabled);
+
+                var browser = FindVisualChildren<EmbeddedBrowser>(window)
+                    .Single(element => element.IsVisible);
+                browser.SetValue(EmbeddedBrowser.CanGoBackProperty, true);
+                browser.SetValue(EmbeddedBrowser.CanGoForwardProperty, true);
+                window.UpdateLayout();
+
+                Assert.True(back.IsEnabled);
+                Assert.True(forward.IsEnabled);
             }
             finally
             {

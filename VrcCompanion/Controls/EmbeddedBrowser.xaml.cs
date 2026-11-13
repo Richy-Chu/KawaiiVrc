@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
@@ -18,10 +19,37 @@ namespace VrcCompanion.Controls;
 /// </summary>
 public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 {
-    private const string EscapeShortcutScript = """
+    public static readonly DependencyProperty CanGoBackProperty = DependencyProperty.Register(
+        nameof(CanGoBack),
+        typeof(bool),
+        typeof(EmbeddedBrowser),
+        new PropertyMetadata(false));
+
+    public static readonly DependencyProperty CanGoForwardProperty = DependencyProperty.Register(
+        nameof(CanGoForward),
+        typeof(bool),
+        typeof(EmbeddedBrowser),
+        new PropertyMetadata(false));
+
+    private const string FocusShortcutScript = """
+        window.__vrcFocusMode = false;
         window.addEventListener('keydown', (event) => {
           if (event.key === 'Escape') {
             window.chrome.webview.postMessage('browser-focus-escape');
+            return;
+          }
+
+          if (window.__vrcFocusMode !== true) return;
+
+          if (event.altKey && event.key === 'ArrowLeft') {
+            event.preventDefault();
+            window.chrome.webview.postMessage('browser-focus-back');
+          } else if (event.altKey && event.key === 'ArrowRight') {
+            event.preventDefault();
+            window.chrome.webview.postMessage('browser-focus-forward');
+          } else if (event.key === 'F5' || (event.ctrlKey && event.key.toLowerCase() === 'r')) {
+            event.preventDefault();
+            window.chrome.webview.postMessage('browser-focus-refresh');
           }
         }, true);
         """;
@@ -39,6 +67,18 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         IsVisibleChanged += OnIsVisibleChanged;
     }
 
+    public bool CanGoBack
+    {
+        get => (bool)GetValue(CanGoBackProperty);
+        private set => SetValue(CanGoBackProperty, value);
+    }
+
+    public bool CanGoForward
+    {
+        get => (bool)GetValue(CanGoForwardProperty);
+        private set => SetValue(CanGoForwardProperty, value);
+    }
+
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
         => UpdateMemoryTargetLevel();
 
@@ -53,6 +93,10 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         if (_viewModel is not null)
         {
             _viewModel.BrowserNavigationRequested += OnBrowserNavigationRequested;
+            if (_viewModel is INotifyPropertyChanged notifier)
+            {
+                notifier.PropertyChanged += OnViewModelPropertyChanged;
+            }
             if (_viewModel is IEmbeddedBrowserAutomationHost automationHost)
             {
                 automationHost.Automation = this;
@@ -228,6 +272,10 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         if (_viewModel is not null)
         {
             _viewModel.BrowserNavigationRequested -= OnBrowserNavigationRequested;
+            if (_viewModel is INotifyPropertyChanged notifier)
+            {
+                notifier.PropertyChanged -= OnViewModelPropertyChanged;
+            }
             if (_viewModel is IEmbeddedBrowserAutomationHost automationHost)
             {
                 automationHost.Automation = null;
@@ -243,6 +291,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
                 core.NewWindowRequested -= OnNewWindowRequested;
                 core.DownloadStarting -= OnDownloadStarting;
                 core.SourceChanged -= OnSourceChanged;
+                core.NavigationCompleted -= OnNavigationCompleted;
                 core.DocumentTitleChanged -= OnDocumentTitleChanged;
                 core.WebMessageReceived -= OnWebMessageReceived;
             }
@@ -269,16 +318,19 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         core.NewWindowRequested += OnNewWindowRequested;
         core.DownloadStarting += OnDownloadStarting;
         core.SourceChanged += OnSourceChanged;
+        core.NavigationCompleted += OnNavigationCompleted;
         core.DocumentTitleChanged += OnDocumentTitleChanged;
         core.WebMessageReceived += OnWebMessageReceived;
         try
         {
-            await core.AddScriptToExecuteOnDocumentCreatedAsync(EscapeShortcutScript);
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(FocusShortcutScript);
         }
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
         }
+        UpdateNavigationState();
+        await SetPageFocusModeAsync(_viewModel?.IsFocusMode == true);
         UpdateMemoryTargetLevel();
     }
 
@@ -305,7 +357,51 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     }
 
     private void OnSourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
-        => RememberCurrentLocation();
+    {
+        RememberCurrentLocation();
+        UpdateNavigationState();
+    }
+
+    private void OnNavigationCompleted(
+        object? sender,
+        CoreWebView2NavigationCompletedEventArgs e)
+    {
+        UpdateNavigationState();
+        _ = SetPageFocusModeAsync(_viewModel?.IsFocusMode == true);
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(IEmbeddedBrowserHost.IsFocusMode))
+        {
+            _ = SetPageFocusModeAsync(_viewModel?.IsFocusMode == true);
+        }
+    }
+
+    private async Task SetPageFocusModeAsync(bool focused)
+    {
+        if (Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            await core.ExecuteScriptAsync(
+                $"window.__vrcFocusMode = {focused.ToString().ToLowerInvariant()};");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    private void UpdateNavigationState()
+    {
+        var core = Browser.CoreWebView2;
+        CanGoBack = core?.CanGoBack == true;
+        CanGoForward = core?.CanGoForward == true;
+    }
 
     private void OnDocumentTitleChanged(object? sender, object e)
         => RememberCurrentLocation();
@@ -423,7 +519,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             _ => reason.ToString()
         };
 
-    private void Back_Click(object sender, RoutedEventArgs e)
+    public void GoBack()
     {
         if (Browser.CoreWebView2?.CanGoBack == true)
         {
@@ -431,7 +527,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         }
     }
 
-    private void Forward_Click(object sender, RoutedEventArgs e)
+    public void GoForward()
     {
         if (Browser.CoreWebView2?.CanGoForward == true)
         {
@@ -439,10 +535,19 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         }
     }
 
-    private void Refresh_Click(object sender, RoutedEventArgs e)
+    public void Reload()
     {
         Browser.CoreWebView2?.Reload();
     }
+
+    private void Back_Click(object sender, RoutedEventArgs e)
+        => GoBack();
+
+    private void Forward_Click(object sender, RoutedEventArgs e)
+        => GoForward();
+
+    private void Refresh_Click(object sender, RoutedEventArgs e)
+        => Reload();
 
     private void ExitFocus_Click(object sender, RoutedEventArgs e)
         => ExitFocus();
@@ -451,19 +556,32 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         object? sender,
         CoreWebView2WebMessageReceivedEventArgs e)
     {
+        if (_viewModel?.IsFocusMode != true)
+        {
+            return;
+        }
+
         try
         {
-            if (string.Equals(
-                    e.TryGetWebMessageAsString(),
-                    "browser-focus-escape",
-                    StringComparison.Ordinal))
+            switch (e.TryGetWebMessageAsString())
             {
-                ExitFocus();
+                case "browser-focus-escape":
+                    ExitFocus();
+                    break;
+                case "browser-focus-back":
+                    GoBack();
+                    break;
+                case "browser-focus-forward":
+                    GoForward();
+                    break;
+                case "browser-focus-refresh":
+                    Reload();
+                    break;
             }
         }
         catch (InvalidOperationException)
         {
-            // The page posted a non-string message; it is not our shortcut.
+            // The page posted a non-string message; it is not one of our shortcuts.
         }
     }
 

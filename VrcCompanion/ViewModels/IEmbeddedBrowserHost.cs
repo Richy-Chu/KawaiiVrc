@@ -15,6 +15,8 @@ public interface IEmbeddedBrowserHost
 
     string BrowserUrl { get; }
 
+    string BrowserTitle { get; }
+
     void SetBrowserLocation(string url, string title);
 
     void SetBrowserError(string message);

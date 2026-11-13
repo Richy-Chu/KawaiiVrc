@@ -7,7 +7,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
+using VrcCompanion.Controls;
 using VrcCompanion.ViewModels;
 
 namespace VrcCompanion;
@@ -83,6 +85,12 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        if (_viewModel.IsAnyBrowserFocused && TryHandleBrowserFocusShortcut(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Escape)
         {
             if (_viewModel.IsLaunchChooserOpen)
@@ -114,6 +122,68 @@ public partial class MainWindow : Window
         }
 
         base.OnPreviewKeyDown(e);
+    }
+
+    private bool TryHandleBrowserFocusShortcut(KeyEventArgs e)
+    {
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var modifiers = Keyboard.Modifiers;
+        var browser = FindVisibleBrowser();
+        if (browser is null)
+        {
+            return false;
+        }
+
+        if (key == Key.Left && modifiers.HasFlag(ModifierKeys.Alt))
+        {
+            browser.GoBack();
+            return true;
+        }
+
+        if (key == Key.Right && modifiers.HasFlag(ModifierKeys.Alt))
+        {
+            browser.GoForward();
+            return true;
+        }
+
+        if (key == Key.F5 ||
+            (key == Key.R && modifiers.HasFlag(ModifierKeys.Control)))
+        {
+            browser.Reload();
+            return true;
+        }
+
+        return false;
+    }
+
+    private EmbeddedBrowser? FindVisibleBrowser()
+    {
+        foreach (var browser in FindVisualChildren<EmbeddedBrowser>(SectionHost))
+        {
+            if (browser.IsVisible)
+            {
+                return browser;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        if (root is T match)
+        {
+            yield return match;
+        }
+
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            foreach (var child in FindVisualChildren<T>(VisualTreeHelper.GetChild(root, index)))
+            {
+                yield return child;
+            }
+        }
     }
 
     private async void Login_Click(object sender, RoutedEventArgs e)
