@@ -5,6 +5,7 @@ using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -531,6 +532,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         if (!TryBuildAddressUri(FocusAddressBox.Text, out var uri))
         {
             _viewModel?.SetBrowserError("Enter a valid http or https address.");
+            AnnounceFocusAddressError();
             return;
         }
 
@@ -550,6 +552,22 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             Debug.WriteLine(ex);
             _viewModel?.SetBrowserError("The in-app browser could not navigate to that address.");
         }
+    }
+
+    private void AnnounceFocusAddressError()
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            new Action(() =>
+            {
+                if (FocusAddressError.Text.Length == 0)
+                {
+                    return;
+                }
+
+                var peer = UIElementAutomationPeer.CreatePeerForElement(FocusAddressError);
+                peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+            }));
     }
 
     internal static bool TryBuildAddressUri(string? input, out Uri uri)

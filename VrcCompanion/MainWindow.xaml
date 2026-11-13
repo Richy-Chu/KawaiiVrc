@@ -2724,7 +2724,8 @@
                                   Style="{StaticResource BrowserFocusToggle}" />
                     <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserError}"
                                Foreground="{StaticResource ErrorTextBrush}"
-                               TextWrapping="Wrap" />
+                               TextWrapping="Wrap"
+                               Visibility="{Binding CreatorResourcesViewModel.IsFocusMode, Converter={StaticResource InverseBoolToVis}}" />
                     <TextBlock Text="{Binding CreatorResourcesViewModel.DownloadStatus}"
                                TextWrapping="Wrap">
                         <TextBlock.Style>
@@ -2862,7 +2863,8 @@
                                           Style="{StaticResource BrowserFocusToggle}" />
                             <TextBlock Text="{Binding BraveBrowserViewModel.BrowserError}"
                                        Foreground="{StaticResource ErrorTextBrush}"
-                                       TextWrapping="Wrap" />
+                                       TextWrapping="Wrap"
+                                       Visibility="{Binding BraveBrowserViewModel.IsFocusMode, Converter={StaticResource InverseBoolToVis}}" />
                             <TextBlock Text="{Binding BraveBrowserViewModel.DownloadStatus}"
                                        TextWrapping="Wrap">
                                 <TextBlock.Style>
@@ -3010,7 +3012,8 @@
                                           Style="{StaticResource BrowserFocusToggle}" />
                             <TextBlock Text="{Binding DiscordBrowserViewModel.BrowserError}"
                                        Foreground="{StaticResource ErrorTextBrush}"
-                                       TextWrapping="Wrap" />
+                                       TextWrapping="Wrap"
+                                       Visibility="{Binding DiscordBrowserViewModel.IsFocusMode, Converter={StaticResource InverseBoolToVis}}" />
                             <TextBlock Text="{Binding DiscordBrowserViewModel.DownloadStatus}"
                                        TextWrapping="Wrap">
                                 <TextBlock.Style>

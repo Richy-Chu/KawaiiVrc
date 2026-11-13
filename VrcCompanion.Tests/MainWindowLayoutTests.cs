@@ -340,15 +340,26 @@ public class MainWindowLayoutTests
                 Assert.Equal(message, GetBrowserError());
                 Assert.Equal(pageUrl, host.BrowserUrl);
 
-                var feedback = FindVisualChildren<TextBlock>(window)
+                var focusToolbar = FindVisualChildren<Border>(window)
+                    .Single(element => Equals(element.Tag, "BrowserFocusToolbar"));
+                var feedback = FindVisualChildren<TextBlock>(focusToolbar)
                     .Single(text =>
-                        text.Text == message &&
-                        text.GetBindingExpression(TextBlock.TextProperty)
-                            ?.ParentBinding.Path.Path
-                            ?.EndsWith(".BrowserError", StringComparison.Ordinal) == true);
+                        AutomationProperties.GetAutomationId(text) == "BrowserFocusAddressError");
+                Assert.Equal(message, feedback.Text);
                 Assert.True(
                     feedback.IsVisible,
                     $"Invalid-address feedback should be visible for {sectionKey} in focus mode.");
+                Assert.Equal(
+                    AutomationLiveSetting.Assertive,
+                    AutomationProperties.GetLiveSetting(feedback));
+
+                var otherFeedback = FindVisualChildren<TextBlock>(window)
+                    .Where(text => text.Text == message && !ReferenceEquals(text, feedback));
+                Assert.All(
+                    otherFeedback,
+                    text => Assert.False(
+                        text.IsVisible,
+                        $"The {sectionKey} focus mode should not duplicate feedback outside the toolbar."));
 
                 var feedbackBounds = BoundsWithin(feedback, window);
                 var addressBounds = BoundsWithin(address, window);

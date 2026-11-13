@@ -102,6 +102,24 @@
                              AutomationProperties.AutomationId="BrowserFocusAddressBox"
                              AutomationProperties.Name="Address"
                              KeyDown="FocusAddressBox_KeyDown" />
+                    <TextBlock x:Name="FocusAddressError"
+                               Text="{Binding BrowserError}"
+                               Foreground="{StaticResource ErrorTextBrush}"
+                               FontSize="10"
+                               Margin="0,2,0,0"
+                               TextWrapping="Wrap"
+                               AutomationProperties.AutomationId="BrowserFocusAddressError"
+                               AutomationProperties.LiveSetting="Assertive">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BrowserError}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
 
                 <Button Grid.Column="2"
