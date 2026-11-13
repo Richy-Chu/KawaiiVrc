@@ -28,7 +28,11 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     {
         InitializeComponent();
         Loaded += OnLoaded;
+        IsVisibleChanged += OnIsVisibleChanged;
     }
+
+    private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+        => UpdateMemoryTargetLevel();
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -249,6 +253,28 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         core.DownloadStarting += OnDownloadStarting;
         core.SourceChanged += OnSourceChanged;
         core.DocumentTitleChanged += OnDocumentTitleChanged;
+        UpdateMemoryTargetLevel();
+    }
+
+    // Hidden tabs keep their page and call alive while Chromium releases memory.
+    // TrySuspendAsync would stop the call, so use the target level instead.
+    private void UpdateMemoryTargetLevel()
+    {
+        if (_disposed || Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            core.MemoryUsageTargetLevel = IsVisible
+                ? CoreWebView2MemoryUsageTargetLevel.Normal
+                : CoreWebView2MemoryUsageTargetLevel.Low;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
     }
 
     private void OnSourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
