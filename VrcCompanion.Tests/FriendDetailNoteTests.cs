@@ -80,6 +80,30 @@ public class FriendDetailNoteTests : IDisposable
     }
 
     [Fact]
+    public void OwnRepresentedGroupChipShowsJoinedAndNeverMutual()
+    {
+        var profile = new FriendDetailViewModel(
+            new FriendItem(new VrcUser { Id = "usr_me", DisplayName = "Me", Username = "me" }),
+            new VrcApiClient(),
+            ImageLoader.Shared,
+            new FriendNotesStore(NotesPath),
+            isSelf: true);
+        profile.Profile = new VrcProfile
+        {
+            RepresentedGroup = new VrcProfileGroup { Id = "grp_shared", Name = "Shared" }
+        };
+
+        profile.AnnotateRepresentedGroup(new[]
+        {
+            new Group { Id = "grp_shared", Name = "Shared" }
+        });
+
+        Assert.True(profile.RepresentedGroup?.IsMine);
+        Assert.False(profile.RepresentedGroup?.IsMutual);
+        Assert.Equal("Joined", profile.RepresentedGroup?.MembershipLabel);
+    }
+
+    [Fact]
     public void SharedRepresentedGroupChipShowsMutual()
     {
         var profile = CreateProfile(new FriendNotesStore(NotesPath));
