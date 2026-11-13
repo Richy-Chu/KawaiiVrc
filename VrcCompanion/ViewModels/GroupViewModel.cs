@@ -37,6 +37,7 @@ public sealed class GroupViewModel : ViewModelBase
     private bool _isGroupInfoBusy;
     private string? _groupInfoError;
     private bool _isMemberOfGroupInfo;
+    private bool _isMutualGroupInfo;
     private bool _isLeaveGroupConfirmOpen;
     private ObservableCollection<GroupInstance> _groupInfoInstances = new();
     private bool _isLoadingGroupInfoInstances;
@@ -73,12 +74,18 @@ public sealed class GroupViewModel : ViewModelBase
             () => SelectedGroup is not null));
         RefreshInstancesCommand = Track(new AsyncRelayCommand(LoadGroupInstancesAsync, () => SelectedGroup is not null && !IsBusy));
         JoinGroupInstanceCommand = Track(new RelayCommand<GroupInstance>(JoinGroupInstance, instance => instance?.CanJoin == true));
-        CloseGroupInfoCommand = Track(new RelayCommand(() => IsGroupInfoOpen = false));
+        CloseGroupInfoCommand = Track(new RelayCommand(CloseGroupInfo));
         JoinGroupInfoCommand = Track(new AsyncRelayCommand(JoinGroupInfoAsync, () => GroupInfo is not null && IsGroupJoinOpen && !IsGroupInfoBusy && !IsMemberOfGroupInfo));
         LeaveGroupInfoCommand = Track(new AsyncRelayCommand(LeaveGroupInfoAsync, () => GroupInfo is not null && !IsGroupInfoBusy && IsMemberOfGroupInfo));
         OpenGroupInfoOnWebCommand = Track(new RelayCommand(OpenGroupInfoOnWeb, () => GroupInfo is not null));
         RequestLeaveGroupCommand = Track(new RelayCommand(() => IsLeaveGroupConfirmOpen = true, () => GroupInfo is not null && IsMemberOfGroupInfo && !IsGroupInfoBusy));
         CancelLeaveGroupCommand = Track(new RelayCommand(() => IsLeaveGroupConfirmOpen = false));
+    }
+
+    private void CloseGroupInfo()
+    {
+        IsGroupInfoOpen = false;
+        GroupInfoIsMutual = false;
     }
 
     public ObservableCollection<Group> Groups
@@ -234,6 +241,13 @@ public sealed class GroupViewModel : ViewModelBase
     }
 
     public bool HasGroupInfoMembershipLabel => GroupInfoMembershipLabel.Length > 0;
+
+    /// <summary>True when the group is shared with the profile it was opened from.</summary>
+    public bool GroupInfoIsMutual
+    {
+        get => _isMutualGroupInfo;
+        private set => SetProperty(ref _isMutualGroupInfo, value);
+    }
 
     public bool IsGroupJoinOpen => string.Equals(GroupInfo?.JoinState, "open", StringComparison.OrdinalIgnoreCase);
 
@@ -523,14 +537,15 @@ public sealed class GroupViewModel : ViewModelBase
     /// Opens a group from anywhere in the app (a friend's profile chip, the
     /// signed-in account's own groups) with real group data and join/leave.
     /// </summary>
-    public async Task OpenGroupInfoAsync(string groupId)
+    public async Task OpenGroupInfoAsync(string groupId, bool isMutual = false)
     {
         if (string.IsNullOrWhiteSpace(groupId))
         {
             return;
         }
 
-                IsGroupInfoOpen = true;
+        GroupInfoIsMutual = isMutual;
+        IsGroupInfoOpen = true;
         IsGroupInfoBusy = true;
         GroupInfoError = null;
         GroupInfo = null;

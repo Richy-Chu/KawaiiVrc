@@ -43,9 +43,25 @@ public class MyGroupsCacheTests
         Assert.Equal("grp_1", Assert.Single(first).EffectiveId);
     }
 
+    [Fact]
+    public async Task FriendGroupListIsCachedUntilRefreshForcesIt()
+    {
+        var handler = new CountingHandler();
+        using var api = new VrcApiClient(null, handler);
+
+        await api.GetUserGroupsAsync("usr_friend");
+        await api.GetUserGroupsAsync("usr_friend");
+        Assert.Equal(1, handler.FriendGroupGets);
+
+        await api.GetUserGroupsAsync("usr_friend", forceRefresh: true);
+        Assert.Equal(2, handler.FriendGroupGets);
+    }
+
     private sealed class CountingHandler : HttpMessageHandler
     {
         public int GroupGets { get; private set; }
+
+        public int FriendGroupGets { get; private set; }
 
         public int MembershipPosts { get; private set; }
 
@@ -60,6 +76,13 @@ public class MyGroupsCacheTests
             {
                 GroupGets++;
                 return Json("[{\"id\":\"gmem_1\",\"groupId\":\"grp_1\",\"name\":\"One\",\"membershipStatus\":\"member\"}]");
+            }
+
+            if (request.Method == HttpMethod.Get &&
+                path.Contains("/users/usr_friend/groups", StringComparison.Ordinal))
+            {
+                FriendGroupGets++;
+                return Json("[{\"id\":\"gmem_2\",\"groupId\":\"grp_2\",\"name\":\"Friend Group\",\"membershipStatus\":\"member\"}]");
             }
 
             if (request.Method == HttpMethod.Post &&

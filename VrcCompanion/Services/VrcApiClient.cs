@@ -36,6 +36,7 @@ public sealed class VrcApiClient : IDisposable
     private static readonly TimeSpan MutualCacheDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan FriendsCacheDuration = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MyGroupsCacheDuration = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan UserGroupsCacheDuration = TimeSpan.FromMinutes(3);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -53,6 +54,7 @@ public sealed class VrcApiClient : IDisposable
     private CacheEntry<IReadOnlyList<VrcUser>>? _friendsCache;
     private CacheEntry<IReadOnlyList<Group>>? _myGroupsCache;
     private string? _myGroupsCacheUserId;
+    private readonly ConcurrentDictionary<string, CacheEntry<IReadOnlyList<Group>>> _userGroupsCache = new(StringComparer.Ordinal);
     private DateTimeOffset _lastRequestAt = DateTimeOffset.MinValue;
 
     public VrcApiClient(SessionStore? sessionStore = null)
@@ -1616,11 +1618,19 @@ public sealed class VrcApiClient : IDisposable
     /// </summary>
     public async Task<IReadOnlyList<Group>> GetUserGroupsAsync(
         string userId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool forceRefresh = false)
     {
         if (string.IsNullOrWhiteSpace(userId))
         {
             return Array.Empty<Group>();
+        }
+
+        if (!forceRefresh &&
+            _userGroupsCache.TryGetValue(userId, out var cached) &&
+            DateTimeOffset.UtcNow - cached.FetchedAt < UserGroupsCacheDuration)
+        {
+            return cached.Value;
         }
 
         var body = await SendApiAsync(
@@ -1628,7 +1638,9 @@ public sealed class VrcApiClient : IDisposable
             $"users/{Uri.EscapeDataString(userId)}/groups?n=100&offset=0",
             null,
             cancellationToken);
-        return DeserializeList<Group>(body);
+        var groups = DeserializeList<Group>(body);
+        _userGroupsCache[userId] = new CacheEntry<IReadOnlyList<Group>>(groups, DateTimeOffset.UtcNow);
+        return groups;
     }
 
     public async Task<Group?> GetGroupAsync(
@@ -1717,6 +1729,7 @@ public sealed class VrcApiClient : IDisposable
         _friendsCache = null;
         _myGroupsCache = null;
         _myGroupsCacheUserId = null;
+        _userGroupsCache.Clear();
     }
 
     public void Dispose()

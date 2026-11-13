@@ -40,7 +40,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
         ImageLoader images,
         FriendNotesStore? notes = null,
         bool isSelf = false,
-        Action<string>? openGroup = null)
+        Action<VrcProfileGroup>? openGroup = null)
     {
         _friend = friend;
         _api = api;
@@ -53,7 +53,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
                 IsGroupsOpen = false;
                 if (group is not null && openGroup is not null && !string.IsNullOrWhiteSpace(group.Id))
                 {
-                    openGroup(group.Id);
+                    openGroup(group);
                 }
             },
             group => group is not null && !string.IsNullOrWhiteSpace(group.Id));
@@ -307,6 +307,13 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     public bool HasGroups => Groups.Count > 0;
 
+    /// <summary>The one group this profile represents, shown alone on the card.</summary>
+    public VrcProfileGroup? RepresentedGroup => Profile?.RepresentedGroup;
+
+    public bool HasRepresentedGroup => RepresentedGroup is not null;
+
+    public bool HasNoRepresentedGroup => RepresentedGroup is null;
+
     /// <summary>
     /// The profile payload carries only a sample of a user's groups; its count
     /// tells whether that sample is complete before spending a second request.
@@ -439,6 +446,9 @@ public sealed class FriendDetailViewModel : ViewModelBase
         }
 
         OnPropertyChanged(nameof(Groups));
+        OnPropertyChanged(nameof(RepresentedGroup));
+        OnPropertyChanged(nameof(HasRepresentedGroup));
+        OnPropertyChanged(nameof(HasNoRepresentedGroup));
         OnPropertyChanged(nameof(MyGroups));
         OnPropertyChanged(nameof(VisibleGroups));
         OnPropertyChanged(nameof(MyGroupsTabText));
@@ -626,7 +636,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
             }
 
             _ = LoadImagesAsync(profile, cancellationToken);
-            _ = AnnotateGroupsAsync(cancellationToken);
+            _ = AnnotateGroupsAsync(forceRefresh, cancellationToken);
             _ = LoadExtrasAsync(cancellationToken);
         }
         catch (OperationCanceledException)
@@ -718,13 +728,13 @@ public sealed class FriendDetailViewModel : ViewModelBase
     /// another user, as a group in common ("Mutual"). Membership is not inferred
     /// from the profile payload: it is cross-checked against the account's groups.
     /// </summary>
-    private async Task AnnotateGroupsAsync(CancellationToken cancellationToken)
+    private async Task AnnotateGroupsAsync(bool forceRefresh, CancellationToken cancellationToken)
     {
         try
         {
             // Load every group on the account, not just the ones shown on this
             // profile: the popup offers a "My groups" tab with the full list.
-            var mine = await _api.GetMyGroupsAsync(cancellationToken);
+            var mine = await _api.GetMyGroupsAsync(cancellationToken, forceRefresh);
 
             // A profile payload ships only a few of the user's groups (the count
             // says how many exist), so read the full membership list instead.
@@ -733,7 +743,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
             {
                 try
                 {
-                    allProfileGroups = await _api.GetUserGroupsAsync(Id, cancellationToken);
+                    allProfileGroups = await _api.GetUserGroupsAsync(Id, cancellationToken, forceRefresh);
                 }
                 catch (OperationCanceledException)
                 {
@@ -763,6 +773,12 @@ public sealed class FriendDetailViewModel : ViewModelBase
             IncludeRepresentedGroup(Profile);
 
             var groups = Groups;
+            if (Profile?.RepresentedGroup is { } represented)
+            {
+                represented.IsMine = mine.Any(group =>
+                    string.Equals(group.EffectiveId, represented.Id, StringComparison.Ordinal));
+                represented.IsMutual = !IsSelf && represented.IsMine;
+            }
             var ids = mine.Select(group => group.EffectiveId).ToHashSet(StringComparer.Ordinal);
             var profileIds = groups.Select(group => group.Id).ToHashSet(StringComparer.Ordinal);
 
@@ -805,6 +821,9 @@ public sealed class FriendDetailViewModel : ViewModelBase
         }
 
         OnPropertyChanged(nameof(Groups));
+        OnPropertyChanged(nameof(RepresentedGroup));
+        OnPropertyChanged(nameof(HasRepresentedGroup));
+        OnPropertyChanged(nameof(HasNoRepresentedGroup));
         OnPropertyChanged(nameof(MyGroups));
         OnPropertyChanged(nameof(VisibleGroups));
         OnPropertyChanged(nameof(MyGroupsTabText));

@@ -63,6 +63,23 @@ public class FriendDetailNoteTests : IDisposable
     }
 
     [Fact]
+    public void ProfileShowsTheRepresentedGroupOrNone()
+    {
+        var profile = CreateProfile(new FriendNotesStore(NotesPath));
+        Assert.True(profile.HasNoRepresentedGroup);
+        Assert.False(profile.HasRepresentedGroup);
+
+        profile.Profile = new VrcProfile
+        {
+            RepresentedGroup = new VrcProfileGroup { Id = "grp_represented", Name = "Represented" }
+        };
+
+        Assert.True(profile.HasRepresentedGroup);
+        Assert.False(profile.HasNoRepresentedGroup);
+        Assert.Equal("Represented", profile.RepresentedGroup?.Name);
+    }
+
+    [Fact]
     public void RepresentedGroupIsIncludedOnce()
     {
         var profile = new VrcProfile

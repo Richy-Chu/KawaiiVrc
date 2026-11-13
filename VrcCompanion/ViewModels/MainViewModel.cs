@@ -2941,8 +2941,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ShowInfo("Profile popup uses the normal panel background.");
     }
 
-    private void OpenGroupInfoFromProfile(string groupId)
-        => _ = GroupViewModel?.OpenGroupInfoAsync(groupId);
+    private void OpenGroupInfoFromProfile(VrcProfileGroup group)
+        => _ = GroupViewModel?.OpenGroupInfoAsync(group.Id, group.IsMutual);
 
     private async Task DownloadBackdropFromUrlAsync()
     {
