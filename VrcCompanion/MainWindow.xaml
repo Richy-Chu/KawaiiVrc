@@ -2586,6 +2586,19 @@
                                        Foreground="{StaticResource ErrorTextBrush}"
                                        TextWrapping="Wrap"
                                        Margin="0,8,0,0" />
+                            <TextBlock Text="{Binding CreatorResourcesViewModel.DownloadStatus}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,8,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CreatorResourcesViewModel.DownloadStatusIsError}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource ErrorTextBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                             <TextBlock Text="WebView2 keeps a browser profile for this app. Site sign-ins are stored as session cookies, so a sign-in may persist while those cookies remain valid. The app does not read your password. Downloads open a Save As dialog so you choose the destination."
                                        Style="{StaticResource MutedText}"
                                        TextWrapping="Wrap"

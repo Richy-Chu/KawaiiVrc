@@ -16,6 +16,8 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
     private string _browserUrl = string.Empty;
     private string _browserTitle = string.Empty;
     private string _browserError = string.Empty;
+    private string _downloadStatus = string.Empty;
+    private bool _downloadStatusIsError;
 
     public CreatorResourcesViewModel()
     {
@@ -111,6 +113,18 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
         private set => SetProperty(ref _browserError, value);
     }
 
+    public string DownloadStatus
+    {
+        get => _downloadStatus;
+        private set => SetProperty(ref _downloadStatus, value);
+    }
+
+    public bool DownloadStatusIsError
+    {
+        get => _downloadStatusIsError;
+        private set => SetProperty(ref _downloadStatusIsError, value);
+    }
+
     public RelayCommand<CreatorResource> OpenCommand { get; }
 
     public RelayCommand<CreatorResource> SearchCommand { get; }
@@ -121,6 +135,12 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
 
     public void SetBrowserError(string message)
         => BrowserError = message;
+
+    public void SetDownloadStatus(string message, bool isError = false)
+    {
+        DownloadStatus = message;
+        DownloadStatusIsError = isError;
+    }
 
     private void Open(CreatorResource? resource)
     {
@@ -153,6 +173,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
         BrowserTitle = resource.Name;
         BrowserUrl = url;
         BrowserError = string.Empty;
+        SetDownloadStatus(string.Empty);
         IsBrowserOpen = true;
         BrowserNavigationRequested?.Invoke(url);
     }
@@ -161,5 +182,6 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
     {
         IsBrowserOpen = false;
         BrowserError = string.Empty;
+        SetDownloadStatus(string.Empty);
     }
 }

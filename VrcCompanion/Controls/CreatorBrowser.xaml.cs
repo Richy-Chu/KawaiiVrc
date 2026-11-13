@@ -148,19 +148,69 @@ public partial class CreatorBrowser : UserControl
             if (selectedPath is null)
             {
                 e.Cancel = true;
+                SetDownloadStatus("Download cancelled.");
                 return;
             }
 
             e.ResultFilePath = selectedPath;
             _viewModel?.SetBrowserError(string.Empty);
+            SetDownloadStatus($"Downloading {Path.GetFileName(selectedPath)}...");
+
+            var operation = e.DownloadOperation;
+            operation.StateChanged += (_, _) => ReportDownloadState(operation);
         }
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
             e.Cancel = true;
             _viewModel?.SetBrowserError("Could not open the Save As dialog. The download was cancelled.");
+            SetDownloadStatus("Download failed: could not open Save As.", true);
         }
     }
+
+    private void ReportDownloadState(CoreWebView2DownloadOperation operation)
+    {
+        if (operation.State == CoreWebView2DownloadState.Completed)
+        {
+            SetDownloadStatus($"Downloaded to {operation.ResultFilePath}");
+            return;
+        }
+
+        if (operation.State != CoreWebView2DownloadState.Interrupted)
+        {
+            return;
+        }
+
+        if (operation.InterruptReason == CoreWebView2DownloadInterruptReason.UserCanceled)
+        {
+            SetDownloadStatus("Download cancelled.");
+            return;
+        }
+
+        SetDownloadStatus($"Download failed: {Describe(operation.InterruptReason)}.", true);
+    }
+
+    private void SetDownloadStatus(string message, bool isError = false)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => _viewModel?.SetDownloadStatus(message, isError));
+            return;
+        }
+
+        _viewModel?.SetDownloadStatus(message, isError);
+    }
+
+    private static string Describe(CoreWebView2DownloadInterruptReason reason)
+        => reason switch
+        {
+            CoreWebView2DownloadInterruptReason.FileAccessDenied => "access was denied",
+            CoreWebView2DownloadInterruptReason.FileNoSpace => "the disk is full",
+            CoreWebView2DownloadInterruptReason.FileNameTooLong => "the file name is too long",
+            CoreWebView2DownloadInterruptReason.FileTooLarge => "the file is too large",
+            CoreWebView2DownloadInterruptReason.FileMalicious => "security blocked the file",
+            _ => reason.ToString()
+        };
 
     private void Back_Click(object sender, RoutedEventArgs e)
     {
