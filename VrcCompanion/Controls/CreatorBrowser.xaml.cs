@@ -17,19 +17,24 @@ public partial class CreatorBrowser : UserControl
     private CreatorResourcesViewModel? _viewModel;
     private Task? _initialization;
     private bool _isLoaded;
+    private bool _downloadStarted;
 
     public CreatorBrowser()
     {
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
-        DataContextChanged += OnDataContextChanged;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _isLoaded = true;
-        AttachViewModel();
+
+        _viewModel = DataContext as CreatorResourcesViewModel;
+        if (_viewModel is not null)
+        {
+            _viewModel.BrowserNavigationRequested += OnBrowserNavigationRequested;
+        }
 
         if (_viewModel?.IsBrowserOpen == true)
         {
@@ -40,35 +45,6 @@ public partial class CreatorBrowser : UserControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _isLoaded = false;
-        DetachViewModel();
-    }
-
-    private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
-    {
-        if (_isLoaded)
-        {
-            AttachViewModel();
-        }
-    }
-
-    private void AttachViewModel()
-    {
-        var viewModel = DataContext as CreatorResourcesViewModel;
-        if (ReferenceEquals(_viewModel, viewModel))
-        {
-            return;
-        }
-
-        DetachViewModel();
-        _viewModel = viewModel;
-        if (_viewModel is not null)
-        {
-            _viewModel.BrowserNavigationRequested += OnBrowserNavigationRequested;
-        }
-    }
-
-    private void DetachViewModel()
-    {
         if (_viewModel is not null)
         {
             _viewModel.BrowserNavigationRequested -= OnBrowserNavigationRequested;
@@ -125,6 +101,7 @@ public partial class CreatorBrowser : UserControl
         core.Settings.IsStatusBarEnabled = false;
         core.NewWindowRequested += OnNewWindowRequested;
         core.NavigationCompleted += OnNavigationCompleted;
+        core.DownloadStarting += OnDownloadStarting;
     }
 
     private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
@@ -140,6 +117,13 @@ public partial class CreatorBrowser : UserControl
 
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
+        if (_downloadStarted)
+        {
+            _downloadStarted = false;
+            _viewModel?.SetBrowserError(string.Empty);
+            return;
+        }
+
         if (e.IsSuccess)
         {
             _viewModel?.SetBrowserError(string.Empty);
@@ -148,6 +132,13 @@ public partial class CreatorBrowser : UserControl
         {
             _viewModel?.SetBrowserError("This page could not be loaded. You can try again or use Open site.");
         }
+    }
+
+    private void OnDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e)
+    {
+        // Leave e.Handled alone so WebView2 keeps its normal download UI/path.
+        _downloadStarted = true;
+        _viewModel?.SetBrowserError(string.Empty);
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)

@@ -2586,7 +2586,7 @@
                                        Foreground="{StaticResource ErrorTextBrush}"
                                        TextWrapping="Wrap"
                                        Margin="0,8,0,0" />
-                            <TextBlock Text="Sign in and start downloads inside the browser. Files use the browser's normal download prompt."
+                            <TextBlock Text="WebView2 keeps a browser profile for this app. Site sign-ins are stored as session cookies, so a sign-in may persist while those cookies remain valid. The app does not read your password."
                                        Style="{StaticResource MutedText}"
                                        TextWrapping="Wrap"
                                        Margin="0,8,0,0" />
@@ -2674,7 +2674,7 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <TextBlock Text="Creator Resources does not store logins, bypass site checks, or automate downloads. Sign in and download on the site yourself."
+                    <TextBlock Text="Creator Resources does not handle passwords or automate downloads. Sign in on the site and use its own Download button; WebView2 handles the file prompt."
                                Style="{StaticResource MutedText}"
                                TextWrapping="Wrap"
                                Margin="0,4,0,0" />
