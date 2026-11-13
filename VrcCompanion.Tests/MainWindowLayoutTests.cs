@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using VrcCompanion.Controls;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -250,6 +251,101 @@ public class MainWindowLayoutTests
             }
         });
     }
+
+    [Fact]
+    public void InvalidFocusAddressFeedbackIsVisibleAtMinimumWindowWidth()
+    {
+        WpfTestHost.Run(() =>
+        {
+            const string message = "Enter a valid http or https address.";
+            var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            var browserSection = shell.Sections.Single(section => section.Key == "brave");
+            var window = new MainWindow(shell, initializeOnLoad: false)
+            {
+                Width = 1100,
+                Height = 720,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = 100,
+                Top = 100
+            };
+
+            try
+            {
+                window.Show();
+                shell.SelectedSection = browserSection;
+                shell.BraveBrowserViewModel.SetBrowserLocation(
+                    "https://example.com/focus",
+                    "Focus page");
+                shell.BraveBrowserViewModel.IsFocusMode = true;
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                var address = FindVisualChildren<TextBox>(window)
+                    .Single(textBox =>
+                        AutomationProperties.GetAutomationId(textBox) == "BrowserFocusAddressBox");
+                var exit = FindVisualChildren<Button>(window)
+                    .Single(button =>
+                        AutomationProperties.GetAutomationId(button) == "BrowserFocusExitButton");
+
+                Assert.True(address.IsVisible, "The focus address box should be visible.");
+                Assert.True(exit.IsVisible, "The Exit focus button should be visible.");
+
+                address.Text = "ftp://example.com/";
+                var enter = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window)!,
+                    0,
+                    Key.Enter)
+                {
+                    RoutedEvent = Keyboard.KeyDownEvent
+                };
+                address.RaiseEvent(enter);
+                window.UpdateLayout();
+
+                Assert.True(
+                    enter.Handled,
+                    $"Enter should submit the focus address bar. Text='{address.Text}', " +
+                    $"error='{shell.BraveBrowserViewModel.BrowserError}', " +
+                    $"browserUrl='{shell.BraveBrowserViewModel.BrowserUrl}'.");
+                Assert.Equal(message, shell.BraveBrowserViewModel.BrowserError);
+
+                var feedback = FindVisualChildren<TextBlock>(window)
+                    .Single(text => text.Text == message);
+                Assert.True(feedback.IsVisible, "Invalid-address feedback should be visible in focus mode.");
+
+                var feedbackBounds = BoundsWithin(feedback, window);
+                var addressBounds = BoundsWithin(address, window);
+                var exitBounds = BoundsWithin(exit, window);
+                Assert.True(feedbackBounds.Width > 0, "Invalid-address feedback should have width.");
+                Assert.True(
+                    feedbackBounds.Left >= 0 &&
+                    feedbackBounds.Right <= window.ActualWidth + 1 &&
+                    feedbackBounds.Top >= 0 &&
+                    feedbackBounds.Bottom <= window.ActualHeight + 1,
+                    $"Invalid-address feedback should remain inside the window. " +
+                    $"Bounds={feedbackBounds}, window={window.ActualWidth}x{window.ActualHeight}.");
+                Assert.True(
+                    addressBounds.Width >= 200,
+                    $"The address box should remain usable at the minimum width. Bounds={addressBounds}.");
+                Assert.True(
+                    addressBounds.Right <= exitBounds.Left + 1,
+                    $"The address box should not overlap Exit focus. Address={addressBounds}, exit={exitBounds}.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    private static Rect BoundsWithin(FrameworkElement element, Visual ancestor)
+        => element
+            .TransformToAncestor(ancestor)
+            .TransformBounds(new Rect(new Point(0, 0), element.RenderSize));
 
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
