@@ -1,15 +1,21 @@
+using System;
 using System.Collections.ObjectModel;
 using VrcCompanion.Services;
 
 namespace VrcCompanion.ViewModels;
 
 /// <summary>
-/// Curated external creator sites. This app only opens their public pages;
-/// sign-in and downloads stay on the site itself.
+/// Curated creator sites. Open site stays in the default browser; search and
+/// tool pages can optionally use the embedded browser. Sign-in and downloads
+/// stay on the site itself.
 /// </summary>
 public sealed class CreatorResourcesViewModel : ViewModelBase
 {
     private string _searchQuery = string.Empty;
+    private bool _isBrowserOpen;
+    private string _browserUrl = string.Empty;
+    private string _browserTitle = string.Empty;
+    private string _browserError = string.Empty;
 
     public CreatorResourcesViewModel()
     {
@@ -55,12 +61,23 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
                 "Official VRChat tool",
                 "VCC",
                 "The official tool for managing VRChat Unity projects, SDKs, and packages.",
-                "https://vcc.docs.vrchat.com/")
+                "https://vcc.docs.vrchat.com/"),
+            new(
+                "ALCOM",
+                "Community package manager",
+                "A",
+                "Open-source alternative to VCC for managing VRChat packages and Unity projects.",
+                "https://vrc-get.anatawa12.com/en/alcom")
         };
 
         OpenCommand = new RelayCommand<CreatorResource>(Open);
         SearchCommand = new RelayCommand<CreatorResource>(Search);
+        BrowseCommand = new RelayCommand<CreatorResource>(Browse);
+        CloseBrowserCommand = new RelayCommand(CloseBrowser);
     }
+
+    /// <summary>Raised when a page should be loaded in the embedded WebView2.</summary>
+    public event Action<string>? BrowserNavigationRequested;
 
     public ObservableCollection<CreatorResource> Resources { get; }
 
@@ -70,9 +87,40 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
         set => SetProperty(ref _searchQuery, value);
     }
 
+    public bool IsBrowserOpen
+    {
+        get => _isBrowserOpen;
+        private set => SetProperty(ref _isBrowserOpen, value);
+    }
+
+    public string BrowserUrl
+    {
+        get => _browserUrl;
+        private set => SetProperty(ref _browserUrl, value);
+    }
+
+    public string BrowserTitle
+    {
+        get => _browserTitle;
+        private set => SetProperty(ref _browserTitle, value);
+    }
+
+    public string BrowserError
+    {
+        get => _browserError;
+        private set => SetProperty(ref _browserError, value);
+    }
+
     public RelayCommand<CreatorResource> OpenCommand { get; }
 
     public RelayCommand<CreatorResource> SearchCommand { get; }
+
+    public RelayCommand<CreatorResource> BrowseCommand { get; }
+
+    public RelayCommand CloseBrowserCommand { get; }
+
+    public void SetBrowserError(string message)
+        => BrowserError = message;
 
     private void Open(CreatorResource? resource)
     {
@@ -89,6 +137,29 @@ public sealed class CreatorResourcesViewModel : ViewModelBase
             return;
         }
 
-        LaunchService.OpenUrl(resource.BuildSearchUrl(SearchQuery) ?? resource.SiteUrl);
+        OpenBrowser(resource, resource.BuildSearchUrl(SearchQuery) ?? resource.SiteUrl);
+    }
+
+    private void Browse(CreatorResource? resource)
+    {
+        if (resource is not null)
+        {
+            OpenBrowser(resource, resource.SiteUrl);
+        }
+    }
+
+    private void OpenBrowser(CreatorResource resource, string url)
+    {
+        BrowserTitle = resource.Name;
+        BrowserUrl = url;
+        BrowserError = string.Empty;
+        IsBrowserOpen = true;
+        BrowserNavigationRequested?.Invoke(url);
+    }
+
+    private void CloseBrowser()
+    {
+        IsBrowserOpen = false;
+        BrowserError = string.Empty;
     }
 }

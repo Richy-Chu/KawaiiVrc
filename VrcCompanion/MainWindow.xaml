@@ -2547,9 +2547,46 @@
                         <StackPanel>
                             <TextBlock Text="SEARCH CREATOR SITES" Style="{StaticResource FieldLabel}" />
                             <TextBox Text="{Binding CreatorResourcesViewModel.SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.AutomationId="CreatorSearchBox"
                                      Style="{StaticResource InputBox}"
                                      Tag="Search avatars, outfits, models, shaders, or tools..." />
-                            <TextBlock Text="Type a term, then choose Search on a site below. Links open in your browser; sign in and download on the site itself."
+                            <TextBlock Text="Type a term, then choose Search on a site below. Search opens in the in-app browser; Open site uses your default browser."
+                                       Style="{StaticResource MutedText}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}"
+                            Margin="0,0,0,16"
+                            Visibility="{Binding CreatorResourcesViewModel.IsBrowserOpen, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="IN-APP BROWSER" Style="{StaticResource FieldLabel}" Margin="0" />
+                                    <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserTitle}"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}"
+                                               Margin="0,3,0,0" />
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Content="Close"
+                                        Style="{StaticResource SmallButton}"
+                                        VerticalAlignment="Center"
+                                        Command="{Binding CreatorResourcesViewModel.CloseBrowserCommand}" />
+                            </Grid>
+                            <controls:CreatorBrowser Height="520"
+                                                     DataContext="{Binding CreatorResourcesViewModel}" />
+                            <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserError}"
+                                       Foreground="{StaticResource ErrorTextBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,8,0,0" />
+                            <TextBlock Text="Sign in and start downloads inside the browser. Files use the browser's normal download prompt."
                                        Style="{StaticResource MutedText}"
                                        TextWrapping="Wrap"
                                        Margin="0,8,0,0" />
@@ -2618,9 +2655,17 @@
                                                     Style="{StaticResource SecondaryButton}"
                                                     Padding="12,6"
                                                     FontSize="11"
-                                                    ToolTip="Searches this site in your default browser"
+                                                    ToolTip="Searches this site in the in-app browser"
                                                     Visibility="{Binding CanSearch, Converter={StaticResource BoolToVis}}"
                                                     Command="{Binding DataContext.CreatorResourcesViewModel.SearchCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="Browse"
+                                                    Style="{StaticResource SecondaryButton}"
+                                                    Padding="12,6"
+                                                    FontSize="11"
+                                                    ToolTip="Opens this site in the in-app browser"
+                                                    Visibility="{Binding CanSearch, Converter={StaticResource InverseBoolToVis}}"
+                                                    Command="{Binding DataContext.CreatorResourcesViewModel.BrowseCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                     CommandParameter="{Binding}" />
                                         </StackPanel>
                                     </StackPanel>
@@ -2629,7 +2674,7 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <TextBlock Text="Creator Resources only opens these sites. It does not store logins, bypass site checks, or download files."
+                    <TextBlock Text="Creator Resources does not store logins, bypass site checks, or automate downloads. Sign in and download on the site yourself."
                                Style="{StaticResource MutedText}"
                                TextWrapping="Wrap"
                                Margin="0,4,0,0" />
