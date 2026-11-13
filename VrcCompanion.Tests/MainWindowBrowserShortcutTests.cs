@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
@@ -87,11 +88,11 @@ public class MainWindowBrowserShortcutTests
                 Assert.True(browser.CanGoBack, "The second page should have Back history.");
 
                 await NavigateAsync(() =>
-                    RaiseFocusShortcut(window, Key.Left, ModifierKeys.Alt));
+                    RaiseFocusShortcut(window, Key.Left, ModifierKeys.Alt, asSystemKey: true));
                 Assert.True(browser.CanGoForward, "Alt+Left should leave Forward history.");
 
                 await NavigateAsync(() =>
-                    RaiseFocusShortcut(window, Key.Right, ModifierKeys.Alt));
+                    RaiseFocusShortcut(window, Key.Right, ModifierKeys.Alt, asSystemKey: true));
                 Assert.True(browser.CanGoBack, "Alt+Right should restore Back history.");
 
                 await NavigateAsync(() =>
@@ -133,7 +134,11 @@ public class MainWindowBrowserShortcutTests
         });
     }
 
-    private static void RaiseFocusShortcut(Window window, Key key, ModifierKeys modifiers)
+    private static void RaiseFocusShortcut(
+        Window window,
+        Key key,
+        ModifierKeys modifiers,
+        bool asSystemKey = false)
     {
         var keyEvent = new KeyEventArgs(
             Keyboard.PrimaryDevice,
@@ -143,6 +148,18 @@ public class MainWindowBrowserShortcutTests
         {
             RoutedEvent = Keyboard.PreviewKeyDownEvent
         };
+
+        if (asSystemKey)
+        {
+            // WPF has no public constructor for the Alt system-key shape. The
+            // framework's internal MarkSystem() transition turns Key into
+            // Key.System while preserving the original key as SystemKey.
+            typeof(KeyEventArgs)
+                .GetMethod("MarkSystem", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.Invoke(keyEvent, null);
+            Assert.Equal(Key.System, keyEvent.Key);
+            Assert.Equal(key, keyEvent.SystemKey);
+        }
 
         using (KeyboardModifierState.Apply(modifiers))
         {
