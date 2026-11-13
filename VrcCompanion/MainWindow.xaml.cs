@@ -21,19 +21,21 @@ public partial class MainWindow : Window
     private const int DwmwaTextColor = 36;
 
     private readonly MainViewModel _viewModel;
+    private readonly bool _initializeOnLoad;
     private readonly DispatcherTimer _refreshTimer;
     private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
 
     public MainWindow()
-        : this(new MainViewModel())
+        : this(new MainViewModel(), initializeOnLoad: true)
     {
     }
 
-    internal MainWindow(MainViewModel viewModel)
+    internal MainWindow(MainViewModel viewModel, bool initializeOnLoad)
     {
         InitializeComponent();
 
         _viewModel = viewModel;
+        _initializeOnLoad = initializeOnLoad;
         DataContext = _viewModel;
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         ShowSelectedSection();
@@ -52,6 +54,10 @@ public partial class MainWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         Loaded -= OnLoaded;
+        if (!_initializeOnLoad)
+        {
+            return;
+        }
 
         await _viewModel.InitializeAsync();
         _refreshTimer.Start();

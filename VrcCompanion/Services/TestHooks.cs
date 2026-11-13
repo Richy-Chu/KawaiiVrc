@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using VrcCompanion.Models;
@@ -65,28 +64,6 @@ internal static class TestHooks
             ?? throw new InvalidOperationException("VrcApiClient.CurrentUser setter not found.");
 
         setter.Invoke(api, new object?[] { user });
-    }
-
-    /// <summary>Attaches a Media library to the shell before its UI is created.</summary>
-    public static void AttachMediaViewModel(MainViewModel shell, MediaLibraryViewModel media)
-    {
-        var setter = typeof(MainViewModel)
-            .GetProperty(nameof(MainViewModel.MediaViewModel))
-            ?.GetSetMethod(nonPublic: true)
-            ?? throw new InvalidOperationException("MainViewModel.MediaViewModel setter not found.");
-
-        setter.Invoke(shell, new object?[] { media });
-    }
-
-    /// <summary>Prevents the real MainWindow from starting a live session restore in tests.</summary>
-    public static void MarkInitialized(MainViewModel shell)
-    {
-        var field = typeof(MainViewModel).GetField(
-            "_initialized",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("MainViewModel._initialized field not found.");
-
-        field.SetValue(shell, true);
     }
 
     /// <summary>Marks the shell as signed in so command guards run in tests.</summary>

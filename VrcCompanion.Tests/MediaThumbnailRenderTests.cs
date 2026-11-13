@@ -32,6 +32,7 @@ public class MediaThumbnailRenderTests
             {
                 var expectedColors = CreatePage20Images(root);
                 var viewModel = CreatePage20ViewModel(root);
+                LoadPage20(viewModel);
 
                 for (var page = 1; page < viewModel.PageCount; page++)
                 {
@@ -114,12 +115,10 @@ public class MediaThumbnailRenderTests
             {
                 var expectedColors = CreatePage20Images(root);
                 var media = CreatePage20ViewModel(root);
-                var shell = new MainViewModel();
-                TestHooks.AttachMediaViewModel(shell, media);
-                TestHooks.MarkInitialized(shell);
+                var shell = new MainViewModel(media);
                 TestHooks.SetLoggedIn(shell);
 
-                window = new MainWindow(shell);
+                window = new MainWindow(shell, initializeOnLoad: false);
                 window.Show();
 
                 shell.SelectedSection = shell.Sections.Single(section => section.Key == "media");
@@ -187,17 +186,19 @@ public class MediaThumbnailRenderTests
             "VRChat",
             new DateTime(2025, 6, 1),
             items);
-        var viewModel = new MediaLibraryViewModel(
+        return new MediaLibraryViewModel(
             "C:\\pictures",
             (_, _) => new[] { group },
             cachePath: Path.Combine(root, "index.json"));
+    }
 
+    private static void LoadPage20(MediaLibraryViewModel viewModel)
+    {
         var load = viewModel.LoadAsync(force: true);
         WaitUntil(() => load.IsCompleted, "Timed out loading the Media test library.");
         load.GetAwaiter().GetResult();
 
         Assert.Equal(20, viewModel.PageCount);
-        return viewModel;
     }
 
     private static Dictionary<string, Color> CreatePage20Images(string root)

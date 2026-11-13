@@ -133,7 +133,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
     }
 
+    internal MainViewModel(MediaLibraryViewModel mediaViewModel)
+        : this(new VrcApiClient(), mediaViewModel)
+    {
+    }
+
     internal MainViewModel(VrcApiClient api)
+        : this(api, new MediaLibraryViewModel())
+    {
+    }
+
+    internal MainViewModel(VrcApiClient api, MediaLibraryViewModel mediaViewModel)
     {
         _api = api;
         _images = ImageLoader.Shared;
@@ -164,7 +174,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             new("settings", "Settings", "\uE713")
         };
         _selectedSection = Sections[0];
-        MediaViewModel = new MediaLibraryViewModel();
+        MediaViewModel = mediaViewModel;
         ChatboxViewModel = new ChatboxViewModel();
         CreatorResourcesViewModel = new CreatorResourcesViewModel();
         BraveBrowserViewModel = new BraveBrowserViewModel();
