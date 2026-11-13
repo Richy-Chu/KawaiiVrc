@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 
 namespace VrcCompanion.Models;
@@ -6,8 +7,12 @@ namespace VrcCompanion.Models;
 /// <summary>
 /// Represents an activity feed entry (friend activity, instance history, etc.).
 /// </summary>
-public sealed class ActivityEntry
+public sealed class ActivityEntry : INotifyPropertyChanged
 {
+    private string _details = string.Empty;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
@@ -26,6 +31,12 @@ public sealed class ActivityEntry
     [JsonPropertyName("avatarUrl")]
     public string AvatarUrl { get; set; } = string.Empty;
 
+    /// <summary>The avatar the friend changed to, when this is an avatar change.</summary>
+    [JsonPropertyName("avatarId")]
+    public string AvatarId { get; set; } = string.Empty;
+
+    public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarId);
+
     [JsonPropertyName("worldId")]
     public string WorldId { get; set; } = string.Empty;
 
@@ -42,7 +53,26 @@ public sealed class ActivityEntry
     public DateTimeOffset Timestamp { get; set; }
 
     [JsonPropertyName("details")]
-    public string Details { get; set; } = string.Empty;
+    public string Details
+    {
+        get => _details;
+        set
+        {
+            if (!string.Equals(_details, value, StringComparison.Ordinal))
+            {
+                _details = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Details)));
+            }
+        }
+    }
+
+    public void SetAvatarName(string? name)
+    {
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            Details = $"changed avatar · {name}";
+        }
+    }
 
     [JsonPropertyName("isOnline")]
     public bool IsOnline { get; set; }
@@ -80,5 +110,9 @@ public enum ActivityType
     FriendRequest,
     GroupInvite,
     WorldCreated,
-    ProfileUpdated
+    ProfileUpdated,
+    FriendAdded,
+    FriendRemoved,
+    BioChanged,
+    AvatarChanged
 }

@@ -15,6 +15,7 @@ public sealed class FriendItem : ViewModelBase
 
     private VrcUser _user;
     private bool _isFavorite;
+    private string _worldName = string.Empty;
 
     public FriendItem(VrcUser user)
     {
@@ -42,6 +43,10 @@ public sealed class FriendItem : ViewModelBase
     public string Username => _user.Username;
 
     public string Location => _user.Location ?? string.Empty;
+
+    public string WorldName => _worldName;
+
+    public bool HasWorldName => !string.IsNullOrWhiteSpace(_worldName);
 
     public string AvatarUrl
         => ImageUrlHelper.PickAvatarThumbnailUrl(
@@ -246,6 +251,20 @@ public sealed class FriendItem : ViewModelBase
     public bool IsJoinable
         => IsOnline && LaunchService.IsLocation(_user.Location);
 
+    public string LocationTitle => HasWorldName ? WorldName : LocationAccessLabel;
+
+    public string LocationDetail
+        => IsOnline ? $"{LocationAccessLabel} · {PlatformText}".TrimEnd(' ', '·') : ActivityText;
+
+    public void SetWorldName(string? worldName, string? location = null)
+    {
+        _worldName = worldName?.Trim() ?? string.Empty;
+        OnPropertyChanged(nameof(WorldName));
+        OnPropertyChanged(nameof(HasWorldName));
+        OnPropertyChanged(nameof(LocationTitle));
+        OnPropertyChanged(nameof(LocationDetail));
+    }
+
     public string JoinLocation => _user.Location ?? string.Empty;
 
     public string PlatformText
@@ -281,7 +300,13 @@ public sealed class FriendItem : ViewModelBase
 
     public void Update(VrcUser user)
     {
+        var locationChanged = !string.Equals(_user.Location, user.Location, StringComparison.Ordinal);
         _user = user;
+        if (locationChanged)
+        {
+            _worldName = string.Empty;
+        }
+
         OnAllPropertiesChanged();
     }
 

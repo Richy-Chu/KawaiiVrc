@@ -34,6 +34,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private string _lyricsStatusText = "Play a track to look for free lyrics.";
     private string _lyricsMatchText = string.Empty;
     private Task? _lyricsLoadTask;
+    private string? _manualLyricsTrackKey;
     private string _lyricsSearchQuery = string.Empty;
     private string _lyricsSearchStatusText = string.Empty;
     private LyricsCandidate? _selectedLyricsCandidate;
@@ -803,6 +804,8 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
             _lyrics = result.Lyrics;
             _lastVrchatLyric = null;
+            _lyricsCancellation?.Cancel();
+            _manualLyricsTrackKey = LyricsIdentityKey(track);
             SetLyricsMatch(result.Match);
             LyricsStatusText = result.Status;
             LyricsSearchStatusText = $"Using {candidate.DisplayText}.";
@@ -887,6 +890,12 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
 
         var key = LyricsTrackKey(track);
+        if (!force && _manualLyricsTrackKey == LyricsIdentityKey(track))
+        {
+            _lyricsTrackKey = key;
+            return;
+        }
+
         if (!force && key == _lyricsTrackKey)
         {
             OnPropertyChanged(nameof(LyricsText));
@@ -903,10 +912,14 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
     private static string LyricsTrackKey(NowPlayingInfo track) =>
         $"{track.Title}\u001f{track.Artist}\u001f{(track.Duration > TimeSpan.Zero ? "known" : "unknown")}";
 
+    private static string LyricsIdentityKey(NowPlayingInfo track) =>
+        $"{track.Title}\u001f{track.Artist}";
+
     private void ResetLyricsSearch(NowPlayingInfo track)
     {
         _lyricsSearchCancellation?.Cancel();
         _lyricsSelectionCancellation?.Cancel();
+        _manualLyricsTrackKey = null;
         LyricsCandidates.Clear();
         SelectedLyricsCandidate = null;
         LyricsSearchStatusText = string.Empty;

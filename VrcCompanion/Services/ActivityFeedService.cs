@@ -28,6 +28,47 @@ public sealed class ActivityFeedService
             var location = WorldLocation(friend.Location);
             var previousLocation = WorldLocation(previous?.Location);
 
+            if (previous is not null)
+            {
+                var bio = (friend.Bio ?? string.Empty).Trim();
+                var previousBio = (previous.Bio ?? string.Empty).Trim();
+                if (!string.Equals(bio, previousBio, StringComparison.Ordinal))
+                {
+                    entries.Add(new ActivityEntry
+                    {
+                        Id = $"bio-{friend.Id}",
+                        Type = ActivityType.BioChanged,
+                        UserId = friend.Id,
+                        UserName = friend.Username,
+                        DisplayName = friend.DisplayName,
+                        AvatarUrl = AvatarThumbnailUrl(friend),
+                        Timestamp = DateTimeOffset.UtcNow,
+                        IsOnline = true,
+                        Details = bio.Length == 0
+                            ? "cleared their bio"
+                            : $"changed their bio · {Shorten(bio)}"
+                    });
+                }
+
+                if (!string.IsNullOrWhiteSpace(friend.CurrentAvatar) &&
+                    !string.Equals(friend.CurrentAvatar, previous.CurrentAvatar, StringComparison.Ordinal))
+                {
+                    entries.Add(new ActivityEntry
+                    {
+                        Id = $"avatar-{friend.Id}",
+                        Type = ActivityType.AvatarChanged,
+                        UserId = friend.Id,
+                        UserName = friend.Username,
+                        DisplayName = friend.DisplayName,
+                        AvatarUrl = AvatarThumbnailUrl(friend),
+                        AvatarId = friend.CurrentAvatar!,
+                        Timestamp = DateTimeOffset.UtcNow,
+                        IsOnline = true,
+                        Details = "changed avatar"
+                    });
+                }
+            }
+
             // Friend came online
             if (previousLocation is null)
             {
@@ -92,6 +133,43 @@ public sealed class ActivityFeedService
             }
         }
 
+        if (previousFriends is not null)
+        {
+            var currentIds = new HashSet<string>(friends.Select(friend => friend.Id), StringComparer.Ordinal);
+            var previousIds = new HashSet<string>(previousFriends.Select(friend => friend.Id), StringComparer.Ordinal);
+            foreach (var friend in friends.Where(friend => !previousIds.Contains(friend.Id)))
+            {
+                entries.Add(new ActivityEntry
+                {
+                    Id = $"added-{friend.Id}",
+                    Type = ActivityType.FriendAdded,
+                    UserId = friend.Id,
+                    UserName = friend.Username,
+                    DisplayName = friend.DisplayName,
+                    AvatarUrl = AvatarThumbnailUrl(friend),
+                    Timestamp = DateTimeOffset.UtcNow,
+                    IsOnline = true,
+                    Details = "friended you"
+                });
+            }
+
+            foreach (var friend in previousFriends.Where(friend => !currentIds.Contains(friend.Id)))
+            {
+                entries.Add(new ActivityEntry
+                {
+                    Id = $"removed-{friend.Id}",
+                    Type = ActivityType.FriendRemoved,
+                    UserId = friend.Id,
+                    UserName = friend.Username,
+                    DisplayName = friend.DisplayName,
+                    AvatarUrl = AvatarThumbnailUrl(friend),
+                    Timestamp = DateTimeOffset.UtcNow,
+                    IsOnline = false,
+                    Details = "unfriended you"
+                });
+            }
+        }
+
         // Sort by timestamp descending (newest first)
         return entries.OrderByDescending(e => e.Timestamp).ToList();
     }
@@ -120,6 +198,9 @@ public sealed class ActivityFeedService
                friend.CurrentAvatarThumbnailImageUrl,
                friend.CurrentAvatarImageUrl,
                128) ?? string.Empty;
+
+    private static string Shorten(string text) =>
+        text.Length > 80 ? text[..80].TrimEnd() + "…" : text;
 
     /// <summary>
     /// Filter activity entries by type.

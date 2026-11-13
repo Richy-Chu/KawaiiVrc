@@ -1205,6 +1205,14 @@ public sealed class AvatarViewModel : ViewModelBase
 
     public bool IsAvatarDetailsOpen => SelectedAvatar is not null;
 
+    /// <summary>Opens the shared avatar detail popup for a record loaded from activity.</summary>
+    public void ShowAvatarDetails(Avatar avatar)
+    {
+        StatusMessage = null;
+        ErrorMessage = null;
+        SelectedAvatar = avatar;
+    }
+
     /// <summary>True once the library has loaded, so navigation does not refetch.</summary>
     public bool HasLoaded
     {

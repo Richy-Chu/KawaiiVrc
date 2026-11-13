@@ -23,7 +23,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly List<IRelayCommand> _commands = new();
     private readonly List<string> _twoFactorMethods = new();
     private readonly NavItem _notificationsNav;
+    private readonly NavItem _activityNav;
     private readonly ICollectionView _friendsView;
+    private readonly ICollectionView _friendLocationsView;
+    private readonly ICollectionView _friendChangesView;
     private readonly ICollectionView _notificationsView;
     private readonly DispatcherTimer _clockTimer;
     private string _greetingName = string.Empty;
@@ -59,6 +62,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _hasNoVisibleNotifications;
     private string _notificationsEmptyMessage = "You're all caught up.";
     private FilterOption _selectedBackdropStyle = null!;
+    private FilterOption _selectedFriendChangeFilter = null!;
+    private Dictionary<string, VrcUser>? _friendSnapshot;
+    private bool _isFriendLocationsOpen;
+    private bool _isFriendChangesOpen;
+    private bool _loadingFriendLocations;
 
     // --------------------------------------------------------- new features
 
@@ -124,9 +132,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _favoriteWorlds = new HashSet<string>(_settings.FavoriteWorlds, StringComparer.Ordinal);
 
         _notificationsNav = new NavItem("notifications", "Notifications", "\uEA8F");
+        _activityNav = new NavItem("activity", "Activity", "\uE790");
         Sections = new ObservableCollection<NavItem>
         {
             new("profile", "Profile", "\uE77B"),
+            _activityNav,
             new("friends", "Friends", "\uE716"),
             _notificationsNav,
             new("worlds", "Worlds", "\uE909"),
@@ -134,7 +144,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             new("favorites", "Favourites", "\uE735"),
             new("avatarsearch", "Avatar Search", "\uE721"),
             new("groups", "Groups", "\uE70E"),
-            new("activity", "Activity", "\uE790"),
             new("chatbox", "Chatbox", "\uE8BD"),
             new("media", "Media", "\uEB9F"),
             new("accounts", "Accounts", "\uE716"),
@@ -161,6 +170,23 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             friendListView.CustomSort = new FriendComparer();
         }
+
+        _friendLocationsView = new ListCollectionView(Friends)
+        {
+            Filter = FilterFriendLocation,
+            CustomSort = new FriendComparer()
+        };
+
+        FriendChanges = new RangeObservableCollection<FriendChangeItem>();
+        _friendChangesView = CollectionViewSource.GetDefaultView(FriendChanges);
+        _friendChangesView.Filter = FilterFriendChange;
+        FriendChangeFilters = new ObservableCollection<FilterOption>
+        {
+            new("all", "All changes"),
+            new("friended", "Friended"),
+            new("unfriended", "Unfriended")
+        };
+        _selectedFriendChangeFilter = FriendChangeFilters[0];
 
         FriendFilters = new ObservableCollection<FilterOption>
         {
@@ -274,6 +300,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OpenFriendWorldCommand = Track(new AsyncRelayCommand<FriendItem>(
             OpenFriendWorldAsync,
             friend => friend is not null && LaunchService.GetWorldIdFromLocation(friend.Location) is not null && !IsBusy));
+        OpenFriendLocationsCommand = Track(new AsyncRelayCommand(
+            OpenFriendLocationsAsync,
+            () => IsLoggedIn && !IsBusy));
+        CloseFriendLocationsCommand = Track(new RelayCommand(() => IsFriendLocationsOpen = false));
+        OpenFriendLocationCommand = Track(new RelayCommand<FriendItem>(
+            OpenFriendLocation,
+            friend => friend is not null));
+        OpenFriendChangesCommand = Track(new RelayCommand(() => IsFriendChangesOpen = true));
+        CloseFriendChangesCommand = Track(new RelayCommand(() => IsFriendChangesOpen = false));
+        OpenFriendChangeCommand = Track(new RelayCommand<FriendChangeItem>(
+            OpenFriendChange,
+            change => change is not null));
+        OpenActivityAvatarCommand = Track(new AsyncRelayCommand<ActivityEntry>(
+            OpenActivityAvatarAsync,
+            entry => entry is not null && entry.HasAvatar && !IsBusy));
         CloseWorldDialogCommand = Track(new RelayCommand(CloseWorldDialog));
         RefreshWorldDialogCommand = Track(new AsyncRelayCommand(
             RefreshWorldDialogAsync,
@@ -731,6 +772,52 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ObservableCollection<FriendItem> Friends { get; }
 
     public ICollectionView FriendsView => _friendsView;
+
+    public ICollectionView FriendLocationsView => _friendLocationsView;
+
+    public bool IsFriendLocationsOpen
+    {
+        get => _isFriendLocationsOpen;
+        private set => SetProperty(ref _isFriendLocationsOpen, value);
+    }
+
+    public string FriendLocationsSummary => _loadingFriendLocations
+        ? "Loading world names…"
+        : $"{_friendLocationsView.Cast<object>().Count()} friends in worlds";
+
+    public bool HasFriendLocations => _friendLocationsView.Cast<object>().Any();
+
+    public RangeObservableCollection<FriendChangeItem> FriendChanges { get; }
+
+    public ICollectionView FriendChangesView => _friendChangesView;
+
+    public ObservableCollection<FilterOption> FriendChangeFilters { get; }
+
+    public FilterOption SelectedFriendChangeFilter
+    {
+        get => _selectedFriendChangeFilter;
+        set
+        {
+            if (value is not null && SetProperty(ref _selectedFriendChangeFilter, value))
+            {
+                _friendChangesView.Refresh();
+                OnPropertyChanged(nameof(FriendChangesSummary));
+                OnPropertyChanged(nameof(HasNoFriendChanges));
+            }
+        }
+    }
+
+    public string FriendChangesSummary => FriendChanges.Count == 0
+        ? "No friend-list changes seen yet."
+        : $"{_friendChangesView.Cast<object>().Count()} shown · {FriendChanges.Count} changes";
+
+    public bool HasNoFriendChanges => !_friendChangesView.Cast<object>().Any();
+
+    public bool IsFriendChangesOpen
+    {
+        get => _isFriendChangesOpen;
+        private set => SetProperty(ref _isFriendChangesOpen, value);
+    }
 
     // ------------------------------------------------------- launch options
 
@@ -1443,6 +1530,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand<FriendItem> OpenFriendProfileCommand { get; }
     public RelayCommand<FriendItem> CopyFriendLocationCommand { get; }
     public AsyncRelayCommand<FriendItem> OpenFriendWorldCommand { get; }
+    public AsyncRelayCommand OpenFriendLocationsCommand { get; }
+    public RelayCommand CloseFriendLocationsCommand { get; }
+    public RelayCommand<FriendItem> OpenFriendLocationCommand { get; }
+    public RelayCommand OpenFriendChangesCommand { get; }
+    public RelayCommand CloseFriendChangesCommand { get; }
+    public RelayCommand<FriendChangeItem> OpenFriendChangeCommand { get; }
+    public AsyncRelayCommand<ActivityEntry> OpenActivityAvatarCommand { get; }
     public RelayCommand CloseWorldDialogCommand { get; }
     public AsyncRelayCommand RefreshWorldDialogCommand { get; }
     public AsyncRelayCommand CreateInstanceCommand { get; }
@@ -1509,6 +1603,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             ApplyCurrentUser(user);
             IsLoggedIn = true;
+            SelectedSection = _activityNav;
             MultiAccountViewModel?.RememberCurrentAccount(user);
             await RefreshDataAsync(refreshUser: false);
         }
@@ -1641,6 +1736,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
 
             UpdateFriends(friends);
+            RecordFriendChanges(friends);
             _lastUpdated = DateTimeOffset.Now;
             OnPropertyChanged(nameof(LastUpdatedText));
         }
@@ -1762,9 +1858,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _api.ClearSavedSession();
         }
 
-        SelectedSection = Sections[0];
+        SelectedSection = _activityNav;
         RaiseCommandStates();
         await RefreshDataAsync(refreshUser: false);
+        if (ActivityFeedViewModel is { HasLoaded: false, IsBusy: false })
+        {
+            await ActivityFeedViewModel.LoadAsync();
+        }
     }
 
     private async void OnAccountSessionSwitched(VrcUser user)
@@ -1772,6 +1872,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ApplyCurrentUser(user);
         IsLoggedIn = true;
         IsTwoFactorRequired = false;
+        SelectedSection = _activityNav;
 
         ResetAccountScopedViewModels();
 
@@ -1857,6 +1958,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         AvatarViewModel?.Reset();
         GroupViewModel?.Reset();
         ActivityFeedViewModel?.Reset();
+        FriendChanges.Clear();
+        _friendSnapshot = null;
+        _friendChangesView.Refresh();
+        OnPropertyChanged(nameof(FriendChangesSummary));
+        OnPropertyChanged(nameof(HasNoFriendChanges));
     }
 
     private async Task LogoutAsync()
@@ -2589,7 +2695,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        OpenLaunchChooser(friend.Location, friend.DisplayName);
+        // Joins use the app-wide launch mode, not a per-friend chooser.
+        LaunchLocation(friend.Location, DefaultLaunchMode);
         await Task.CompletedTask;
     }
 
@@ -3076,6 +3183,54 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private async Task OpenActivityAvatarAsync(ActivityEntry? entry)
+    {
+        if (entry is null || string.IsNullOrWhiteSpace(entry.AvatarId) || IsBusy)
+        {
+            return;
+        }
+
+        PushBusy("Loading that avatar…");
+        try
+        {
+            var avatar = await _api.GetAvatarAsync(entry.AvatarId);
+            if (avatar is null)
+            {
+                ShowError("VRChat did not return that avatar.");
+                return;
+            }
+
+            if (avatar.IsPrivate)
+            {
+                ShowError("That avatar is private, so it cannot be worn or favourited from activity.");
+                return;
+            }
+
+            avatar.IsWearing = string.Equals(
+                CurrentUser?.CurrentAvatar,
+                avatar.Id,
+                StringComparison.Ordinal);
+            AvatarViewModel?.ShowAvatarDetails(avatar);
+        }
+        catch (VrcApiException ex)
+        {
+            ShowError(ex.Message);
+        }
+        catch (HttpRequestException)
+        {
+            ShowError("Could not reach VRChat to load that avatar.");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            ShowError("Could not load that avatar.");
+        }
+        finally
+        {
+            PopBusy();
+        }
+    }
+
     // -------------------------------------------------------------- updating
 
     private void ApplyCurrentUser(VrcUser user)
@@ -3275,10 +3430,137 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                || friend.Username.Contains(query, StringComparison.CurrentCultureIgnoreCase);
     }
 
+    private static bool FilterFriendLocation(object item)
+        => item is FriendItem friend &&
+           friend.IsOnline &&
+           LaunchService.GetWorldIdFromLocation(friend.Location) is not null;
+
+    private bool FilterFriendChange(object item)
+        => item is FriendChangeItem change &&
+           SelectedFriendChangeFilter?.Key switch
+           {
+               "friended" => change.IsAdded,
+               "unfriended" => change.IsRemoved,
+               _ => true
+           };
+
+    private async Task OpenFriendLocationsAsync()
+    {
+        IsFriendLocationsOpen = true;
+        await LoadFriendWorldNamesAsync();
+    }
+
+    private async Task LoadFriendWorldNamesAsync()
+    {
+        if (_loadingFriendLocations)
+        {
+            return;
+        }
+
+        _loadingFriendLocations = true;
+        OnPropertyChanged(nameof(FriendLocationsSummary));
+        try
+        {
+            var worldIds = Friends
+                .Select(friend => LaunchService.GetWorldIdFromLocation(friend.Location))
+                .Where(worldId => !string.IsNullOrWhiteSpace(worldId))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            foreach (var worldId in worldIds)
+            {
+                try
+                {
+                    var world = await _api.GetWorldAsync(worldId!);
+                    foreach (var friend in Friends.Where(friend =>
+                                 string.Equals(
+                                     LaunchService.GetWorldIdFromLocation(friend.Location),
+                                     worldId,
+                                     StringComparison.Ordinal)))
+                    {
+                        friend.SetWorldName(world?.Name);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                }
+            }
+        }
+        finally
+        {
+            _loadingFriendLocations = false;
+            _friendLocationsView.Refresh();
+            OnPropertyChanged(nameof(FriendLocationsSummary));
+            OnPropertyChanged(nameof(HasFriendLocations));
+        }
+    }
+
+    private void OpenFriendLocation(FriendItem? friend)
+    {
+        if (friend is null)
+        {
+            return;
+        }
+
+        IsFriendLocationsOpen = false;
+        SelectedFriend = friend;
+    }
+
+    private void OpenFriendChange(FriendChangeItem? change)
+    {
+        if (change is null)
+        {
+            return;
+        }
+
+        IsFriendChangesOpen = false;
+        SelectedFriend = change.Friend;
+    }
+
+    private void RecordFriendChanges(IReadOnlyList<VrcUser> current)
+    {
+        if (_friendSnapshot is null)
+        {
+            _friendSnapshot = current
+                .Where(user => !string.IsNullOrWhiteSpace(user.Id))
+                .GroupBy(user => user.Id)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            return;
+        }
+
+        var currentIds = new HashSet<string>(current.Select(user => user.Id), StringComparer.Ordinal);
+        foreach (var removed in _friendSnapshot.Values.Where(user => !currentIds.Contains(user.Id)))
+        {
+            FriendChanges.Insert(0, new FriendChangeItem(new FriendItem(removed), false, DateTimeOffset.UtcNow));
+        }
+
+        foreach (var added in current.Where(user => !_friendSnapshot.ContainsKey(user.Id)))
+        {
+            FriendChanges.Insert(0, new FriendChangeItem(new FriendItem(added), true, DateTimeOffset.UtcNow));
+        }
+
+        while (FriendChanges.Count > 100)
+        {
+            FriendChanges.RemoveAt(FriendChanges.Count - 1);
+        }
+
+        _friendSnapshot = current
+            .Where(user => !string.IsNullOrWhiteSpace(user.Id))
+            .GroupBy(user => user.Id)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        _friendChangesView.Refresh();
+        OnPropertyChanged(nameof(FriendChangesSummary));
+        OnPropertyChanged(nameof(HasNoFriendChanges));
+    }
+
     private void RefreshFriendsView()
     {
         _friendsView.Refresh();
+        _friendLocationsView.Refresh();
         UpdateFriendsSummary();
+        OnPropertyChanged(nameof(FriendLocationsSummary));
+        OnPropertyChanged(nameof(HasFriendLocations));
     }
 
     private void UpdateFriendsSummary()

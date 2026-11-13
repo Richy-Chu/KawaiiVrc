@@ -51,7 +51,7 @@ public class ChatboxLyricsPauseTests
             "Ain't My Fault",
             "Zara Larsson",
             "YouTube",
-            Duration: TimeSpan.FromSeconds(223)));
+            Duration: TimeSpan.Zero));
 
         await vm.LyricsLoadTaskForTest!;
         Assert.Contains("busy", vm.LyricsStatusText);
@@ -93,6 +93,7 @@ public class ChatboxLyricsPauseTests
         Assert.Null(vm.SelectedLyricsCandidate);
         Assert.Equal("Zara Larsson — Ain't My Fault", vm.LyricsCandidates[0].DisplayText);
         Assert.Contains("Synced lyrics", vm.LyricsCandidates[0].DetailText);
+        Assert.Equal("Automatic line", vm.LyricsCandidates[0].Snippet);
 
         vm.SelectedLyricsCandidate = vm.LyricsCandidates[1];
         await vm.UseSelectedLyricsForTestAsync();
@@ -100,6 +101,15 @@ public class ChatboxLyricsPauseTests
         Assert.Equal("Selected line", vm.LyricsText);
         Assert.Contains("Selected Artist — Selected Song", vm.LyricsMatchText);
         Assert.Contains("Using", vm.LyricsSearchStatusText);
+
+        // A later duration update must not replace the manual choice.
+        vm.SetTrackForTest(new NowPlayingInfo(
+            "Ain't My Fault",
+            "Zara Larsson",
+            "YouTube",
+            Duration: TimeSpan.FromSeconds(223)));
+        Assert.Equal("Selected line", vm.LyricsText);
+        Assert.Contains("Selected Artist — Selected Song", vm.LyricsMatchText);
     }
 
     private sealed class ViewModelFixture : IDisposable

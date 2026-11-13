@@ -516,12 +516,22 @@
                         </TextBlock>
                     </Grid>
 
-                    <CheckBox Grid.Row="0" Grid.Column="1"
-                              Style="{StaticResource FriendlyCheckBox}"
-                              Content="Online only"
-                              IsChecked="{Binding ShowOnlineOnly}"
-                              Margin="16,0,0,0"
-                              VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="0" Grid.Column="1"
+                                Orientation="Horizontal"
+                                Margin="16,0,0,0"
+                                VerticalAlignment="Center">
+                        <CheckBox Style="{StaticResource FriendlyCheckBox}"
+                                  Content="Online only"
+                                  IsChecked="{Binding ShowOnlineOnly}"
+                                  VerticalAlignment="Center" />
+                        <Button Content="Friend changes"
+                                Style="{StaticResource SecondaryButton}"
+                                Padding="10,5"
+                                FontSize="10.5"
+                                Margin="14,0,0,0"
+                                Command="{Binding OpenFriendChangesCommand}"
+                                ToolTip="Friended and unfriended events seen since the last refresh" />
+                    </StackPanel>
 
                     <ListBox Grid.Row="1" Grid.ColumnSpan="3"
                              ItemsSource="{Binding FriendFilters}"
@@ -2459,6 +2469,10 @@
                                 <x:Static Member="m:ActivityType.FriendOnline" />
                                 <x:Static Member="m:ActivityType.FriendJoinedWorld" />
                                 <x:Static Member="m:ActivityType.FriendOffline" />
+                                <x:Static Member="m:ActivityType.BioChanged" />
+                                <x:Static Member="m:ActivityType.AvatarChanged" />
+                                <x:Static Member="m:ActivityType.FriendAdded" />
+                                <x:Static Member="m:ActivityType.FriendRemoved" />
                             </ListBox.Items>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
@@ -2497,15 +2511,25 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
 
-                                        <!-- Avatar -->
-                                        <Border Grid.Column="0"
+                                        <!-- Avatar (clickable for avatar changes) -->
+                                        <Button Grid.Column="0"
                                                 Width="40" Height="40"
-                                                CornerRadius="20"
-                                                Background="{StaticResource InputBrush}"
-                                                Margin="0,0,12,0">
-                                            <controls:AsyncImage SourceUrl="{Binding AvatarUrl}"
-                                                                 DecodeWidth="96" />
-                                        </Border>
+                                                Margin="0,0,12,0"
+                                                Padding="0"
+                                                BorderThickness="0"
+                                                Background="Transparent"
+                                                Cursor="Hand"
+                                                IsEnabled="{Binding HasAvatar}"
+                                                ToolTip="Open this avatar's details to wear or favourite it"
+                                                Command="{Binding DataContext.OpenActivityAvatarCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}">
+                                            <Border Width="40" Height="40"
+                                                    CornerRadius="20"
+                                                    Background="{StaticResource InputBrush}">
+                                                <controls:AsyncImage SourceUrl="{Binding AvatarUrl}"
+                                                                     DecodeWidth="96" />
+                                            </Border>
+                                        </Button>
 
                                         <!-- Activity details -->
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -3056,6 +3080,13 @@
                                                                Style="{StaticResource MutedText}"
                                                                FontSize="10"
                                                                TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Snippet}"
+                                                               FontSize="10.5"
+                                                               FontStyle="Italic"
+                                                               Foreground="{StaticResource DimBrush}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Margin="0,2,0,0"
+                                                               Visibility="{Binding HasSnippet, Converter={StaticResource BoolToVis}}" />
                                                 </StackPanel>
                                             </DataTemplate>
                                         </ListBox.ItemTemplate>
@@ -3407,6 +3438,19 @@
                                            HorizontalAlignment="Right"
                                            Margin="0,2,0,0" />
                             </StackPanel>
+
+                            <Button Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding OpenFriendLocationsCommand}"
+                                    Margin="0,0,6,0"
+                                    ToolTip="Friends in worlds, with join">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE716;"
+                                               FontFamily="Segoe MDL2 Assets"
+                                               FontSize="12"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="Friend locations" Margin="7,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
 
                             <Button Style="{StaticResource SecondaryButton}"
                                     Command="{Binding RefreshCommand}"
@@ -4742,6 +4786,225 @@
                             </Grid>
                         </Border>
                     </Grid>
+        <!-- ========================================================= -->
+        <!-- Friend locations popup                                    -->
+        <!-- ========================================================= -->
+        <Grid Panel.ZIndex="23"
+              Visibility="{Binding IsFriendLocationsOpen, Converter={StaticResource BoolToVis}}">
+            <Button Command="{Binding CloseFriendLocationsCommand}"
+                    Focusable="False"
+                    Cursor="Arrow"
+                    ToolTip="Close">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="#C4060810" />
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Border Width="680" MaxHeight="720"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1" CornerRadius="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Padding="20,16" BorderBrush="{StaticResource SoftBorderBrush}" BorderThickness="0,0,0,1">
+                        <Grid>
+                            <StackPanel>
+                                <TextBlock Text="Friend locations" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="Who is online, which world they are in, and whether you can join."
+                                           Style="{StaticResource MutedText}" Margin="0,3,0,0" />
+                                <TextBlock Text="{Binding FriendLocationsSummary}"
+                                           FontSize="10.5"
+                                           Foreground="{StaticResource AccentHoverBrush}"
+                                           Margin="0,5,0,0" />
+                            </StackPanel>
+                            <Button Style="{StaticResource GhostButton}"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Command="{Binding CloseFriendLocationsCommand}"
+                                    Padding="7,4" ToolTip="Close">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="10" />
+                            </Button>
+                        </Grid>
+                    </Border>
+                    <Grid Grid.Row="1">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      Padding="14,12,10,16">
+                            <ItemsControl ItemsSource="{Binding FriendLocationsView}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource InputBrush}"
+                                                BorderBrush="{StaticResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="10"
+                                                Padding="10"
+                                                Margin="0,0,0,8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Button Background="Transparent" BorderThickness="0"
+                                                        Padding="0" HorizontalContentAlignment="Stretch"
+                                                        Cursor="Hand"
+                                                        ToolTip="Open this friend and their world details"
+                                                        Command="{Binding DataContext.OpenFriendLocationCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Border Width="40" Height="40" CornerRadius="20"
+                                                                Background="{StaticResource PanelBrush}"
+                                                                Margin="0,0,10,0">
+                                                            <controls:AsyncImage SourceUrl="{Binding AvatarUrl}" DecodeWidth="96" />
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding DisplayName}"
+                                                                       FontSize="12.5" FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{Binding LocationTitle}"
+                                                                       FontSize="11"
+                                                                       Foreground="{StaticResource TextBrush}"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Margin="0,2,0,0" />
+                                                            <TextBlock Text="{Binding LocationDetail}"
+                                                                       FontSize="10"
+                                                                       Foreground="{StaticResource MutedBrush}"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Button>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                            VerticalAlignment="Center" Margin="10,0,0,0">
+                                                    <Button Content="Join"
+                                                            Style="{StaticResource PrimaryButton}"
+                                                            Padding="13,7" FontSize="11"
+                                                            Command="{Binding DataContext.JoinFriendCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}"
+                                                            Visibility="{Binding IsJoinable, Converter={StaticResource BoolToVis}}" />
+                                                    <TextBlock Text="Not joinable"
+                                                               Style="{StaticResource MutedText}"
+                                                               FontSize="10"
+                                                               Visibility="{Binding IsJoinable, Converter={StaticResource InverseBoolToVis}}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                        <TextBlock Text="No friends are in a joinable world right now."
+                                   Style="{StaticResource MutedText}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Visibility="{Binding HasFriendLocations, Converter={StaticResource InverseBoolToVis}}" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========================================================= -->
+        <!-- Friend-list changes popup                                 -->
+        <!-- ========================================================= -->
+        <Grid Panel.ZIndex="24"
+              Visibility="{Binding IsFriendChangesOpen, Converter={StaticResource BoolToVis}}">
+            <Button Command="{Binding CloseFriendChangesCommand}"
+                    Focusable="False" Cursor="Arrow" ToolTip="Close">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="#C4060810" />
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Border Width="590" MaxHeight="660"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1" CornerRadius="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Padding="20,16" BorderBrush="{StaticResource SoftBorderBrush}" BorderThickness="0,0,0,1">
+                        <StackPanel>
+                            <TextBlock Text="Friend changes" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Detected when the full friend list refreshes."
+                                       Style="{StaticResource MutedText}" Margin="0,3,0,0" />
+                            <ListBox ItemsSource="{Binding FriendChangeFilters}"
+                                     SelectedItem="{Binding SelectedFriendChangeFilter, Mode=TwoWay}"
+                                     Style="{StaticResource RegionPillList}"
+                                     Margin="0,10,0,0">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource InputBrush}" CornerRadius="8" Padding="9,5">
+                                            <TextBlock Text="{Binding Label}" FontSize="10" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource MutedBrush}" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock Text="{Binding FriendChangesSummary}"
+                                       FontSize="10.5" Foreground="{StaticResource AccentHoverBrush}" Margin="0,5,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <Grid Grid.Row="1">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                      Padding="14,12,10,16">
+                            <ItemsControl ItemsSource="{Binding FriendChangesView}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Background="Transparent" BorderThickness="0" Padding="0"
+                                                HorizontalContentAlignment="Stretch" Cursor="Hand"
+                                                Margin="0,0,0,7"
+                                                Command="{Binding DataContext.OpenFriendChangeCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}">
+                                            <Border Background="{StaticResource InputBrush}"
+                                                    BorderBrush="{StaticResource BorderBrush}"
+                                                    BorderThickness="1" CornerRadius="10" Padding="10">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Width="38" Height="38" CornerRadius="19"
+                                                            Background="{StaticResource PanelBrush}" Margin="0,0,10,0">
+                                                        <controls:AsyncImage SourceUrl="{Binding AvatarUrl}" DecodeWidth="96" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding DetailText}" FontSize="10.5"
+                                                                   Foreground="{StaticResource MutedBrush}" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                        <TextBlock Text="{Binding ChangeLabel}" FontSize="10" FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource AccentHoverBrush}" HorizontalAlignment="Right" />
+                                                        <TextBlock Text="{Binding RelativeTime}" FontSize="9.5"
+                                                                   Foreground="{StaticResource DimBrush}" HorizontalAlignment="Right" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                        <TextBlock Text="No friend-list changes yet. The first full refresh sets a baseline."
+                                   Style="{StaticResource MutedText}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   TextWrapping="Wrap" MaxWidth="330" TextAlignment="Center"
+                                   Visibility="{Binding HasNoFriendChanges, Converter={StaticResource BoolToVis}}" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
         <!-- ========================================================= -->
         <!-- Avatar detail popup (Avatars, Favourites, Avatar Search)  -->
         <!-- ========================================================= -->

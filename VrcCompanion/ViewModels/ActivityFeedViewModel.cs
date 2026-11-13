@@ -22,6 +22,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
     private ObservableCollection<ActivityEntry> _entries = new();
     private List<ActivityEntry> _allEntries = new();
+    private IReadOnlyList<VrcUser>? _previousFriends;
     private ActivityType? _selectedFilter;
     private string _searchQuery = string.Empty;
     private bool _isBusy;
@@ -112,6 +113,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     public void Reset()
     {
         _allEntries = new List<ActivityEntry>();
+        _previousFriends = null;
         _searchQuery = string.Empty;
         OnPropertyChanged(nameof(SearchQuery));
         SelectedFilter = null;
@@ -143,8 +145,10 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 ApplyFilterAndSearch();
             });
 
-            _allEntries = _feedService.BuildFeedFromFriends(friends.ToList());
+            _allEntries = _feedService.BuildFeedFromFriends(friends.ToList(), _previousFriends);
+            _previousFriends = friends.ToList();
             ApplyFilterAndSearch();
+            _ = HydrateAvatarNamesAsync(_allEntries);
             HasLoaded = true;
         }
         catch (VrcApiException ex)
@@ -171,6 +175,32 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     }
 
     private Task RefreshAsync() => LoadAsync();
+
+    private async Task HydrateAvatarNamesAsync(IReadOnlyList<ActivityEntry> entries)
+    {
+        var names = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var entry in entries.Where(entry =>
+                     entry.Type == ActivityType.AvatarChanged && entry.HasAvatar))
+        {
+            if (!names.TryGetValue(entry.AvatarId, out var name))
+            {
+                try
+                {
+                    var avatar = await _api.GetAvatarAsync(entry.AvatarId);
+                    name = avatar?.Name;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                    name = null;
+                }
+
+                names[entry.AvatarId] = name;
+            }
+
+            entry.SetAvatarName(name);
+        }
+    }
 
     /// <summary>
     /// Rebuilds the visible list from the full feed, so changing the filter or

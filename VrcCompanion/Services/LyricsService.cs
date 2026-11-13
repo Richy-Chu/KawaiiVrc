@@ -156,11 +156,14 @@ public sealed record LyricsCandidate(
     TimeSpan Duration,
     bool Instrumental,
     bool HasSyncedLyrics,
-    bool HasPlainLyrics)
+    bool HasPlainLyrics,
+    string Snippet = "")
 {
     public string DisplayText => string.IsNullOrWhiteSpace(Artist)
         ? Title
         : $"{Artist} — {Title}";
+
+    public bool HasSnippet => Snippet.Length > 0;
 
     public string DetailText
     {
@@ -513,7 +516,50 @@ public sealed class LyricsService
         record.Duration > 0 ? TimeSpan.FromSeconds(record.Duration) : TimeSpan.Zero,
         record.Instrumental,
         !string.IsNullOrWhiteSpace(record.SyncedLyrics),
-        !string.IsNullOrWhiteSpace(record.PlainLyrics));
+        !string.IsNullOrWhiteSpace(record.PlainLyrics),
+        SnippetFrom(record));
+
+    private static string SnippetFrom(LrcLibRecord record)
+    {
+        var source = !string.IsNullOrWhiteSpace(record.SyncedLyrics)
+            ? record.SyncedLyrics
+            : record.PlainLyrics;
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return string.Empty;
+        }
+
+        foreach (var raw in source.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (line.StartsWith('['))
+            {
+                var close = line.IndexOf(']');
+                if (close >= 0 && close + 1 < line.Length)
+                {
+                    line = line[(close + 1)..].Trim();
+                }
+                else if (close >= 0)
+                {
+                    continue;
+                }
+            }
+
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            return line.Length > 100 ? line[..100].TrimEnd() + "…" : line;
+        }
+
+        return string.Empty;
+    }
 
     internal static IEnumerable<(string Title, string Artist)> BuildCandidates(string title, string artist)
     {
