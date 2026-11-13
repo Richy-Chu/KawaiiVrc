@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
@@ -518,6 +519,62 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             CoreWebView2DownloadInterruptReason.FileMalicious => "security blocked the file",
             _ => reason.ToString()
         };
+
+    private async void FocusAddressBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (!TryBuildAddressUri(FocusAddressBox.Text, out var uri))
+        {
+            _viewModel?.SetBrowserError("Enter a valid http or https address.");
+            return;
+        }
+
+        try
+        {
+            if (await GetCoreAsync() is not { } core)
+            {
+                _viewModel?.SetBrowserError("The in-app browser could not start.");
+                return;
+            }
+
+            _viewModel?.SetBrowserError(string.Empty);
+            core.Navigate(uri.AbsoluteUri);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            _viewModel?.SetBrowserError("The in-app browser could not navigate to that address.");
+        }
+    }
+
+    internal static bool TryBuildAddressUri(string? input, out Uri uri)
+    {
+        uri = null!;
+        var text = input?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        if (!text.Contains("://", StringComparison.Ordinal))
+        {
+            text = "https://" + text;
+        }
+
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var candidate) ||
+            (candidate.Scheme != Uri.UriSchemeHttp && candidate.Scheme != Uri.UriSchemeHttps))
+        {
+            return false;
+        }
+
+        uri = candidate;
+        return true;
+    }
 
     public void GoBack()
     {

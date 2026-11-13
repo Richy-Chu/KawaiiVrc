@@ -221,7 +221,10 @@ public class MainWindowLayoutTests
                     .Select(text => text.Text)
                     .ToArray();
                 Assert.Contains("Focus page", labels);
-                Assert.Contains("https://example.com/focus", labels);
+                var address = FindVisualChildren<TextBox>(focusToolbar)
+                    .Single(textBox =>
+                        AutomationProperties.GetAutomationId(textBox) == "BrowserFocusAddressBox");
+                Assert.Equal("https://example.com/focus", address.Text);
 
                 var back = FindVisualChildren<Button>(focusToolbar)
                     .Single(button =>

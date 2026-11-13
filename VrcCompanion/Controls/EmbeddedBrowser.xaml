@@ -90,12 +90,18 @@
                                FontWeight="SemiBold"
                                Foreground="{StaticResource TextBrush}"
                                TextTrimming="CharacterEllipsis" />
-                    <TextBlock Text="{Binding BrowserUrl}"
-                               ToolTip="{Binding BrowserUrl}"
-                               Margin="0,1,0,0"
-                               FontSize="9"
-                               Foreground="{StaticResource MutedBrush}"
-                               TextTrimming="CharacterEllipsis" />
+                    <TextBox x:Name="FocusAddressBox"
+                             Text="{Binding BrowserUrl, Mode=OneWay}"
+                             Style="{StaticResource InputBox}"
+                             Margin="0,1,0,0"
+                             Height="22"
+                             Padding="6,1"
+                             FontSize="10"
+                             VerticalContentAlignment="Center"
+                             ToolTip="Enter an address and press Enter"
+                             AutomationProperties.AutomationId="BrowserFocusAddressBox"
+                             AutomationProperties.Name="Address"
+                             KeyDown="FocusAddressBox_KeyDown" />
                 </StackPanel>
 
                 <Button Grid.Column="2"
