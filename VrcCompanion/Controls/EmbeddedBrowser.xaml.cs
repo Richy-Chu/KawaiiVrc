@@ -5,7 +5,6 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
@@ -447,14 +446,6 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
     private void ExitFocus_Click(object sender, RoutedEventArgs e)
         => ExitFocus();
-
-    private void Browser_PreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Escape && ExitFocus())
-        {
-            e.Handled = true;
-        }
-    }
 
     private void OnWebMessageReceived(
         object? sender,

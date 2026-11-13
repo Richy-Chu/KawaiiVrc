@@ -86,8 +86,6 @@
             </Grid>
         </Border>
 
-        <wv2:WebView2 x:Name="Browser"
-                     Grid.Row="1"
-                     PreviewKeyDown="Browser_PreviewKeyDown" />
+        <wv2:WebView2 x:Name="Browser" Grid.Row="1" />
     </Grid>
 </UserControl>
