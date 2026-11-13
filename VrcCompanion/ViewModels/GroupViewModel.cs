@@ -54,9 +54,9 @@ public sealed class GroupViewModel : ViewModelBase
         _api = api;
         _launchMode = launchMode ?? (() => LaunchMode.Vr);
 
-        LoadGroupsCommand = Track(new AsyncRelayCommand(LoadGroupsAsync, () => !IsBusy));
+        LoadGroupsCommand = Track(new AsyncRelayCommand(() => LoadGroupsAsync(), () => !IsBusy));
         CreateGroupCommand = Track(new AsyncRelayCommand(CreateGroupAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(CreateName)));
-        RefreshCommand = Track(new AsyncRelayCommand(LoadGroupsAsync, () => !IsBusy));
+        RefreshCommand = Track(new AsyncRelayCommand(() => LoadGroupsAsync(forceRefresh: true), () => !IsBusy));
         CloseCreateDialogCommand = Track(new RelayCommand(() => ShowCreateDialog = false));
         CloseGroupDetailsCommand = Track(new RelayCommand(() => SelectedGroup = null));
         RefreshMembersCommand = Track(new AsyncRelayCommand(LoadGroupMembersAsync, () => SelectedGroup is not null && !IsBusy));
@@ -410,7 +410,7 @@ public sealed class GroupViewModel : ViewModelBase
         }
     }
 
-    private async Task LoadGroupsAsync()
+    private async Task LoadGroupsAsync(bool forceRefresh = false)
     {
         if (IsBusy)
         {
@@ -422,7 +422,7 @@ public sealed class GroupViewModel : ViewModelBase
 
         try
         {
-            var groups = await _api.GetMyGroupsAsync();
+            var groups = await _api.GetMyGroupsAsync(forceRefresh: forceRefresh);
             Groups = new ObservableCollection<Group>(groups.OrderByDescending(g => g.UpdatedAt));
             HasLoaded = true;
         }

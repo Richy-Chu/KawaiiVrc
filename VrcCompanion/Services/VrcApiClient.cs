@@ -35,6 +35,7 @@ public sealed class VrcApiClient : IDisposable
     private static readonly TimeSpan ProfileCacheDuration = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan MutualCacheDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan FriendsCacheDuration = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MyGroupsCacheDuration = TimeSpan.FromMinutes(2);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -50,6 +51,8 @@ public sealed class VrcApiClient : IDisposable
     private readonly ConcurrentDictionary<string, CacheEntry<VrcMutuals>> _mutualCache = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CacheEntry<VrcUser>> _userCache = new(StringComparer.Ordinal);
     private CacheEntry<IReadOnlyList<VrcUser>>? _friendsCache;
+    private CacheEntry<IReadOnlyList<Group>>? _myGroupsCache;
+    private string? _myGroupsCacheUserId;
     private DateTimeOffset _lastRequestAt = DateTimeOffset.MinValue;
 
     public VrcApiClient(SessionStore? sessionStore = null)
@@ -1572,19 +1575,33 @@ public sealed class VrcApiClient : IDisposable
     /// Groups the signed-in user actually belongs to. <c>GET groups</c> returns
     /// a general group listing instead, so the user groups endpoint is used.
     /// </summary>
-    public async Task<IReadOnlyList<Group>> GetMyGroupsAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<Group>> GetMyGroupsAsync(
+        CancellationToken cancellationToken = default,
+        bool forceRefresh = false)
     {
         if (CurrentUser is null || string.IsNullOrWhiteSpace(CurrentUser.Id))
         {
             throw new InvalidOperationException("Sign in before loading your groups.");
         }
 
+        var userId = CurrentUser.Id;
+        if (!forceRefresh &&
+            _myGroupsCacheUserId == userId &&
+            _myGroupsCache is { } cached &&
+            DateTimeOffset.UtcNow - cached.FetchedAt < MyGroupsCacheDuration)
+        {
+            return cached.Value;
+        }
+
         var body = await SendApiAsync(
             HttpMethod.Get,
-            $"users/{Uri.EscapeDataString(CurrentUser.Id)}/groups?n=100&offset=0",
+            $"users/{Uri.EscapeDataString(userId)}/groups?n=100&offset=0",
             null,
             cancellationToken);
-        return DeserializeList<Group>(body);
+        var groups = DeserializeList<Group>(body);
+        _myGroupsCache = new CacheEntry<IReadOnlyList<Group>>(groups, DateTimeOffset.UtcNow);
+        _myGroupsCacheUserId = userId;
+        return groups;
     }
 
     /// <summary>
@@ -1645,6 +1662,7 @@ public sealed class VrcApiClient : IDisposable
             $"groups/{Uri.EscapeDataString(groupId)}/join",
             content,
             cancellationToken);
+        _myGroupsCache = null;
     }
 
     /// <summary>Leaves a group you belong to (POST groups/{id}/leave).</summary>
@@ -1658,6 +1676,7 @@ public sealed class VrcApiClient : IDisposable
             $"groups/{Uri.EscapeDataString(groupId)}/leave",
             content,
             cancellationToken);
+        _myGroupsCache = null;
     }
 
     public async Task<IReadOnlyList<GroupMember>> GetGroupMembersAsync(
@@ -1691,6 +1710,8 @@ public sealed class VrcApiClient : IDisposable
         _mutualCache.Clear();
         _userCache.Clear();
         _friendsCache = null;
+        _myGroupsCache = null;
+        _myGroupsCacheUserId = null;
     }
 
     public void Dispose()

@@ -63,6 +63,39 @@ public class FriendDetailNoteTests : IDisposable
     }
 
     [Fact]
+    public void FullGroupListIsOnlyNeededWhenThePayloadIsShort()
+    {
+        var shortPayload = new VrcProfile
+        {
+            Groups = new VrcProfileGroups
+            {
+                Count = 66,
+                List =
+                {
+                    new VrcProfileGroup { Id = "grp_1", Name = "One" },
+                    new VrcProfileGroup { Id = "grp_2", Name = "Two" }
+                }
+            }
+        };
+        var completePayload = new VrcProfile
+        {
+            Groups = new VrcProfileGroups
+            {
+                Count = 2,
+                List =
+                {
+                    new VrcProfileGroup { Id = "grp_1", Name = "One" },
+                    new VrcProfileGroup { Id = "grp_2", Name = "Two" }
+                }
+            }
+        };
+
+        Assert.True(FriendDetailViewModel.NeedsFullGroupList(shortPayload));
+        Assert.False(FriendDetailViewModel.NeedsFullGroupList(completePayload));
+        Assert.False(FriendDetailViewModel.NeedsFullGroupList(null));
+    }
+
+    [Fact]
     public void LeavingTheLastMutualGroupReturnsToTheirGroupsTab()
     {
         var profile = CreateProfile(new FriendNotesStore(NotesPath));

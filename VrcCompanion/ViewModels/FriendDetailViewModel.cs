@@ -307,6 +307,13 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     public bool HasGroups => Groups.Count > 0;
 
+    /// <summary>
+    /// The profile payload carries only a sample of a user's groups; its count
+    /// tells whether that sample is complete before spending a second request.
+    /// </summary>
+    internal static bool NeedsFullGroupList(VrcProfile? profile)
+        => profile?.Groups is { } groups && groups.Count > groups.List.Count;
+
     public enum ProfileGroupsTab
     {
         Profile,
@@ -693,7 +700,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
             // A profile payload ships only a few of the user's groups (the count
             // says how many exist), so read the full membership list instead.
             IReadOnlyList<Group>? allProfileGroups = IsSelf ? mine : null;
-            if (!IsSelf)
+            if (!IsSelf && NeedsFullGroupList(Profile))
             {
                 try
                 {
