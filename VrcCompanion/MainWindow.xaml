@@ -2543,9 +2543,10 @@
         </DataTemplate>
 
         <DataTemplate x:Key="CreatorResourcesTemplate">
+            <Grid Margin="16,2,12,12">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="16,2,12,12">
+                          Visibility="{Binding CreatorResourcesViewModel.IsBrowserOpen, Converter={StaticResource InverseBoolToVis}}">
                 <StackPanel>
                     <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                         <StackPanel>
@@ -2555,68 +2556,6 @@
                                      Style="{StaticResource InputBox}"
                                      Tag="Search avatars, outfits, models, shaders, or tools..." />
                             <TextBlock Text="Type a term, then choose Search on a site below. Search opens in the in-app browser; Open site uses your default browser."
-                                       Style="{StaticResource MutedText}"
-                                       TextWrapping="Wrap"
-                                       Margin="0,8,0,0" />
-                        </StackPanel>
-                    </Border>
-
-                    <Border Style="{StaticResource Card}"
-                            Margin="0,0,0,16"
-                            Visibility="{Binding CreatorResourcesViewModel.IsBrowserOpen, Converter={StaticResource BoolToVis}}">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="IN-APP BROWSER" Style="{StaticResource FieldLabel}" Margin="0" />
-                                    <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserTitle}"
-                                               FontSize="15"
-                                               FontWeight="SemiBold"
-                                               Foreground="{StaticResource TextBrush}"
-                                               Margin="0,3,0,0" />
-                                </StackPanel>
-                                <Button Grid.Column="1"
-                                        Content="Close"
-                                        Style="{StaticResource SmallButton}"
-                                        VerticalAlignment="Center"
-                                        Command="{Binding CreatorResourcesViewModel.CloseBrowserCommand}" />
-                            </Grid>
-                            <controls:EmbeddedBrowser Height="520"
-                                                      DataContext="{Binding CreatorResourcesViewModel}" />
-                            <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserError}"
-                                       Foreground="{StaticResource ErrorTextBrush}"
-                                       TextWrapping="Wrap"
-                                       Margin="0,8,0,0" />
-                            <Grid Margin="0,8,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="{Binding CreatorResourcesViewModel.DownloadStatus}"
-                                           TextWrapping="Wrap">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding CreatorResourcesViewModel.DownloadStatusIsError}" Value="True">
-                                                    <Setter Property="Foreground" Value="{StaticResource ErrorTextBrush}" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                                <Button Grid.Column="1"
-                                        Content="Open folder"
-                                        Style="{StaticResource SmallButton}"
-                                        Margin="12,0,0,0"
-                                        VerticalAlignment="Top"
-                                        ToolTip="Show the downloaded file, or its folder if the file was moved or deleted"
-                                        Visibility="{Binding CreatorResourcesViewModel.CanOpenDownloadFolder, Converter={StaticResource BoolToVis}}"
-                                        Command="{Binding DataContext.CreatorResourcesViewModel.OpenDownloadFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
-                            </Grid>
-                            <TextBlock Text="WebView2 keeps a browser profile for this app. Site sign-ins are stored as session cookies, so a sign-in may persist while those cookies remain valid. The app does not read your password. Downloads open a Save As dialog so you choose the destination."
                                        Style="{StaticResource MutedText}"
                                        TextWrapping="Wrap"
                                        Margin="0,8,0,0" />
@@ -2710,6 +2649,69 @@
                                Margin="0,4,0,0" />
                 </StackPanel>
             </ScrollViewer>
+
+            <Grid Visibility="{Binding CreatorResourcesViewModel.IsBrowserOpen, Converter={StaticResource BoolToVis}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="IN-APP BROWSER" Style="{StaticResource FieldLabel}" Margin="0" />
+                            <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserTitle}"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextBrush}"
+                                       TextTrimming="CharacterEllipsis"
+                                       Margin="0,3,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Content="Back to resources"
+                                    Style="{StaticResource SmallButton}"
+                                    Margin="0,0,8,0"
+                                    ToolTip="Return to Creator Resources while keeping the browser session"
+                                    Command="{Binding CreatorResourcesViewModel.CloseBrowserCommand}" />
+                            <Button Content="Open folder"
+                                    Style="{StaticResource SmallButton}"
+                                    Visibility="{Binding CreatorResourcesViewModel.CanOpenDownloadFolder, Converter={StaticResource BoolToVis}}"
+                                    Command="{Binding DataContext.CreatorResourcesViewModel.OpenDownloadFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Style="{StaticResource Card}"
+                        Padding="0"
+                        ClipToBounds="True">
+                    <controls:EmbeddedBrowser DataContext="{Binding CreatorResourcesViewModel}" />
+                </Border>
+
+                <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                    <TextBlock Text="{Binding CreatorResourcesViewModel.BrowserError}"
+                               Foreground="{StaticResource ErrorTextBrush}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding CreatorResourcesViewModel.DownloadStatus}"
+                               TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CreatorResourcesViewModel.DownloadStatusIsError}" Value="True">
+                                        <Setter Property="Foreground" Value="{StaticResource ErrorTextBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Grid>
+            </Grid>
         </DataTemplate>
 
         <DataTemplate x:Key="BraveBrowserTemplate">
@@ -2719,7 +2721,18 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                <Expander Grid.Row="0"
+                          IsExpanded="True"
+                          HorizontalContentAlignment="Stretch"
+                          Margin="0,0,0,12"
+                          ToolTip="Collapse these controls to give the browser more room.">
+                    <Expander.Header>
+                        <TextBlock Text="SEARCH &amp; CONTROLS"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold" />
+                    </Expander.Header>
+                    <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Text="SEARCH THE WEB" Style="{StaticResource FieldLabel}" />
                         <Grid Margin="0,8,0,0">
@@ -2755,7 +2768,8 @@
                                    TextWrapping="Wrap"
                                    Margin="0,8,0,0" />
                     </StackPanel>
-                </Border>
+                    </Border>
+                </Expander>
 
                 <Border Grid.Row="1" Style="{StaticResource Card}">
                     <Grid>
@@ -2838,7 +2852,18 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                <Expander Grid.Row="0"
+                          IsExpanded="True"
+                          HorizontalContentAlignment="Stretch"
+                          Margin="0,0,0,12"
+                          ToolTip="Collapse these controls to give the browser more room.">
+                    <Expander.Header>
+                        <TextBlock Text="SEARCH &amp; CONTROLS"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold" />
+                    </Expander.Header>
+                    <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <Grid>
                             <TextBlock Text="DISCORD" Style="{StaticResource FieldLabel}" />
@@ -2905,7 +2930,8 @@
                             </TextBlock.Style>
                         </TextBlock>
                     </StackPanel>
-                </Border>
+                    </Border>
+                </Expander>
 
                 <Border Grid.Row="1" Style="{StaticResource Card}">
                     <Grid>
