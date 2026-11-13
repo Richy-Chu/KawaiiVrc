@@ -62,6 +62,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             if (_window is not null)
             {
                 _window.Closed += OnWindowClosed;
+                _window.StateChanged += OnWindowStateChanged;
             }
         }
 
@@ -73,11 +74,15 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         if (_window is not null)
         {
             _window.Closed -= OnWindowClosed;
+            _window.StateChanged -= OnWindowStateChanged;
             _window = null;
         }
 
         DisposeBrowser();
     }
+
+    private void OnWindowStateChanged(object? sender, EventArgs e)
+        => UpdateMemoryTargetLevel();
 
     private void OnBrowserNavigationRequested(string url)
     {
@@ -256,8 +261,8 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         UpdateMemoryTargetLevel();
     }
 
-    // Hidden tabs keep their page and call alive while Chromium releases memory.
-    // TrySuspendAsync would stop the call, so use the target level instead.
+    // Collapsed tabs and a minimized window keep their page and call alive while
+    // Chromium releases memory. TrySuspendAsync would stop the call.
     private void UpdateMemoryTargetLevel()
     {
         if (_disposed || Browser.CoreWebView2 is not { } core)
@@ -267,9 +272,10 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
         try
         {
-            core.MemoryUsageTargetLevel = IsVisible
-                ? CoreWebView2MemoryUsageTargetLevel.Normal
-                : CoreWebView2MemoryUsageTargetLevel.Low;
+            core.MemoryUsageTargetLevel =
+                !IsVisible || _window?.WindowState == WindowState.Minimized
+                    ? CoreWebView2MemoryUsageTargetLevel.Low
+                    : CoreWebView2MemoryUsageTargetLevel.Normal;
         }
         catch (Exception ex)
         {
