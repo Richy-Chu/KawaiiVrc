@@ -4,6 +4,20 @@ An unofficial Windows desktop companion for [VRChat](https://vrchat.com), built 
 
 > **Not affiliated with VRChat Inc.** This app uses VRChat's unofficial web API. Use it at your own risk and respect VRChat's Terms of Service and rate limits.
 
+## Where we left off
+
+The browser focus-mode pass is complete and was tested live in Brave, Creator Resources, and Discord at 1440×900 and the 1100×720 minimum width. Brave no longer offers focus mode before a page is open, the focus toolbar stays visible, and the address bar resynchronizes after navigation. Error announcements, `Ctrl+L`, history shortcuts, refresh shortcuts, and both Escape behaviors were verified.
+
+The build has 0 warnings and 0 errors, and all 287 tests pass. The focus changes are committed with this handoff.
+
+**Needing start:** start the current build if it is not already running:
+
+```powershell
+dotnet run --project VrcCompanion -c Release
+```
+
+No further implementation is pending for this pass.
+
 ## Start here
 
 1. Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) and make sure the Microsoft Edge WebView2 Runtime is installed (it is already present on most Windows 10/11 PCs).

@@ -38,7 +38,9 @@ public class EmbeddedBrowserAddressTests
     {
         WpfTestHost.RunAsync(async () =>
         {
-            var host = new BraveBrowserViewModel { IsFocusMode = true };
+            var host = new BraveBrowserViewModel();
+            host.ShowBrowserForLayoutTest();
+            host.IsFocusMode = true;
             var browser = new EmbeddedBrowser { DataContext = host };
             var window = new Window
             {
@@ -115,7 +117,9 @@ public class EmbeddedBrowserAddressTests
                 Path.Combine(siteRoot, "index.html"),
                 "<html><head><title>Address probe</title></head><body>Loaded</body></html>");
 
-            var host = new BraveBrowserViewModel { IsFocusMode = true };
+            var host = new BraveBrowserViewModel();
+            host.ShowBrowserForLayoutTest();
+            host.IsFocusMode = true;
             var browser = new EmbeddedBrowser { DataContext = host };
             var window = new Window
             {
@@ -172,6 +176,7 @@ public class EmbeddedBrowserAddressTests
                     $"The address-bar navigation failed: {navigation.WebErrorStatus}.");
                 Assert.Equal("Address probe", core.DocumentTitle);
                 Assert.Equal("https://vrc-address.test/index.html", host.BrowserUrl);
+                Assert.Equal(host.BrowserUrl, address.Text);
                 Assert.True(host.IsFocusMode, "Address navigation should stay in focus mode.");
                 Assert.True(
                     await WaitUntilAsync(() => browser.Browser.IsFocused),

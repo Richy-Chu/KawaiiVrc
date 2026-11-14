@@ -15,7 +15,9 @@ public class EmbeddedBrowserEscapeTests
     {
         WpfTestHost.RunAsync(async () =>
         {
-            var host = new BraveBrowserViewModel { IsFocusMode = true };
+            var host = new BraveBrowserViewModel();
+            host.ShowBrowserForLayoutTest();
+            host.IsFocusMode = true;
             var browser = new EmbeddedBrowser { DataContext = host };
             var window = new Window
             {
@@ -99,7 +101,9 @@ public class EmbeddedBrowserEscapeTests
     {
         WpfTestHost.RunAsync(async () =>
         {
-            var host = new BraveBrowserViewModel { IsFocusMode = true };
+            var host = new BraveBrowserViewModel();
+            host.ShowBrowserForLayoutTest();
+            host.IsFocusMode = true;
             var browser = new EmbeddedBrowser { DataContext = host };
             var window = new Window
             {

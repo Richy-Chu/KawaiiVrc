@@ -2860,6 +2860,7 @@
                             <ToggleButton x:Name="BraveFocusToggle"
                                           Tag="BraveFocusToggle"
                                           IsChecked="{Binding BraveBrowserViewModel.IsFocusMode, Mode=TwoWay}"
+                                          Visibility="{Binding BraveBrowserViewModel.IsBrowserOpen, Converter={StaticResource BoolToVis}}"
                                           Style="{StaticResource BrowserFocusToggle}" />
                             <TextBlock Text="{Binding BraveBrowserViewModel.BrowserError}"
                                        Foreground="{StaticResource ErrorTextBrush}"

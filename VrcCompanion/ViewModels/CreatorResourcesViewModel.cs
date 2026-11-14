@@ -114,7 +114,7 @@ public sealed class CreatorResourcesViewModel : ViewModelBase, IEmbeddedBrowserH
     public bool IsFocusMode
     {
         get => _isFocusMode;
-        set => SetProperty(ref _isFocusMode, value);
+        set => SetProperty(ref _isFocusMode, value && IsBrowserOpen);
     }
 
     public string BrowserUrl

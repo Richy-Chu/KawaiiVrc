@@ -45,6 +45,7 @@ public class MainWindowBrowserShortcutTests
             {
                 window.Show();
                 shell.SelectedSection = browserSection;
+                shell.BraveBrowserViewModel.ShowBrowserForLayoutTest();
                 shell.BraveBrowserViewModel.IsFocusMode = true;
                 window.UpdateLayout();
 
@@ -352,6 +353,10 @@ public class MainWindowBrowserShortcutTests
             if (host is CreatorResourcesViewModel creatorResources)
             {
                 creatorResources.ShowBrowserForLayoutTest();
+            }
+            else if (host is BraveBrowserViewModel braveBrowser)
+            {
+                braveBrowser.ShowBrowserForLayoutTest();
             }
 
             host.SetBrowserLocation(FocusUrl, FocusTitle);

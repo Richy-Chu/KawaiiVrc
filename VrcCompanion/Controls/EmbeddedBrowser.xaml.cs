@@ -388,6 +388,24 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         {
             AnnounceFocusBrowserError();
         }
+        else if (e.PropertyName == nameof(IEmbeddedBrowserHost.BrowserUrl))
+        {
+            SyncFocusAddress();
+        }
+    }
+
+    private void SyncFocusAddress()
+    {
+        if (_viewModel is not { } viewModel ||
+            FocusAddressBox.IsKeyboardFocusWithin ||
+            string.Equals(FocusAddressBox.Text, viewModel.BrowserUrl, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        // SetCurrentValue keeps the one-way binding intact when automation has
+        // replaced the text without going through normal keyboard input.
+        FocusAddressBox.SetCurrentValue(TextBox.TextProperty, viewModel.BrowserUrl);
     }
 
     private async Task SetPageFocusModeAsync(bool focused)
@@ -598,6 +616,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
                 }
 
                 Browser.Focus();
+                SyncFocusAddress();
             },
             DispatcherPriority.Input);
     }

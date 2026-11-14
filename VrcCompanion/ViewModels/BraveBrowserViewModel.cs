@@ -45,13 +45,26 @@ public sealed class BraveBrowserViewModel : ViewModelBase, IEmbeddedBrowserHost
     public bool IsBrowserOpen
     {
         get => _isBrowserOpen;
-        private set => SetProperty(ref _isBrowserOpen, value);
+        private set
+        {
+            if (SetProperty(ref _isBrowserOpen, value) && !value)
+            {
+                IsFocusMode = false;
+            }
+        }
     }
 
     public bool IsFocusMode
     {
         get => _isFocusMode;
-        set => SetProperty(ref _isFocusMode, value);
+        set => SetProperty(ref _isFocusMode, value && IsBrowserOpen);
+    }
+
+    /// <summary>Shows the browser pane without starting a navigation for layout tests.</summary>
+    internal void ShowBrowserForLayoutTest()
+    {
+        BrowserUrl = string.Empty;
+        IsBrowserOpen = true;
     }
 
     public string BrowserUrl

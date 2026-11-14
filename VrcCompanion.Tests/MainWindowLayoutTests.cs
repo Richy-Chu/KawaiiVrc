@@ -18,6 +18,50 @@ namespace VrcCompanion.Tests;
 public class MainWindowLayoutTests
 {
     [Fact]
+    public void BraveFocusToggleIsHiddenUntilTheBrowserHasAPage()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            var browserSection = shell.Sections.Single(section => section.Key == "brave");
+            var window = new MainWindow(shell, initializeOnLoad: false)
+            {
+                Width = 1100,
+                Height = 720,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = 100,
+                Top = 100
+            };
+
+            try
+            {
+                window.Show();
+                shell.SelectedSection = browserSection;
+                window.UpdateLayout();
+
+                var toggle = FindVisualChildren<ToggleButton>(window)
+                    .Single(element => Equals(element.Tag, "BraveFocusToggle"));
+                Assert.Equal(Visibility.Collapsed, toggle.Visibility);
+                Assert.False(toggle.IsVisible, "Focus must not be offered while Brave is closed.");
+
+                shell.BraveBrowserViewModel.ShowBrowserForLayoutTest();
+                window.UpdateLayout();
+
+                Assert.Equal(Visibility.Visible, toggle.Visibility);
+                Assert.True(toggle.IsVisible, "Focus should be offered once a page is open.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void SidebarNavScrollsSettingsIntoViewAtConstrainedHeight()
     {
         WpfTestHost.Run(() =>
@@ -115,6 +159,11 @@ public class MainWindowLayoutTests
                     shell.CreatorResourcesViewModel.ShowBrowserForLayoutTest();
                     window.UpdateLayout();
                 }
+                else if (sectionKey == "brave")
+                {
+                    shell.BraveBrowserViewModel.ShowBrowserForLayoutTest();
+                    window.UpdateLayout();
+                }
 
                 var pane = FindVisualChildren<Border>(window)
                     .Single(element => Equals(element.Tag, paneTag));
@@ -210,6 +259,7 @@ public class MainWindowLayoutTests
             {
                 window.Show();
                 shell.SelectedSection = browserSection;
+                shell.BraveBrowserViewModel.ShowBrowserForLayoutTest();
                 shell.BraveBrowserViewModel.SetBrowserLocation(
                     "https://example.com/focus",
                     "Focus page");
@@ -300,6 +350,10 @@ public class MainWindowLayoutTests
                 if (host is CreatorResourcesViewModel creatorResources)
                 {
                     creatorResources.ShowBrowserForLayoutTest();
+                }
+                else if (host is BraveBrowserViewModel braveBrowser)
+                {
+                    braveBrowser.ShowBrowserForLayoutTest();
                 }
 
                 host.SetBrowserLocation(pageUrl, "Focus page");

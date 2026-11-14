@@ -26,6 +26,21 @@ public class BraveBrowserTests
     }
 
     [Fact]
+    public void FocusMode_WaitsForAnOpenBrowser()
+    {
+        var viewModel = new BraveBrowserViewModel();
+
+        viewModel.IsFocusMode = true;
+
+        Assert.False(viewModel.IsFocusMode);
+
+        viewModel.ShowBrowserForLayoutTest();
+        viewModel.IsFocusMode = true;
+
+        Assert.True(viewModel.IsFocusMode);
+    }
+
+    [Fact]
     public void SearchCommand_PublishesBraveSearchNavigation()
     {
         var viewModel = new BraveBrowserViewModel();
