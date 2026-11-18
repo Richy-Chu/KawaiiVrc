@@ -24,6 +24,18 @@ internal sealed class GroupModerationTestHandler : HttpMessageHandler
     public const string InviteUserId = "usr_invited";
     public const string RoleAdminId = "grol_admin";
     public const string RoleVipId = "grol_vip";
+    public const string RoleEveryoneId = "grol_everyone";
+
+    /// <summary>Members the group reports, and how many the roster endpoint lists.</summary>
+    public int MemberTotal { get; set; } = 121;
+
+    public int RosterSize { get; set; } = 2;
+
+    public List<string> CreatedRoles { get; } = new();
+
+    public List<string> UpdatedRoles { get; } = new();
+
+    public List<string> DeletedRoles { get; } = new();
 
     /// <summary>Permissions reported in the group's myMember object.</summary>
     public List<string> Permissions { get; } = new()
@@ -83,10 +95,43 @@ internal sealed class GroupModerationTestHandler : HttpMessageHandler
 
         if (path.EndsWith("/roles", StringComparison.Ordinal))
         {
+            if (method == HttpMethod.Post)
+            {
+                CreatedRoles.Add(body);
+                return Json(new { id = "grol_new", name = Read(body, "name"), memberCount = 0 });
+            }
+
             return Json(new[]
             {
                 new { id = RoleAdminId, name = "Admin", description = "Runs the group", memberCount = 3, permissions = new[] { "*" } },
-                new { id = RoleVipId, name = "VIP", description = "Friends of the owner", memberCount = 12, permissions = Array.Empty<string>() }
+                new { id = RoleVipId, name = "VIP", description = "Friends of the owner", memberCount = 12, permissions = Array.Empty<string>() },
+                new { id = RoleEveryoneId, name = "Everyone", description = "Every member", memberCount = 121, permissions = Array.Empty<string>() }
+            });
+        }
+
+        if (path.Contains("/roles/", StringComparison.Ordinal))
+        {
+            var roleId = path[(path.LastIndexOf('/') + 1)..];
+            if (method == HttpMethod.Delete)
+            {
+                DeletedRoles.Add(roleId);
+            }
+            else
+            {
+                UpdatedRoles.Add($"{roleId}|{body}");
+            }
+
+            return Empty();
+        }
+
+        if (path.EndsWith("/permissions", StringComparison.Ordinal))
+        {
+            return Json(new[]
+            {
+                "group-members-manage",
+                "group-bans-manage",
+                "group-roles-manage",
+                "group-instance-join"
             });
         }
 
@@ -155,37 +200,39 @@ internal sealed class GroupModerationTestHandler : HttpMessageHandler
 
         if (path.EndsWith("/members", StringComparison.Ordinal))
         {
-            return Json(new[]
+            var offset = ReadInt(request.RequestUri?.Query ?? string.Empty, "offset");
+            var rows = new List<object>();
+            for (var index = offset; index < RosterSize && rows.Count < 100; index++)
             {
-                new
+                var userId = index switch
                 {
-                    id = "gmem_1",
+                    0 => MemberUserId,
+                    1 => OtherUserId,
+                    _ => $"usr_roster_{index}"
+                };
+                var name = index switch
+                {
+                    0 => "Member Person",
+                    1 => "Other Person",
+                    _ => $"Roster Person {index}"
+                };
+                rows.Add(new
+                {
+                    id = $"gmem_{index}",
                     groupId = GroupId,
-                    userId = MemberUserId,
+                    userId,
                     membershipStatus = "member",
-                    roleIds = new[] { RoleVipId },
+                    roleIds = index == 0 ? new[] { RoleVipId } : Array.Empty<string>(),
                     user = new
                     {
-                        id = MemberUserId,
-                        displayName = "Member Person",
-                        currentAvatarThumbnailImageUrl = "https://example.com/member.png"
+                        id = userId,
+                        displayName = name,
+                        currentAvatarThumbnailImageUrl = $"https://example.com/{userId}.png"
                     }
-                },
-                new
-                {
-                    id = "gmem_2",
-                    groupId = GroupId,
-                    userId = OtherUserId,
-                    membershipStatus = "member",
-                    roleIds = Array.Empty<string>(),
-                    user = new
-                    {
-                        id = OtherUserId,
-                        displayName = "Other Person",
-                        currentAvatarThumbnailImageUrl = "https://example.com/other.png"
-                    }
-                }
-            });
+                });
+            }
+
+            return Json(rows);
         }
 
         if (path.Contains("/members/", StringComparison.Ordinal))
@@ -199,7 +246,7 @@ internal sealed class GroupModerationTestHandler : HttpMessageHandler
         {
             id = GroupId,
             name = "Eden",
-            memberCount = 121,
+            memberCount = MemberTotal,
             myMember = new
             {
                 id = "gmem_me",
@@ -231,6 +278,20 @@ internal sealed class GroupModerationTestHandler : HttpMessageHandler
             currentAvatarThumbnailImageUrl = $"https://example.com/{userId}.png"
         }
     };
+
+    private static int ReadInt(string query, string key)
+    {
+        foreach (var pair in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            if (parts.Length == 2 && parts[0] == key && int.TryParse(parts[1], out var value))
+            {
+                return value;
+            }
+        }
+
+        return 0;
+    }
 
     private static string Read(string body, string property)
     {

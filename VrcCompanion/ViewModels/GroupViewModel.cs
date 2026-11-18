@@ -97,6 +97,7 @@ public sealed class GroupViewModel : ViewModelBase
                     },
                     _openMemberProfile)))
         };
+        Moderation.MemberCountChanged += OnModerationMemberRemoved;
         _openLaunchChooser = openLaunchChooser;
         _openUrl = openUrl ?? (url => LaunchService.OpenUrl(url));
 
@@ -242,6 +243,7 @@ public sealed class GroupViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsGroupModerationOpen));
                 OnPropertyChanged(nameof(IsGroupDetailsOpen));
                 OnPropertyChanged(nameof(SelectedGroupUrl));
+                OnPropertyChanged(nameof(SelectedGroupMemberText));
                 OnPropertyChanged(nameof(MembersSummary));
                 RaiseCommandStates();
                 _membersTruncated = false;
@@ -545,6 +547,27 @@ public sealed class GroupViewModel : ViewModelBase
     public string SelectedGroupUrl => SelectedGroup is null
         ? string.Empty
         : $"https://vrchat.com/home/group/{SelectedGroup.EffectiveId}";
+
+    public string SelectedGroupMemberText => SelectedGroup is null
+        ? string.Empty
+        : string.Create(CultureInfo.InvariantCulture, $"{SelectedGroup.MemberCount:N0} members");
+
+    /// <summary>Keeps the popup's member count honest after a moderator kicks or bans someone.</summary>
+    private void OnModerationMemberRemoved()
+    {
+        if (SelectedGroup is { } group)
+        {
+            group.MemberCount = Math.Max(0, group.MemberCount - 1);
+        }
+
+        if (GroupInfo is { } info && SelectedGroup is { } selected &&
+            string.Equals(info.EffectiveId, selected.EffectiveId, StringComparison.Ordinal))
+        {
+            info.MemberCount = Math.Max(0, info.MemberCount - 1);
+        }
+
+        OnPropertyChanged(nameof(SelectedGroupMemberText));
+    }
 
     public bool IsLoadingMembers
     {

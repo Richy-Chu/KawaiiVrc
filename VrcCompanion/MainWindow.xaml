@@ -3370,7 +3370,7 @@
                                                    FontWeight="SemiBold"
                                                    Foreground="{StaticResource TextBrush}"
                                                    TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding MemberCount, StringFormat='{}{0} members'}"
+                                        <TextBlock Text="{Binding DataContext.GroupViewModel.SelectedGroupMemberText, RelativeSource={RelativeSource AncestorType=Window}}"
                                                    Style="{StaticResource MutedText}"
                                                    Margin="0,3,0,0" />
                                     </StackPanel>
@@ -3724,6 +3724,9 @@
                                             <TextBlock Text="GROUP MODERATION" Style="{StaticResource FieldLabel}" />
                                             <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.GroupName, RelativeSource={RelativeSource AncestorType=Window}}"
                                                        FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Margin="0,2,0,0" />
+                                            <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.MemberTotalText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                       Style="{StaticResource MutedText}"
+                                                       Margin="0,2,0,0" />
                                         </StackPanel>
                                         <Button Content="Back to group"
                                                 Style="{StaticResource GhostButton}"
@@ -3732,10 +3735,7 @@
                                                 HorizontalAlignment="Right"
                                                 Command="{Binding DataContext.GroupViewModel.CloseGroupModerationCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                                     </Grid>
-                                    <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.PermissionText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                               Style="{StaticResource MutedText}"
-                                               TextWrapping="Wrap"
-                                               Margin="0,4,0,10" />
+                                    <Border Height="10" />
 
                                     <WrapPanel Margin="0,0,0,10"
                                                Visibility="{Binding DataContext.GroupViewModel.Moderation.HasModerationPermission, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
@@ -3755,6 +3755,10 @@
                                                 Style="{StaticResource ChipButton}"
                                                 Command="{Binding DataContext.GroupViewModel.Moderation.SelectTabCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="Invites" />
+                                        <Button Content="{Binding DataContext.GroupViewModel.Moderation.RolesTabLabel, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Style="{StaticResource ChipButton}"
+                                                Command="{Binding DataContext.GroupViewModel.Moderation.SelectTabCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="Roles" />
                                         <Button Content="Audit log"
                                                 Style="{StaticResource ChipButton}"
                                                 Command="{Binding DataContext.GroupViewModel.Moderation.SelectTabCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -3911,6 +3915,125 @@
                                                       ItemTemplate="{StaticResource ModerationEntryTemplate}" />
                                     </StackPanel>
 
+                                    <StackPanel Visibility="{Binding DataContext.GroupViewModel.Moderation.ShowRoles, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Roles decide what members can do for the whole group."
+                                                       Style="{StaticResource MutedText}"
+                                                       TextWrapping="Wrap"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,10,0" />
+                                            <Button Grid.Column="1"
+                                                    Content="New role"
+                                                    Style="{StaticResource SecondaryButton}"
+                                                    Padding="10,5"
+                                                    FontSize="10.5"
+                                                    Command="{Binding DataContext.GroupViewModel.Moderation.StartNewRoleCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                        </Grid>
+                                        <ItemsControl ItemsSource="{Binding DataContext.GroupViewModel.Moderation.Roles, RelativeSource={RelativeSource AncestorType=Window}}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{StaticResource InputBrush}" CornerRadius="9" Padding="10,7" Margin="0,0,0,4">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Name}" FontSize="11.5" FontWeight="SemiBold"
+                                                                           Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{Binding Description}" FontSize="9.5"
+                                                                           Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{Binding FlagsText}" FontSize="9" Foreground="{StaticResource PinkBrush}" />
+                                                            </StackPanel>
+                                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding MemberCountText}" Style="{StaticResource MutedText}"
+                                                                           VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                                <Button Content="Edit" Style="{StaticResource SecondaryButton}" Padding="8,4" FontSize="10"
+                                                                        Command="{Binding EditCommand}" />
+                                                                <Button Content="Delete" Style="{StaticResource GhostButton}" Padding="7,4" FontSize="10" Margin="2,0,0,0"
+                                                                        Command="{Binding DeleteCommand}" />
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <Border Background="#1A1430"
+                                                BorderBrush="{StaticResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="10"
+                                                Padding="12"
+                                                Margin="0,10,0,0"
+                                                Visibility="{Binding DataContext.GroupViewModel.Moderation.IsRoleEditorOpen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.RoleEditorTitle, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                           Style="{StaticResource FieldLabel}" />
+                                                <TextBox Text="{Binding DataContext.GroupViewModel.Moderation.RoleEditorName, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                                                         Style="{StaticResource InputBox}"
+                                                         Padding="10,6"
+                                                         FontSize="11.5"
+                                                         MinHeight="30"
+                                                         Margin="0,6,0,0"
+                                                         AutomationProperties.Name="Role name"
+                                                         AutomationProperties.AutomationId="GroupRoleNameBox" />
+                                                <TextBox Text="{Binding DataContext.GroupViewModel.Moderation.RoleEditorDescription, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                                                         Style="{StaticResource InputBox}"
+                                                         Padding="10,6"
+                                                         FontSize="11.5"
+                                                         MinHeight="30"
+                                                         Margin="0,6,0,0"
+                                                         AutomationProperties.Name="Role description" />
+                                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                                    <CheckBox IsChecked="{Binding DataContext.GroupViewModel.Moderation.RoleEditorAddedOnJoin, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              Content="Added when someone joins"
+                                                              Foreground="{StaticResource MutedBrush}"
+                                                              FontSize="10.5"
+                                                              Margin="0,0,14,0" />
+                                                    <CheckBox IsChecked="{Binding DataContext.GroupViewModel.Moderation.RoleEditorSelfAssignable, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              Content="Members can assign it themselves"
+                                                              Foreground="{StaticResource MutedBrush}"
+                                                              FontSize="10.5" />
+                                                </StackPanel>
+                                                <TextBlock Text="PERMISSIONS" Style="{StaticResource FieldLabel}" Margin="0,10,0,4" />
+                                                <ItemsControl ItemsSource="{Binding DataContext.GroupViewModel.Moderation.RolePermissions, RelativeSource={RelativeSource AncestorType=Window}}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox IsChecked="{Binding IsChecked}"
+                                                                      Content="{Binding Label}"
+                                                                      Foreground="{StaticResource MutedBrush}"
+                                                                      FontSize="10.5"
+                                                                      Width="252"
+                                                                      Margin="0,0,4,4" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                                    <Button Content="{Binding DataContext.GroupViewModel.Moderation.RoleEditorActionText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            Style="{StaticResource PrimaryButton}"
+                                                            Padding="12,6"
+                                                            FontSize="10.5"
+                                                            Command="{Binding DataContext.GroupViewModel.Moderation.SaveRoleCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    <Button Content="Cancel"
+                                                            Style="{StaticResource GhostButton}"
+                                                            Padding="10,6"
+                                                            FontSize="10.5"
+                                                            Margin="4,0,0,0"
+                                                            Command="{Binding DataContext.GroupViewModel.Moderation.CloseRoleEditorCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+
                                     <StackPanel Visibility="{Binding DataContext.GroupViewModel.Moderation.ShowLog, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
                                         <ItemsControl ItemsSource="{Binding DataContext.GroupViewModel.Moderation.Log, RelativeSource={RelativeSource AncestorType=Window}}">
                                             <ItemsControl.ItemTemplate>
@@ -3918,11 +4041,10 @@
                                                     <Border Background="{StaticResource InputBrush}" CornerRadius="8" Padding="9,6" Margin="0,0,0,4">
                                                         <StackPanel>
                                                             <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{StaticResource TextBrush}" TextWrapping="Wrap" />
-                                                            <TextBlock FontSize="9" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0">
-                                                                <Run Text="{Binding Actor}" />
-                                                                <Run Text=" · " />
-                                                                <Run Text="{Binding When}" />
-                                                            </TextBlock>
+                                                            <TextBlock Text="{Binding Subtitle}"
+                                                                       FontSize="9"
+                                                                       Foreground="{StaticResource MutedBrush}"
+                                                                       Margin="0,2,0,0" />
                                                         </StackPanel>
                                                     </Border>
                                                 </DataTemplate>

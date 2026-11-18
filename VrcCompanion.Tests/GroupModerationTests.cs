@@ -29,7 +29,8 @@ public class GroupModerationTests
         Assert.True(vm.CanViewLog);
         Assert.Equal(2, vm.Members.Count);
         Assert.Equal("Member Person", vm.Members[0].DisplayName);
-        Assert.Equal(2, vm.Roles.Count);
+        Assert.Equal(3, vm.Roles.Count);
+        Assert.True(vm.CanManageRoles);
         Assert.Contains("kick", vm.PermissionText);
     }
 
@@ -47,6 +48,9 @@ public class GroupModerationTests
         Assert.False(vm.HasModerationPermission);
         Assert.False(vm.CanBan);
         Assert.False(vm.CanKick);
+        Assert.False(vm.CanManageRoles);
+        vm.StartNewRole();
+        Assert.False(vm.IsRoleEditorOpen);
         Assert.Empty(vm.Members);
         Assert.Contains("no moderation permissions", vm.PermissionText);
     }
@@ -190,6 +194,108 @@ public class GroupModerationTests
 
         Assert.Equal("usr_invited", Assert.Single(handler.InvitesSent));
         Assert.Equal(string.Empty, vm.InviteUserId);
+    }
+
+    [Fact]
+    public async Task KickDropsTheMemberCountAndPager()
+    {
+        var (vm, _) = await OpenAsync(handler =>
+        {
+            handler.MemberTotal = 201;
+            handler.RosterSize = 100;
+        });
+        Assert.Equal(100, vm.Members.Count);
+        Assert.Equal(3, vm.MemberPageCount);
+        Assert.Equal("Page 1 of 3", vm.MembersPageText);
+        Assert.Contains("201", vm.MemberTotalText);
+
+        vm.RequestKick(vm.Members[0]);
+        await vm.ConfirmAsync();
+
+        Assert.Equal(200, vm.MemberTotal);
+        Assert.Equal(2, vm.MemberPageCount);
+        Assert.Equal(99, vm.Members.Count);
+        Assert.Equal("Members (99)", vm.MembersTabLabel);
+    }
+
+    [Fact]
+    public async Task CreatingARoleSendsItsNameAndPermissions()
+    {
+        var (vm, handler) = await OpenAsync();
+        vm.SelectTabCommand.Execute(GroupModerationViewModel.RolesTab);
+        await vm.LoadTabAsync(GroupModerationViewModel.RolesTab);
+
+        vm.StartNewRole();
+        Assert.True(vm.IsRoleEditorOpen);
+        vm.RoleEditorName = "Greeter";
+        vm.RoleEditorDescription = "Welcomes new members";
+        vm.RolePermissions.Single(option => option.Key == "group-members-manage").IsChecked = true;
+
+        await vm.SaveRoleAsync();
+
+        var sent = Assert.Single(handler.CreatedRoles);
+        Assert.Contains("Greeter", sent);
+        Assert.Contains("group-members-manage", sent);
+        Assert.False(vm.IsRoleEditorOpen);
+        Assert.Contains("created", vm.StatusMessage);
+    }
+
+    [Fact]
+    public async Task EditingARoleSendsTheEditedValues()
+    {
+        var (vm, handler) = await OpenAsync();
+        var vip = vm.Roles.Single(role => role.RoleId == GroupModerationTestHandler.RoleVipId);
+
+        vm.EditRole(vip);
+        Assert.True(vm.IsRoleEditorOpen);
+        Assert.Equal("VIP", vm.RoleEditorName);
+
+        vm.RoleEditorName = "VIP Plus";
+        await vm.SaveRoleAsync();
+
+        var sent = Assert.Single(handler.UpdatedRoles);
+        Assert.Contains(GroupModerationTestHandler.RoleVipId, sent);
+        Assert.Contains("VIP Plus", sent);
+    }
+
+    [Fact]
+    public async Task DeletingARoleWaitsForConfirmation()
+    {
+        var (vm, handler) = await OpenAsync();
+        var vip = vm.Roles.Single(role => role.RoleId == GroupModerationTestHandler.RoleVipId);
+
+        vm.RequestDeleteRole(vip);
+        Assert.True(vm.IsConfirmOpen);
+        Assert.Empty(handler.DeletedRoles);
+
+        await vm.ConfirmAsync();
+
+        Assert.Equal(GroupModerationTestHandler.RoleVipId, Assert.Single(handler.DeletedRoles));
+    }
+
+    [Fact]
+    public async Task TheEveryoneRoleCannotBeDeleted()
+    {
+        var (vm, handler) = await OpenAsync();
+        var everyone = vm.Roles.Single(role => role.RoleId == GroupModerationTestHandler.RoleEveryoneId);
+        Assert.False(everyone.CanDeleteRole);
+
+        vm.RequestDeleteRole(everyone);
+
+        Assert.False(vm.IsConfirmOpen);
+        Assert.Empty(handler.DeletedRoles);
+        Assert.Contains("Everyone", vm.StatusMessage);
+    }
+
+    [Fact]
+    public async Task RoleEditorUsesTheVrchatPermissionCatalogue()
+    {
+        var (vm, _) = await OpenAsync();
+        vm.SelectTabCommand.Execute(GroupModerationViewModel.RolesTab);
+        await vm.LoadTabAsync(GroupModerationViewModel.RolesTab);
+
+        Assert.Equal(4, vm.RolePermissions.Count);
+        Assert.Contains(vm.RolePermissions, option => option.Label == "Manage bans");
     }
 
     private static async Task<(GroupModerationViewModel Vm, GroupModerationTestHandler Handler)> OpenAsync(

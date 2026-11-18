@@ -3387,6 +3387,81 @@ public sealed class VrcApiClient : IDisposable
             cancellationToken);
     }
 
+    /// <summary>Every permission name a role can carry, as VRChat lists them for the group.</summary>
+    public async Task<IReadOnlyList<string>> GetGroupPermissionsAsync(
+        string groupId,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            GroupModerationPath(groupId, "permissions"),
+            null,
+            cancellationToken);
+        return DeserializeList<string>(body);
+    }
+
+    public async Task<GroupRole?> CreateGroupRoleAsync(
+        string groupId,
+        string name,
+        string description,
+        IReadOnlyList<string> permissions,
+        bool isAddedOnJoin,
+        bool isSelfAssignable,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(new
+        {
+            name,
+            description,
+            permissions,
+            isAddedOnJoin,
+            isSelfAssignable
+        });
+        var body = await SendApiAsync(
+            HttpMethod.Post,
+            GroupModerationPath(groupId, "roles"),
+            content,
+            cancellationToken);
+        return Deserialize<GroupRole>(body);
+    }
+
+    public async Task UpdateGroupRoleAsync(
+        string groupId,
+        string roleId,
+        string name,
+        string description,
+        IReadOnlyList<string> permissions,
+        bool isAddedOnJoin,
+        bool isSelfAssignable,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(new
+        {
+            name,
+            description,
+            permissions,
+            isAddedOnJoin,
+            isSelfAssignable
+        });
+        await SendApiAsync(
+            HttpMethod.Put,
+            GroupModerationPath(groupId, $"roles/{Uri.EscapeDataString(roleId)}"),
+            content,
+            cancellationToken);
+    }
+
+    public async Task DeleteGroupRoleAsync(
+        string groupId,
+        string roleId,
+        CancellationToken cancellationToken = default)
+    {
+        await SendApiAsync(
+            HttpMethod.Delete,
+            GroupModerationPath(groupId, $"roles/{Uri.EscapeDataString(roleId)}"),
+            null,
+            cancellationToken);
+    }
+
     public async Task<IReadOnlyList<GroupRole>> GetGroupRolesAsync(
         string groupId,
         CancellationToken cancellationToken = default)

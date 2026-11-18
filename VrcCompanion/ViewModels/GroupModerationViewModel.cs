@@ -24,6 +24,7 @@ public sealed class GroupModerationViewModel : ViewModelBase
     public const string BansTab = "Bans";
     public const string RequestsTab = "Requests";
     public const string InvitesTab = "Invites";
+    public const string RolesTab = "Roles";
     public const string LogTab = "Audit log";
 
     private const int PageSize = 100;
@@ -45,6 +46,15 @@ public sealed class GroupModerationViewModel : ViewModelBase
     private string _pendingAction = string.Empty;
     private Func<Task>? _pendingWork;
     private int _memberPage;
+    private int _memberTotal;
+    private string? _editingRoleId;
+    private string _roleEditorName = string.Empty;
+    private string _roleEditorDescription = string.Empty;
+    private bool _roleEditorAddedOnJoin;
+    private bool _roleEditorSelfAssignable;
+    private bool _isRoleEditorOpen;
+    private bool _permissionsLoaded;
+    private ObservableCollection<RolePermissionOption> _rolePermissions = new();
     private bool _bansLoaded;
     private bool _requestsLoaded;
     private bool _invitesLoaded;
@@ -61,10 +71,18 @@ public sealed class GroupModerationViewModel : ViewModelBase
         ConfirmCommand = new AsyncRelayCommand(ConfirmAsync, () => IsConfirmOpen && !IsBusy);
         CancelConfirmCommand = new RelayCommand(CancelConfirm);
         CloseCommand = new RelayCommand(Close);
+        StartNewRoleCommand = new RelayCommand(StartNewRole, () => CanManageRoles);
+        SaveRoleCommand = new AsyncRelayCommand(
+            SaveRoleAsync,
+            () => CanManageRoles && !IsBusy && RoleEditorName.Trim().Length > 0);
+        CloseRoleEditorCommand = new RelayCommand(CloseRoleEditor);
     }
 
     /// <summary>Raised with (userId, displayName, avatarUrl) so a row can open a profile.</summary>
     public Action<string, string, string>? OpenProfileRequested { get; set; }
+
+    /// <summary>Raised after a kick or ban so the group popup can drop its member count too.</summary>
+    public event Action? MemberCountChanged;
 
     // ------------------------------------------------------------- state
 
@@ -191,6 +209,8 @@ public sealed class GroupModerationViewModel : ViewModelBase
 
     public bool ShowInvites => IsTab(InvitesTab);
 
+    public bool ShowRoles => IsTab(RolesTab);
+
     public bool ShowLog => IsTab(LogTab);
 
     public bool ShowDenied => IsOpen && !HasModerationPermission;
@@ -205,11 +225,17 @@ public sealed class GroupModerationViewModel : ViewModelBase
 
     public string InvitesTabLabel => $"Invites ({Invites.Count:N0})";
 
+    public string RolesTabLabel => $"Roles ({Roles.Count:N0})";
+
+    public string MemberTotalText => string.Create(CultureInfo.InvariantCulture, $"{MemberTotal:N0} members");
+
     // ------------------------------------------------------- permissions
 
     /// <summary>True when the account has any permission this panel can use.</summary>
     public bool HasModerationPermission => CanKick || CanBan || CanAssignRoles
-        || CanReviewRequests || CanManageInvites || CanViewLog;
+        || CanReviewRequests || CanManageInvites || CanViewLog || CanManageRoles;
+
+    public bool CanManageRoles => HasPermission("group-roles-manage");
 
     public bool CanKick => HasPermission("group-members-remove");
 
@@ -313,13 +339,25 @@ public sealed class GroupModerationViewModel : ViewModelBase
 
     // ------------------------------------------------------------- paging
 
+    /// <summary>Members VRChat reports, kept in step with kicks and bans done here.</summary>
+    public int MemberTotal
+    {
+        get => _memberTotal;
+        private set
+        {
+            if (SetProperty(ref _memberTotal, value))
+            {
+                OnPropertyChanged(nameof(MemberTotalText));
+                OnPropertyChanged(nameof(MemberPageCount));
+                OnPropertyChanged(nameof(MembersPageText));
+                OnPropertyChanged(nameof(CanGoToNextMembersPage));
+            }
+        }
+    }
+
     public int MemberPageCount
     {
-        get
-        {
-            var total = _group?.MemberCount ?? 0;
-            return total <= 0 ? 1 : (total + PageSize - 1) / PageSize;
-        }
+        get => _memberTotal <= 0 ? 1 : (_memberTotal + PageSize - 1) / PageSize;
     }
 
     public string MembersPageText => IsBusy && Members.Count == 0
@@ -357,6 +395,10 @@ public sealed class GroupModerationViewModel : ViewModelBase
         _group = group;
         _selectedTab = MembersTab;
         _memberPage = 0;
+        MemberTotal = group.MemberCount;
+        _permissionsLoaded = false;
+        _editingRoleId = null;
+        IsRoleEditorOpen = false;
         _bansLoaded = false;
         _requestsLoaded = false;
         _invitesLoaded = false;
@@ -449,6 +491,10 @@ public sealed class GroupModerationViewModel : ViewModelBase
         else if (string.Equals(tab, InvitesTab, StringComparison.Ordinal) && !_invitesLoaded)
         {
             await LoadInvitesAsync();
+        }
+        else if (string.Equals(tab, RolesTab, StringComparison.Ordinal))
+        {
+            await LoadPermissionOptionsAsync();
         }
         else if (string.Equals(tab, LogTab, StringComparison.Ordinal) && !_logLoaded)
         {
@@ -753,6 +799,8 @@ public sealed class GroupModerationViewModel : ViewModelBase
             Members.Remove(row);
             SelectedMember = null;
             StatusMessage = $"{row.DisplayName} was removed from the group.";
+            AfterMemberRemoved();
+            await BackToLastPageIfEmptyAsync();
             RaiseTabFlags();
         }
         catch (Exception ex)
@@ -780,6 +828,8 @@ public sealed class GroupModerationViewModel : ViewModelBase
             SelectedMember = null;
             _bansLoaded = false;
             StatusMessage = $"{row.DisplayName} was banned from the group.";
+            AfterMemberRemoved();
+            await BackToLastPageIfEmptyAsync();
             RaiseTabFlags();
         }
         catch (Exception ex)
@@ -953,6 +1003,336 @@ public sealed class GroupModerationViewModel : ViewModelBase
         }
     }
 
+    // ------------------------------------------------------- role editing
+
+    /// <summary>Every permission a role can carry, with a readable label.</summary>
+    public ObservableCollection<RolePermissionOption> RolePermissions
+    {
+        get => _rolePermissions;
+        private set => SetProperty(ref _rolePermissions, value);
+    }
+
+    public bool IsRoleEditorOpen
+    {
+        get => _isRoleEditorOpen;
+        private set
+        {
+            if (SetProperty(ref _isRoleEditorOpen, value))
+            {
+                OnPropertyChanged(nameof(RoleEditorTitle));
+                OnPropertyChanged(nameof(RoleEditorActionText));
+            }
+        }
+    }
+
+    public string RoleEditorTitle => _editingRoleId is null ? "New role" : "Edit role";
+
+    public string RoleEditorActionText => _editingRoleId is null ? "Create role" : "Save role";
+
+    public string RoleEditorName
+    {
+        get => _roleEditorName;
+        set
+        {
+            if (SetProperty(ref _roleEditorName, value))
+            {
+                SaveRoleCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string RoleEditorDescription
+    {
+        get => _roleEditorDescription;
+        set => SetProperty(ref _roleEditorDescription, value);
+    }
+
+    public bool RoleEditorAddedOnJoin
+    {
+        get => _roleEditorAddedOnJoin;
+        set => SetProperty(ref _roleEditorAddedOnJoin, value);
+    }
+
+    public bool RoleEditorSelfAssignable
+    {
+        get => _roleEditorSelfAssignable;
+        set => SetProperty(ref _roleEditorSelfAssignable, value);
+    }
+
+    public RelayCommand StartNewRoleCommand { get; }
+
+    public AsyncRelayCommand SaveRoleCommand { get; }
+
+    public RelayCommand CloseRoleEditorCommand { get; }
+
+    public void StartNewRole()
+    {
+        if (!CanManageRoles)
+        {
+            StatusMessage = "This account cannot manage roles on this group.";
+            return;
+        }
+
+        _editingRoleId = null;
+        RoleEditorName = string.Empty;
+        RoleEditorDescription = string.Empty;
+        RoleEditorAddedOnJoin = false;
+        RoleEditorSelfAssignable = false;
+        ResetPermissionOptions(null);
+        IsRoleEditorOpen = true;
+        OnPropertyChanged(nameof(RoleEditorTitle));
+        OnPropertyChanged(nameof(RoleEditorActionText));
+    }
+
+    public void EditRole(ModerationRoleToggle toggle)
+    {
+        if (!CanManageRoles)
+        {
+            StatusMessage = "This account cannot manage roles on this group.";
+            return;
+        }
+
+        _editingRoleId = toggle.RoleId;
+        RoleEditorName = toggle.Name;
+        RoleEditorDescription = toggle.Description;
+        RoleEditorAddedOnJoin = toggle.Role.IsAddedOnJoin;
+        RoleEditorSelfAssignable = toggle.Role.IsSelfAssignable;
+        ResetPermissionOptions(toggle.Role.Permissions);
+        IsRoleEditorOpen = true;
+        OnPropertyChanged(nameof(RoleEditorTitle));
+        OnPropertyChanged(nameof(RoleEditorActionText));
+        SaveRoleCommand.RaiseCanExecuteChanged();
+    }
+
+    private void CloseRoleEditor()
+    {
+        IsRoleEditorOpen = false;
+        _editingRoleId = null;
+    }
+
+    /// <summary>Creates or updates the role being edited, then reloads the role list.</summary>
+    internal async Task SaveRoleAsync()
+    {
+        if (_group is not { } group)
+        {
+            return;
+        }
+
+        if (!CanManageRoles)
+        {
+            StatusMessage = "This account cannot manage roles on this group.";
+            return;
+        }
+
+        var name = RoleEditorName.Trim();
+        if (name.Length == 0)
+        {
+            StatusMessage = "A role needs a name.";
+            return;
+        }
+
+        var permissions = RolePermissions
+            .Where(option => option.IsChecked)
+            .Select(option => option.Key)
+            .ToList();
+        var description = RoleEditorDescription.Trim();
+        var editing = _editingRoleId;
+        IsBusy = true;
+        try
+        {
+            if (editing is null)
+            {
+                await _api.CreateGroupRoleAsync(
+                    group.EffectiveId,
+                    name,
+                    description,
+                    permissions,
+                    RoleEditorAddedOnJoin,
+                    RoleEditorSelfAssignable);
+            }
+            else
+            {
+                await _api.UpdateGroupRoleAsync(
+                    group.EffectiveId,
+                    editing,
+                    name,
+                    description,
+                    permissions,
+                    RoleEditorAddedOnJoin,
+                    RoleEditorSelfAssignable);
+            }
+
+            IsRoleEditorOpen = false;
+            _editingRoleId = null;
+            StatusMessage = editing is null ? $"Role “{name}” created." : $"Role “{name}” saved.";
+            await LoadRolesAsync();
+            RaiseTabFlags();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = Describe(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public void RequestDeleteRole(ModerationRoleToggle toggle)
+    {
+        if (_group is not { } group || !CanManageRoles)
+        {
+            StatusMessage = "This account cannot manage roles on this group.";
+            return;
+        }
+
+        if (!toggle.CanDeleteRole)
+        {
+            StatusMessage = "The Everyone role exists in every group and cannot be deleted.";
+            return;
+        }
+
+        RequestConfirm($"Delete the role “{toggle.Name}”?", async () =>
+        {
+            IsBusy = true;
+            try
+            {
+                await _api.DeleteGroupRoleAsync(group.EffectiveId, toggle.RoleId);
+                StatusMessage = $"Role “{toggle.Name}” deleted.";
+                await LoadRolesAsync();
+                RaiseTabFlags();
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = Describe(ex);
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+        });
+    }
+
+    /// <summary>Reads VRChat's permission catalogue once, so role toggles match the group.</summary>
+    private async Task LoadPermissionOptionsAsync()
+    {
+        if (_permissionsLoaded || _group is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<string> keys;
+        try
+        {
+            keys = await _api.GetGroupPermissionsAsync(_group.EffectiveId);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            keys = Array.Empty<string>();
+        }
+
+        if (keys.Count == 0)
+        {
+            keys = KnownPermissions.Select(permission => permission.Key).ToList();
+        }
+
+        var checkedKeys = RolePermissions
+            .Where(option => option.IsChecked)
+            .Select(option => option.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        RolePermissions = new ObservableCollection<RolePermissionOption>(
+            keys.Where(key => key != "*")
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(PermissionLabel, StringComparer.OrdinalIgnoreCase)
+                .Select(key => new RolePermissionOption(key, PermissionLabel(key))));
+        foreach (var option in RolePermissions)
+        {
+            option.IsChecked = checkedKeys.Contains(option.Key);
+        }
+
+        _permissionsLoaded = true;
+    }
+
+    private void ResetPermissionOptions(IEnumerable<string>? selected)
+    {
+        var keys = (selected ?? Array.Empty<string>()).ToHashSet(StringComparer.Ordinal);
+        if (RolePermissions.Count == 0)
+        {
+            RolePermissions = new ObservableCollection<RolePermissionOption>(
+                KnownPermissions
+                    .OrderBy(permission => permission.Label, StringComparer.OrdinalIgnoreCase)
+                    .Select(permission => new RolePermissionOption(permission.Key, permission.Label)));
+        }
+
+        foreach (var option in RolePermissions)
+        {
+            option.IsChecked = keys.Contains(option.Key);
+        }
+    }
+
+    private static string PermissionLabel(string key)
+    {
+        foreach (var permission in KnownPermissions)
+        {
+            if (string.Equals(permission.Key, key, StringComparison.Ordinal))
+            {
+                return permission.Label;
+            }
+        }
+
+        return key.Replace("group-", string.Empty, StringComparison.Ordinal).Replace('-', ' ');
+    }
+
+    /// <summary>The permission set VRChat documents for groups, used when the catalogue fails.</summary>
+    private static readonly (string Key, string Label)[] KnownPermissions =
+    {
+        ("group-members-manage", "Manage member data"),
+        ("group-members-remove", "Remove members"),
+        ("group-members-viewall", "View all members"),
+        ("group-bans-manage", "Manage bans"),
+        ("group-roles-assign", "Assign roles"),
+        ("group-roles-manage", "Manage roles"),
+        ("group-default-role-manage", "Manage default role"),
+        ("group-invites-manage", "Manage invites"),
+        ("group-data-manage", "Manage group data"),
+        ("group-audit-view", "View audit log"),
+        ("group-announcement-manage", "Manage announcements"),
+        ("group-galleries-manage", "Manage galleries"),
+        ("group-calendar-manage", "Manage calendar"),
+        ("group-instance-manage", "Manage instances"),
+        ("group-instance-moderate", "Moderate instances"),
+        ("group-instance-announcement-create", "Create instance announcements"),
+        ("group-instance-join", "Join group instances"),
+        ("group-instance-public-create", "Create public instances"),
+        ("group-instance-plus-create", "Create Group+ instances"),
+        ("group-instance-restricted-create", "Create Group+ members instances"),
+        ("group-instance-open-create", "Create open instances"),
+        ("group-instance-age-gated-create", "Create age-gated instances"),
+        ("group-instance-plus-portal", "Create Group+ portals"),
+        ("group-instance-plus-portal-unlocked", "Create unlocked Group+ portals"),
+        ("group-instance-queue-priority", "Instance queue priority"),
+        ("group-instance-bypass-avatar-performance", "Bypass avatar performance limits"),
+        ("group-instance-calendar-link", "Link instances to the calendar")
+    };
+
+    /// <summary>Called after a kick or ban: the group now has one member fewer.</summary>
+    private void AfterMemberRemoved()
+    {
+        MemberTotal = Math.Max(0, MemberTotal - 1);
+        MemberCountChanged?.Invoke();
+        RaiseMemberFlags();
+    }
+
+    /// <summary>An emptied page falls back to the page before it instead of showing nothing.</summary>
+    private async Task BackToLastPageIfEmptyAsync()
+    {
+        if (Members.Count == 0 && _memberPage > 0)
+        {
+            await JumpToMembersPageAsync(_memberPage - 1);
+        }
+    }
+
     // ------------------------------------------------------------ helpers
 
     private static bool LooksLikeUserId(string? text)
@@ -991,11 +1371,13 @@ public sealed class GroupModerationViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowBans));
         OnPropertyChanged(nameof(ShowRequests));
         OnPropertyChanged(nameof(ShowInvites));
+        OnPropertyChanged(nameof(ShowRoles));
         OnPropertyChanged(nameof(ShowLog));
         OnPropertyChanged(nameof(MembersTabLabel));
         OnPropertyChanged(nameof(BansTabLabel));
         OnPropertyChanged(nameof(RequestsTabLabel));
         OnPropertyChanged(nameof(InvitesTabLabel));
+        OnPropertyChanged(nameof(RolesTabLabel));
     }
 
     private void RaiseMemberFlags()
@@ -1015,6 +1397,8 @@ public sealed class GroupModerationViewModel : ViewModelBase
         NextMembersPageCommand.RaiseCanExecuteChanged();
         InviteCommand.RaiseCanExecuteChanged();
         ConfirmCommand.RaiseCanExecuteChanged();
+        StartNewRoleCommand.RaiseCanExecuteChanged();
+        SaveRoleCommand.RaiseCanExecuteChanged();
     }
 }
 
@@ -1179,12 +1563,16 @@ public sealed class ModerationEntryRow : ViewModelBase
 /// <summary>One role the selected member can be given or taken out of.</summary>
 public sealed class ModerationRoleToggle : ViewModelBase
 {
+    private readonly GroupModerationViewModel _owner;
     private bool _isAssigned;
 
     public ModerationRoleToggle(GroupRole role, GroupModerationViewModel owner)
     {
         Role = role;
+        _owner = owner;
         ToggleCommand = new RelayCommand(() => _ = owner.ToggleRoleAsync(this));
+        EditCommand = new RelayCommand(() => owner.EditRole(this), () => owner.CanManageRoles);
+        DeleteCommand = new RelayCommand(() => owner.RequestDeleteRole(this), () => owner.CanManageRoles);
     }
 
     public GroupRole Role { get; }
@@ -1193,7 +1581,31 @@ public sealed class ModerationRoleToggle : ViewModelBase
 
     public string Name => Role.Name;
 
+    public string Description => string.IsNullOrWhiteSpace(Role.Description)
+        ? "No description"
+        : Role.Description;
+
     public string MemberCountText => $"{Role.MemberCount:N0} members";
+
+    public string FlagsText
+    {
+        get
+        {
+            var flags = new List<string>();
+            if (Role.IsAddedOnJoin) flags.Add("added on join");
+            if (Role.IsSelfAssignable) flags.Add("self-assignable");
+            if (Role.RequiresTwoFactor) flags.Add("needs 2FA");
+            return flags.Count == 0 ? string.Empty : string.Join(" · ", flags);
+        }
+    }
+
+    /// <summary>The Everyone role is fixed, so it can never be deleted.</summary>
+    public bool CanDeleteRole => _owner.CanManageRoles
+        && !string.Equals(Role.Name, "Everyone", StringComparison.OrdinalIgnoreCase);
+
+    public RelayCommand EditCommand { get; }
+
+    public RelayCommand DeleteCommand { get; }
 
     public string ActionText => _isAssigned ? "Remove" : "Assign";
 
@@ -1212,6 +1624,28 @@ public sealed class ModerationRoleToggle : ViewModelBase
     public RelayCommand ToggleCommand { get; }
 
     public void RaiseStateChanged() => OnPropertyChanged(nameof(ActionText));
+}
+
+/// <summary>One permission a role can be given, shown as a checkbox in the role editor.</summary>
+public sealed class RolePermissionOption : ViewModelBase
+{
+    private bool _isChecked;
+
+    public RolePermissionOption(string key, string label)
+    {
+        Key = key;
+        Label = label;
+    }
+
+    public string Key { get; }
+
+    public string Label { get; }
+
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set => SetProperty(ref _isChecked, value);
+    }
 }
 
 /// <summary>One audit-log line.</summary>
@@ -1234,4 +1668,9 @@ public sealed class ModerationLogRow
     public string EventType { get; }
 
     public string Description { get; }
+
+    /// <summary>Actor and time on one line; Run bindings are avoided because they default to TwoWay.</summary>
+    public string Subtitle => string.IsNullOrWhiteSpace(Actor)
+        ? When
+        : string.IsNullOrWhiteSpace(When) ? Actor : $"{Actor} · {When}";
 }

@@ -107,6 +107,18 @@ public sealed class GroupRole
 
     [JsonPropertyName("color")]
     public string Color { get; set; } = "#FFFFFF";
+
+    [JsonPropertyName("isAddedOnJoin")]
+    public bool IsAddedOnJoin { get; set; }
+
+    [JsonPropertyName("isSelfAssignable")]
+    public bool IsSelfAssignable { get; set; }
+
+    [JsonPropertyName("requiresTwoFactor")]
+    public bool RequiresTwoFactor { get; set; }
+
+    [JsonPropertyName("order")]
+    public int Order { get; set; }
 }
 
 /// <summary>
