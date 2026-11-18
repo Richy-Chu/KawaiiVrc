@@ -1,13 +1,8 @@
-# Proves the release checks that read GitHub cannot mistake a failed read for an answer, by
-# driving the real pack-release.ps1 against a stub gh on PATH: a release without its feed is
-# drift, while a feed that will not download, a chain listing that fails, a delta-base listing
-# or download that fails, and a tag check that errors are infrastructure or a refused build,
-# never a silent skip or a full-only release. A tag that already exists is refused for reuse,
-# and -SkipPublish packs the build already in artifacts/publish, so a sentinel left there
-# proves the run did not clear it. A stub git makes the readiness checks answer for
-# themselves: only git's own "no upstream configured" may skip the push check, and a dirty
-# or unreadable tree must stop the release, and a repository gh cannot read is not an
-# absent tag.
+# Drives the real pack-release.ps1 against stub gh, git, dotnet and vpk, so each release
+# decision is proven from its exit code and message: drift versus infrastructure, a tag that
+# exists or cannot be checked, -SkipPublish leaving artifacts/publish alone, and readiness
+# refusing a dirty or unreadable tree, an unreadable repository, or a missing gh before any
+# build runs.
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -29,12 +24,24 @@ $dotnetLog = Join-Path $shimDir "dotnet-calls.txt"
 
 $releasesDir = Join-Path (Join-Path $repoRoot "artifacts") "releases"
 New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null
+$packedFeed = Join-Path $releasesDir "releases.win.json"
+
+# A PATH with no gh anywhere, for the case that expects readiness to say so.
+$noGhDir = Join-Path $shimDir "no-gh"
+New-Item -ItemType Directory -Path $noGhDir -Force | Out-Null
 
 # The publish cases run with -SkipPublish against whatever build .NET last put here.
 $publishDir = Join-Path (Join-Path $repoRoot "artifacts") "publish"
 $sentinel = Join-Path $publishDir "kawaiivrc-skip-publish-sentinel.txt"
 New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
 Set-Content -Path $sentinel -Value "A -SkipPublish run must not delete this file." -Encoding Ascii
+
+# If a stub is not what runs, a check would silently exercise the real tool.
+function Assert-Stub([string]$Command, [string]$Directory, [bool]$Windows) {
+    $expected = Join-Path $Directory $(if ($Windows) { "$Command.cmd" } else { $Command })
+    $resolved = (Get-Command $Command -ErrorAction SilentlyContinue).Source
+    if ($resolved -ne $expected) { throw "$Command resolves to '$resolved' instead of the stub at '$expected'." }
+}
 
 function Write-Stub([string]$Path, [string[]]$Lines, [string]$NewLine) {
     ($Lines -join $NewLine) | Set-Content -Path $Path -Encoding Ascii
@@ -260,13 +267,12 @@ function Write-DotnetStub([string]$Directory, [bool]$Windows) {
 }
 
 $verifyArguments = @('-VerifyOnly', '-Version', '1.0.0', '-Repo', 'owner/repo')
-$publishArguments = @('-Version', $projectVersion, '-Repo', 'owner/repo', '-SkipPublish', '-AllowDirty', '-SkipVerify')
-# Same, without -AllowDirty, so the readiness checks run against the stub git.
-$readyArguments = @('-Version', $projectVersion, '-Repo', 'owner/repo', '-SkipPublish', '-SkipVerify')
-# No -SkipPublish: if readiness ever stopped refusing first, the stub dotnet and vpk would
-# be reached, which is exactly what the ordering check watches for.
-$buildArguments = @('-Version', $projectVersion, '-Repo', 'owner/repo', '-SkipVerify')
 $fetchArguments = @('-Version', '1.0.0', '-Repo', 'owner/repo', '-SkipPublish', '-SkipUpload', '-SkipVerify')
+# No -SkipPublish: a refusal that only arrives after the build has to be caught too.
+$buildArguments = @('-Version', $projectVersion, '-Repo', 'owner/repo', '-SkipVerify')
+# -SkipPublish packs the build already there; -AllowDirty drops the working-tree checks.
+$publishArguments = $buildArguments + @('-SkipPublish', '-AllowDirty')
+$readyArguments = $buildArguments + @('-SkipPublish')
 
 # Markers come from the plain messages, not the rendered error record: PowerShell wraps that
 # record with a gutter that ends up inside the text on Linux.
@@ -285,16 +291,14 @@ $checks = @(
     @{ Name = "clean tree publishes"; Mode = "view-absent"; GitMode = "clean"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments },
     @{ Name = "dirty tree is refused"; Mode = "view-absent"; GitMode = "dirty"; Expected = 1; Marker = "Working tree has uncommitted changes"; Arguments = $readyArguments },
     @{ Name = "status check errors"; Mode = "view-absent"; GitMode = "status-error"; Expected = 1; Marker = "git status failed"; Arguments = $readyArguments },
-    @{ Name = "unreadable repo refused before the build"; Mode = "repo-unreadable"; GitMode = "clean"; Expected = 1; Marker = "Could not read owner/repo"; Arguments = $buildArguments; NoBuild = $true }
+    @{ Name = "unreadable repo refused before the build"; Mode = "repo-unreadable"; GitMode = "clean"; Expected = 1; Marker = "Could not read owner/repo"; Arguments = $buildArguments; NoBuild = $true },
+    @{ Name = "missing gh fails readiness"; Mode = "view-absent"; GitMode = "clean"; Expected = 1; Marker = "GitHub CLI (gh) is required to publish"; Arguments = $readyArguments; NoGh = $true }
 )
 
-$savedPath = $env:PATH
-$savedMode = $env:GH_MODE
-$savedState = $env:GH_STATE
-$savedOutDir = $env:VPK_OUT_DIR
-$savedVpkVersion = $env:VPK_VERSION
-$savedGitMode = $env:GIT_MODE
-$savedDotnetLog = $env:DOTNET_STUB_LOG
+# Every variable the stubs read, put back exactly as it was however the run ends.
+$stubEnvironment = 'PATH', 'GH_MODE', 'GH_STATE', 'VPK_OUT_DIR', 'VPK_VERSION', 'GIT_MODE', 'DOTNET_STUB_LOG'
+$savedEnv = @{}
+foreach ($name in $stubEnvironment) { $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name) }
 $failures = 0
 
 try {
@@ -302,27 +306,18 @@ try {
     Write-VpkStub -Directory $shimDir -Windows $onWindows
     Write-GitStub -Directory $shimDir -Windows $onWindows
     Write-DotnetStub -Directory $shimDir -Windows $onWindows
-    $env:PATH = "$shimDir$([System.IO.Path]::PathSeparator)$savedPath"
+    $stubPathEnv = "$shimDir$([System.IO.Path]::PathSeparator)$($savedEnv['PATH'])"
+    $env:PATH = $stubPathEnv
     $env:GH_STATE = Join-Path $shimDir "list-state"
     $env:VPK_OUT_DIR = $releasesDir
     $env:VPK_VERSION = $projectVersion
     $env:DOTNET_STUB_LOG = $dotnetLog
 
-    # If the stub is not what runs, the checks would silently exercise the real GitHub.
-    $stubPath = Join-Path $shimDir $(if ($onWindows) { "gh.cmd" } else { "gh" })
-    $resolved = (Get-Command gh -ErrorAction SilentlyContinue).Source
-    if ($resolved -ne $stubPath) { throw "gh resolves to '$resolved' instead of the stub at '$stubPath'." }
+    # A real dotnet would delete artifacts/publish on a regression instead of logging it.
+    foreach ($stub in 'gh', 'git', 'dotnet') { Assert-Stub $stub $shimDir $onWindows }
 
-    $gitStubPath = Join-Path $shimDir $(if ($onWindows) { "git.cmd" } else { "git" })
-    $resolvedGit = (Get-Command git -ErrorAction SilentlyContinue).Source
-    if ($resolvedGit -ne $gitStubPath) { throw "git resolves to '$resolvedGit' instead of the stub at '$gitStubPath'." }
-
-    # A real dotnet here would delete artifacts/publish on a regression instead of logging.
-    $dotnetStubPath = Join-Path $shimDir $(if ($onWindows) { "dotnet.cmd" } else { "dotnet" })
-    $resolvedDotnet = (Get-Command dotnet -ErrorAction SilentlyContinue).Source
-    if ($resolvedDotnet -ne $dotnetStubPath) { throw "dotnet resolves to '$resolvedDotnet' instead of the stub at '$dotnetStubPath'." }
-
-    $shell = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
+    # Resolved by full path, before the missing-gh case narrows PATH.
+    $shell = (Get-Command $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' })).Source
     $fileArguments = if ($onWindows) {
         @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $releaseScript)
     }
@@ -333,10 +328,8 @@ try {
     foreach ($check in $checks) {
         $env:GH_MODE = $check.Mode
         $env:GIT_MODE = $check.GitMode
-        Remove-Item $env:GH_STATE -ErrorAction SilentlyContinue
-        if ($check.NoBuild) {
-            Remove-Item $dotnetLog, (Join-Path $releasesDir "releases.win.json") -ErrorAction SilentlyContinue
-        }
+        $env:PATH = if ($check.NoGh) { $noGhDir } else { $stubPathEnv }
+        Remove-Item $env:GH_STATE, $dotnetLog, $packedFeed -ErrorAction SilentlyContinue
 
         # The failing cases write to stderr, which Windows PowerShell turns into a
         # terminating error when 2>&1 meets ErrorActionPreference = Stop.
@@ -353,9 +346,10 @@ try {
         # Proving the refusal comes first: reaching either stub would mean a build ran for
         # a repository that does not exist.
         if ($check.NoBuild) {
-            $packedFeed = Join-Path $releasesDir "releases.win.json"
-            if ((Test-Path $dotnetLog) -or (Test-Path $packedFeed)) {
-                Write-Host ("{0}: dotnet publish ran ({1}) or vpk packed ({2}) before the refusal." -f $check.Name, (Test-Path $dotnetLog), (Test-Path $packedFeed))
+            $ranDotnet = Test-Path $dotnetLog
+            $ranVpk = Test-Path $packedFeed
+            if ($ranDotnet -or $ranVpk) {
+                Write-Host ("{0}: dotnet publish ran ({1}) or vpk packed ({2}) before the refusal." -f $check.Name, $ranDotnet, $ranVpk)
                 $failures++
                 continue
             }
@@ -384,17 +378,11 @@ try {
     }
 }
 finally {
-    $env:PATH = $savedPath
-    $env:GH_MODE = $savedMode
-    $env:GH_STATE = $savedState
-    $env:VPK_OUT_DIR = $savedOutDir
-    $env:VPK_VERSION = $savedVpkVersion
-    $env:GIT_MODE = $savedGitMode
-    $env:DOTNET_STUB_LOG = $savedDotnetLog
+    foreach ($name in $stubEnvironment) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
     Remove-Item $shimDir -Recurse -Force -ErrorAction SilentlyContinue
 
     # The publish cases pack into artifacts/releases; leave nothing of the stub's behind.
-    Remove-Item (Join-Path $releasesDir "releases.win.json") -ErrorAction SilentlyContinue
+    Remove-Item $packedFeed -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $releasesDir "KawaiiVrc-$projectVersion-full.nupkg") -ErrorAction SilentlyContinue
 
     # Only the sentinel is this run's; the folder holds a real build's output.
