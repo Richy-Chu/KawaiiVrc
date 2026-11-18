@@ -114,6 +114,13 @@ public sealed class GroupRole
 /// </summary>
 public sealed class GroupMember
 {
+    /// <summary>
+    /// VRChat only sends the member's name, avatar and id inside this nested object on the
+    /// members endpoints, which is why reading userId alone gave a roster of blank rows.
+    /// </summary>
+    [JsonPropertyName("user")]
+    public GroupMemberUser? User { get; set; }
+
     [JsonPropertyName("userId")]
     public string UserId { get; set; } = string.Empty;
 
@@ -134,4 +141,82 @@ public sealed class GroupMember
 
     [JsonPropertyName("membershipStatus")]
     public string MembershipStatus { get; set; } = string.Empty;
+
+    public string EffectiveUserId => !string.IsNullOrWhiteSpace(UserId)
+        ? UserId
+        : User?.Id ?? string.Empty;
+
+    public string EffectiveUserName
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(User?.DisplayName))
+            {
+                return User!.DisplayName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(UserName))
+            {
+                return UserName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(User?.Username))
+            {
+                return User!.Username;
+            }
+
+            return DisplayName ?? string.Empty;
+        }
+    }
+
+    public string EffectiveAvatarUrl
+    {
+        get
+        {
+            foreach (var url in new[]
+                     {
+                         User?.CurrentAvatarThumbnailImageUrl,
+                         User?.ThumbnailUrl,
+                         User?.IconUrl,
+                         AvatarUrl
+                     })
+            {
+                if (!string.IsNullOrWhiteSpace(url))
+                {
+                    return url!;
+                }
+            }
+
+            return string.Empty;
+        }
+    }
+
+    /// <summary>The limited user object VRChat nests inside a group member.</summary>
+    public sealed class GroupMemberUser
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+
+        [JsonPropertyName("displayName")]
+        public string DisplayName { get; set; } = string.Empty;
+
+        [JsonPropertyName("username")]
+        public string Username { get; set; } = string.Empty;
+
+        [JsonPropertyName("iconUrl")]
+        public string IconUrl { get; set; } = string.Empty;
+
+        [JsonPropertyName("thumbnailUrl")]
+        public string ThumbnailUrl { get; set; } = string.Empty;
+
+        [JsonPropertyName("currentAvatarThumbnailImageUrl")]
+        public string CurrentAvatarThumbnailImageUrl { get; set; } = string.Empty;
+    }
+
+    /// <summary>Search Group Members wraps its array in a results object.</summary>
+    public sealed class SearchResponse
+    {
+        [JsonPropertyName("results")]
+        public List<GroupMember> Results { get; set; } = new();
+    }
 }

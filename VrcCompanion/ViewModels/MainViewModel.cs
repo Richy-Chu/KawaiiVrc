@@ -2424,7 +2424,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Initialize new feature view models on the signed-in client
         AvatarViewModel = new AvatarViewModel(_api);
         AvatarViewModel.GlobalResultsChanged += OnAvatarSearchResultsChanged;
-        GroupViewModel = new GroupViewModel(_api, OpenLaunchChooser);
+        GroupViewModel = new GroupViewModel(
+            _api,
+            OpenLaunchChooser,
+            openMemberProfile: member => OpenUserProfile(member.UserId, member.DisplayName, member.AvatarUrl));
         ActivityFeedViewModel = new ActivityFeedViewModel(_api, ActivityStore.Shared);
         ActivityFeedViewModel.HistoryLoaded += LoadFriendChangesFromHistory;
         ActivityFeedViewModel.FilterChanged += RememberActivityFilter;
@@ -5543,8 +5546,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     private void OpenRecentPlayer(RecentPlayerItem player)
+        => OpenUserProfile(player.UserId, player.DisplayName, player.AvatarUrl);
+
+    /// <summary>
+    /// Opens the profile panel for any user, which is how group member rows and other lists
+    /// reach a profile without leaving the app. Friends reuse their cached FriendItem.
+    /// </summary>
+    internal void OpenUserProfile(string userId, string displayName, string avatarUrl = "")
     {
-        if (!player.CanOpenProfile || CurrentUser is null)
+        if (string.IsNullOrWhiteSpace(userId) || CurrentUser is null)
         {
             return;
         }
@@ -5552,12 +5562,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ProfileZIndex = 30;
         SelectedFriend = null;
         var friend = Friends.FirstOrDefault(candidate =>
-            string.Equals(candidate.Id, player.UserId, StringComparison.Ordinal));
+            string.Equals(candidate.Id, userId, StringComparison.Ordinal));
         var user = friend?.User ?? new VrcUser
         {
-            Id = player.UserId,
-            DisplayName = player.DisplayName,
-            UserIcon = player.AvatarUrl
+            Id = userId,
+            DisplayName = displayName,
+            UserIcon = avatarUrl
         };
         _ = LoadFriendDetailAsync(new FriendItem(user), forceRefresh: true);
     }

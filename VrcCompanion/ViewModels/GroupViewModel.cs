@@ -28,11 +28,13 @@ public sealed class GroupViewModel : ViewModelBase
     private bool _isSearchingGroups;
     private string _groupSearchMessage = string.Empty;
     private Group? _selectedGroup;
-    private ObservableCollection<GroupMember> _members = new();
+    private ObservableCollection<GroupMemberItem> _members = new();
     private bool _isLoadingMembers;
-    private bool _membersExhausted;
-
-    private const int MembersPageSize = 100;
+    private int _membersPage;
+    private string _memberSearchText = string.Empty;
+    private bool _isMemberSearchActive;
+    private string? _lastMemberSearch;
+    private readonly Action<GroupMemberItem>? _openMemberProfile;
     private bool _isBusy;
     private string? _errorMessage;
     private string _createName = string.Empty;
@@ -66,9 +68,11 @@ public sealed class GroupViewModel : ViewModelBase
     public GroupViewModel(
         VrcApiClient api,
         Action<string, string>? openLaunchChooser = null,
-        Func<string, bool>? openUrl = null)
+        Func<string, bool>? openUrl = null,
+        Action<GroupMemberItem>? openMemberProfile = null)
     {
         _api = api;
+        _openMemberProfile = openMemberProfile;
         _openLaunchChooser = openLaunchChooser;
         _openUrl = openUrl ?? (url => LaunchService.OpenUrl(url));
 
@@ -78,7 +82,12 @@ public sealed class GroupViewModel : ViewModelBase
         CloseCreateDialogCommand = Track(new RelayCommand(() => ShowCreateDialog = false));
         CloseGroupDetailsCommand = Track(new RelayCommand(() => SelectedGroup = null));
         RefreshMembersCommand = Track(new AsyncRelayCommand(LoadGroupMembersAsync, () => SelectedGroup is not null && !IsBusy));
-        LoadMoreMembersCommand = Track(new AsyncRelayCommand(LoadMoreGroupMembersAsync, () => CanLoadMoreMembers));
+        PreviousMembersPageCommand = Track(new AsyncRelayCommand(PreviousMembersPageAsync, () => CanGoToPreviousMembersPage));
+        NextMembersPageCommand = Track(new AsyncRelayCommand(NextMembersPageAsync, () => CanGoToNextMembersPage));
+        SearchMembersCommand = Track(new AsyncRelayCommand(SearchMembersAsync, () => SelectedGroup is not null && !IsBusy && MemberSearchText.Trim().Length >= 3));
+        ClearMemberSearchCommand = Track(new RelayCommand(
+            () => { _ = ClearMemberSearchAsync(); },
+            () => SelectedGroup is not null || IsMemberSearchActive));
         OpenSelectedGroupCommand = Track(new RelayCommand(OpenSelectedGroupInBrowser, () => SelectedGroup is not null));
         OpenGroupCommand = Track(new RelayCommand<Group>(group => SelectedGroup = group, group => group is not null));
         SearchGroupsCommand = Track(new AsyncRelayCommand(
@@ -208,7 +217,7 @@ public sealed class GroupViewModel : ViewModelBase
         }
     }
 
-    public ObservableCollection<GroupMember> Members
+    public ObservableCollection<GroupMemberItem> Members
     {
         get => _members;
         set => SetProperty(ref _members, value);
@@ -504,31 +513,81 @@ public sealed class GroupViewModel : ViewModelBase
             if (SetProperty(ref _isLoadingMembers, value))
             {
                 OnPropertyChanged(nameof(MembersSummary));
-                OnPropertyChanged(nameof(HasMoreMembers));
-                OnPropertyChanged(nameof(CanLoadMoreMembers));
+                OnPropertyChanged(nameof(CanGoToPreviousMembersPage));
+                OnPropertyChanged(nameof(CanGoToNextMembersPage));
                 RaiseCommandStates();
             }
         }
     }
 
-    /// <summary>
-    /// The popup shows one page of members at a time: VRChat's endpoint returns at most 100
-    /// per request, so say how many of the group's total are on screen.
-    /// </summary>
+    /// <summary>VRChat returns at most 100 members per request, so the popup pages through them.</summary>
+    public const int MembersPageSize = 100;
+
+    public string MemberSearchText
+    {
+        get => _memberSearchText;
+        set
+        {
+            if (SetProperty(ref _memberSearchText, value))
+            {
+                SearchMembersCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool IsMemberSearchActive => _isMemberSearchActive;
+
+    public int MemberPageNumber => _membersPage + 1;
+
+    public int MemberPageCount
+    {
+        get
+        {
+            var total = SelectedGroup?.MemberCount ?? 0;
+            return total <= 0 ? 1 : (total + MembersPageSize - 1) / MembersPageSize;
+        }
+    }
+
+    public string MembersPageText => IsMemberSearchActive ? string.Empty : $"Page {MemberPageNumber} of {MemberPageCount}";
+
+    public bool CanGoToPreviousMembersPage => !IsMemberSearchActive && !IsLoadingMembers && _membersPage > 0;
+
+    public bool CanGoToNextMembersPage => !IsMemberSearchActive
+        && !IsLoadingMembers
+        && Members.Count > 0
+        && (SelectedGroup?.MemberCount ?? 0) > MemberPageNumber * MembersPageSize;
+
     public string MembersSummary => DescribeMembers(
         Members.Count,
         SelectedGroup?.MemberCount ?? 0,
-        IsLoadingMembers);
+        IsLoadingMembers,
+        _membersPage,
+        _isMemberSearchActive ? _lastMemberSearch : null);
 
-    /// <summary>There is at least one more page behind the roster already on screen.</summary>
-    public bool HasMoreMembers => !_membersExhausted
-        && Members.Count > 0
-        && (SelectedGroup?.MemberCount ?? 0) > Members.Count;
-
-    public bool CanLoadMoreMembers => HasMoreMembers && !IsLoadingMembers;
-
-    internal static string DescribeMembers(int loaded, int total, bool isLoading)
+    internal static string DescribeMembers(
+        int loaded,
+        int total,
+        bool isLoading,
+        int page = 0,
+        string? searchQuery = null)
     {
+        if (!string.IsNullOrWhiteSpace(searchQuery))
+        {
+            if (isLoading && loaded == 0)
+            {
+                return $"Searching for “{searchQuery}”…";
+            }
+
+            if (loaded == 0)
+            {
+                return $"No members match “{searchQuery}” in this group.";
+            }
+
+            return loaded == 1
+                ? $"1 member matches “{searchQuery}”"
+                : string.Create(CultureInfo.InvariantCulture, $"{loaded:N0} members match “{searchQuery}”");
+        }
+
         if (isLoading && loaded == 0)
         {
             return "Loading members…";
@@ -539,19 +598,22 @@ public sealed class GroupViewModel : ViewModelBase
             return "No members loaded.";
         }
 
-        if (total > loaded)
-        {
-            return string.Create(
-                CultureInfo.InvariantCulture,
-                $"Showing {loaded:N0} of {total:N0} members — Load more fetches the next 100.");
-        }
-
-        return loaded == 1 ? "1 member loaded" : $"{loaded} members loaded";
+        var first = page * MembersPageSize + 1;
+        var last = page * MembersPageSize + loaded;
+        return total > 0
+            ? string.Create(CultureInfo.InvariantCulture, $"Showing {first:N0}–{last:N0} of {total:N0} members")
+            : string.Create(CultureInfo.InvariantCulture, $"Showing {first:N0}–{last:N0} members");
     }
 
     public RelayCommand CloseGroupDetailsCommand { get; }
 
-    public AsyncRelayCommand LoadMoreMembersCommand { get; }
+    public AsyncRelayCommand PreviousMembersPageCommand { get; }
+
+    public AsyncRelayCommand NextMembersPageCommand { get; }
+
+    public AsyncRelayCommand SearchMembersCommand { get; }
+
+    public RelayCommand ClearMemberSearchCommand { get; }
 
     public AsyncRelayCommand RefreshMembersCommand { get; }
 
@@ -660,7 +722,11 @@ public sealed class GroupViewModel : ViewModelBase
         SelectedGroup = null;
         GroupFilterText = string.Empty;
         Groups = new ObservableCollection<Group>();
-        Members = new ObservableCollection<GroupMember>();
+        Members = new ObservableCollection<GroupMemberItem>();
+        _membersPage = 0;
+        _isMemberSearchActive = false;
+        _lastMemberSearch = null;
+        MemberSearchText = string.Empty;
         Instances = new ObservableCollection<GroupInstance>();
         GroupInfo = null;
         IsGroupInfoOpen = false;
@@ -982,26 +1048,23 @@ public sealed class GroupViewModel : ViewModelBase
         }
     }
 
-    private Task LoadGroupMembersAsync()
-    {
-        if (SelectedGroup is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        return FetchGroupMembersAsync(reset: true);
-    }
-
-    private Task LoadMoreGroupMembersAsync() => SelectedGroup is null
+    private Task LoadGroupMembersAsync() => SelectedGroup is null
         ? Task.CompletedTask
-        : FetchGroupMembersAsync(reset: false);
+        : LoadMembersPageAsync(0);
+
+    private Task PreviousMembersPageAsync() => SelectedGroup is null || !CanGoToPreviousMembersPage
+        ? Task.CompletedTask
+        : LoadMembersPageAsync(_membersPage - 1);
+
+    private Task NextMembersPageAsync() => SelectedGroup is null || !CanGoToNextMembersPage
+        ? Task.CompletedTask
+        : LoadMembersPageAsync(_membersPage + 1);
 
     /// <summary>
-    /// Pulls one page of members. The endpoint pages with n=100 and offset, so the first
-    /// load starts at 0 and Load more continues past the rows already shown. A page shorter
-    /// than 100 means the roster is exhausted, even if the cached member count disagrees.
+    /// Pulls one page of the group's roster. The endpoint pages with n=100 and offset, so a
+    /// page is requested at page * 100 and the Previous/Next buttons move between them.
     /// </summary>
-    private async Task FetchGroupMembersAsync(bool reset)
+    private async Task LoadMembersPageAsync(int page)
     {
         if (SelectedGroup is not { } group)
         {
@@ -1009,38 +1072,25 @@ public sealed class GroupViewModel : ViewModelBase
         }
 
         var groupId = group.EffectiveId;
-        var offset = reset ? 0 : Members.Count;
+        page = Math.Max(0, page);
         IsBusy = true;
         ErrorMessage = null;
         IsLoadingMembers = true;
 
         try
         {
-            var page = await _api.GetGroupMembersAsync(groupId, offset);
+            var members = await _api.GetGroupMembersAsync(groupId, page * MembersPageSize);
             if (SelectedGroup?.EffectiveId != groupId)
             {
                 return;
             }
 
-            _membersExhausted = page.Count < MembersPageSize;
-
-            var merged = reset ? new List<GroupMember>() : Members.ToList();
-            var seen = merged
-                .Select(member => member.UserId)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var member in page)
-            {
-                if (seen.Add(member.UserId))
-                {
-                    merged.Add(member);
-                }
-            }
-
-            Members = new ObservableCollection<GroupMember>(
-                merged.OrderBy(member => member.UserName, StringComparer.CurrentCultureIgnoreCase));
-            OnPropertyChanged(nameof(MembersSummary));
-            OnPropertyChanged(nameof(HasMoreMembers));
-            OnPropertyChanged(nameof(CanLoadMoreMembers));
+            _membersPage = page;
+            _isMemberSearchActive = false;
+            _lastMemberSearch = null;
+            Members = new ObservableCollection<GroupMemberItem>(
+                members.Select(member => new GroupMemberItem(member, _openMemberProfile)));
+            RaiseMemberListChanged();
         }
         catch (VrcApiException ex)
         {
@@ -1065,6 +1115,101 @@ public sealed class GroupViewModel : ViewModelBase
             IsBusy = false;
             RaiseCommandStates();
         }
+    }
+
+    /// <summary>
+    /// Searches the group's members. VRChat's member search filters display names (three
+    /// characters or more); a usr_ id is looked up through the single-member endpoint instead.
+    /// </summary>
+    private async Task SearchMembersAsync()
+    {
+        if (SelectedGroup is not { } group)
+        {
+            return;
+        }
+
+        var query = MemberSearchText.Trim();
+        if (query.Length < 3)
+        {
+            return;
+        }
+
+        var groupId = group.EffectiveId;
+        IsBusy = true;
+        ErrorMessage = null;
+        IsLoadingMembers = true;
+
+        try
+        {
+            IReadOnlyList<GroupMember> matches;
+            if (query.StartsWith("usr_", StringComparison.OrdinalIgnoreCase))
+            {
+                var member = await _api.GetGroupMemberAsync(groupId, query);
+                matches = member is null ? Array.Empty<GroupMember>() : new[] { member };
+            }
+            else
+            {
+                matches = await _api.SearchGroupMembersAsync(groupId, query);
+            }
+
+            if (SelectedGroup?.EffectiveId != groupId)
+            {
+                return;
+            }
+
+            _membersPage = 0;
+            _isMemberSearchActive = true;
+            _lastMemberSearch = query;
+            Members = new ObservableCollection<GroupMemberItem>(
+                matches.Select(member => new GroupMemberItem(member, _openMemberProfile)));
+            RaiseMemberListChanged();
+        }
+        catch (VrcApiException ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            ErrorMessage = "Could not reach VRChat. Check your internet connection.";
+        }
+        catch (TaskCanceledException)
+        {
+            ErrorMessage = "The member search timed out. Try again.";
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            ErrorMessage = "Could not search the group's members.";
+        }
+        finally
+        {
+            IsLoadingMembers = false;
+            IsBusy = false;
+            RaiseCommandStates();
+        }
+    }
+
+    private async Task ClearMemberSearchAsync()
+    {
+        MemberSearchText = string.Empty;
+        if (SelectedGroup is null)
+        {
+            return;
+        }
+
+        await LoadMembersPageAsync(_membersPage);
+    }
+
+    private void RaiseMemberListChanged()
+    {
+        OnPropertyChanged(nameof(MembersSummary));
+        OnPropertyChanged(nameof(MembersPageText));
+        OnPropertyChanged(nameof(MemberPageNumber));
+        OnPropertyChanged(nameof(MemberPageCount));
+        OnPropertyChanged(nameof(IsMemberSearchActive));
+        OnPropertyChanged(nameof(CanGoToPreviousMembersPage));
+        OnPropertyChanged(nameof(CanGoToNextMembersPage));
+        RaiseCommandStates();
     }
 
     private async Task CreateGroupAsync()

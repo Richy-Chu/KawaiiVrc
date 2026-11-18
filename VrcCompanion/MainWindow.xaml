@@ -3476,6 +3476,36 @@
                                     <TextBlock Text="MEMBERS"
                                                Style="{StaticResource FieldLabel}"
                                                Margin="0,18,0,4" />
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Text="{Binding DataContext.GroupViewModel.MemberSearchText, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                                                 Style="{StaticResource InputBox}"
+                                                 Tag="Search a display name or usr_ id..."
+                                                 AutomationProperties.AutomationId="GroupMemberSearchBox">
+                                            <TextBox.InputBindings>
+                                                <KeyBinding Key="Enter"
+                                                            Command="{Binding DataContext.GroupViewModel.SearchMembersCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                            </TextBox.InputBindings>
+                                        </TextBox>
+                                        <Button Grid.Column="1"
+                                                Content="Search"
+                                                Style="{StaticResource SecondaryButton}"
+                                                Padding="10,5"
+                                                FontSize="10.5"
+                                                Margin="6,0,0,0"
+                                                Command="{Binding DataContext.GroupViewModel.SearchMembersCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                        <Button Grid.Column="2"
+                                                Content="Clear"
+                                                Style="{StaticResource GhostButton}"
+                                                Padding="8,4"
+                                                FontSize="10"
+                                                Margin="4,0,0,0"
+                                                Command="{Binding DataContext.GroupViewModel.ClearMemberSearchCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                    </Grid>
                                     <TextBlock Text="{Binding DataContext.GroupViewModel.MembersSummary, RelativeSource={RelativeSource AncestorType=Window}}"
                                                Style="{StaticResource MutedText}"
                                                TextWrapping="Wrap"
@@ -3484,27 +3514,74 @@
                                     <ItemsControl ItemsSource="{Binding DataContext.GroupViewModel.Members, RelativeSource={RelativeSource AncestorType=Window}}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <Border Background="{StaticResource InputBrush}"
-                                                        CornerRadius="8"
-                                                        Padding="10,6"
-                                                        Margin="0,0,0,5">
-                                                    <TextBlock Text="{Binding UserName}"
-                                                               FontSize="11.5"
-                                                               Foreground="{StaticResource TextBrush}"
-                                                               TextTrimming="CharacterEllipsis" />
-                                                </Border>
+                                                <Button Command="{Binding OpenProfileCommand}"
+                                                        Style="{StaticResource GhostButton}"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        Padding="0"
+                                                        Margin="0,0,0,5"
+                                                        ToolTip="View this member's profile">
+                                                    <Border Background="{StaticResource InputBrush}"
+                                                            CornerRadius="8"
+                                                            Padding="8,6">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <Border Width="26" Height="26" CornerRadius="13"
+                                                                    Background="#1B2130" Margin="0,0,8,0">
+                                                                <Grid>
+                                                                    <TextBlock Text="{Binding Initial}"
+                                                                               FontSize="11"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="{StaticResource MutedBrush}"
+                                                                               HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center" />
+                                                                    <controls:AsyncImage SourceUrl="{Binding AvatarUrl}"
+                                                                                         DecodeWidth="52"
+                                                                                         CornerRadius="13" />
+                                                                </Grid>
+                                                            </Border>
+                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding DisplayName}"
+                                                                           FontSize="11.5"
+                                                                           Foreground="{StaticResource TextBrush}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{Binding IdText}"
+                                                                           FontSize="9.5"
+                                                                           Foreground="{StaticResource MutedBrush}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                            <TextBlock Grid.Column="2"
+                                                                       Text="Profile"
+                                                                       FontSize="10"
+                                                                       Foreground="{StaticResource MutedBrush}"
+                                                                       VerticalAlignment="Center" />
+                                                        </Grid>
+                                                    </Border>
+                                                </Button>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                    <Button Content="Load more members"
-                                            Style="{StaticResource SecondaryButton}"
-                                            Padding="12,6"
-                                            FontSize="11"
-                                            HorizontalAlignment="Left"
-                                            Margin="0,4,0,0"
-                                            Visibility="{Binding DataContext.GroupViewModel.HasMoreMembers, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"
-                                            Command="{Binding DataContext.GroupViewModel.LoadMoreMembersCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            ToolTip="Fetch the next page of members" />
+                                    <StackPanel Orientation="Horizontal"
+                                                Margin="0,6,0,0"
+                                                Visibility="{Binding DataContext.GroupViewModel.IsMemberSearchActive, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolToVis}}">
+                                        <Button Content="Previous"
+                                                Style="{StaticResource SecondaryButton}"
+                                                Padding="10,5"
+                                                FontSize="10.5"
+                                                Command="{Binding DataContext.GroupViewModel.PreviousMembersPageCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                        <TextBlock Text="{Binding DataContext.GroupViewModel.MembersPageText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                   Style="{StaticResource MutedText}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="10,0" />
+                                        <Button Content="Next"
+                                                Style="{StaticResource SecondaryButton}"
+                                                Padding="10,5"
+                                                FontSize="10.5"
+                                                Command="{Binding DataContext.GroupViewModel.NextMembersPageCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                    </StackPanel>
                                 </StackPanel>
                             </ScrollViewer>
                         </Grid>

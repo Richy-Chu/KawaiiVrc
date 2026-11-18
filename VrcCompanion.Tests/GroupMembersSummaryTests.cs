@@ -4,33 +4,52 @@ using Xunit;
 namespace VrcCompanion.Tests;
 
 /// <summary>
-/// The group popup shows one page of members, because VRChat's members endpoint returns at
-/// most 100 per request. The summary has to say that instead of implying the group only has
-/// the 100 members on screen, and point at the Load more button that continues the roster.
+/// The group popup shows one page of 100 members at a time, so the summary has to say which
+/// slice of the roster is on screen, and switch to result wording while a search is active.
 /// </summary>
 public class GroupMembersSummaryTests
 {
     [Fact]
-    public void OnePageOfABigGroupSaysWhatIsShown()
-        => Assert.Equal(
-            "Showing 100 of 27,812 members — Load more fetches the next 100.",
-            GroupViewModel.DescribeMembers(loaded: 100, total: 27812, isLoading: false));
+    public void FirstPageNamesItsRange()
+        => Assert.Equal("Showing 1–100 of 27,812 members", GroupViewModel.DescribeMembers(100, 27812, false));
 
     [Fact]
-    public void SmallGroupCountsAsLoaded()
-        => Assert.Equal("5 members loaded", GroupViewModel.DescribeMembers(5, 5, false));
+    public void LaterPageContinuesTheRange()
+        => Assert.Equal("Showing 101–200 of 27,812 members", GroupViewModel.DescribeMembers(100, 27812, false, page: 1));
 
     [Fact]
-    public void SingleMemberIsSingular()
-        => Assert.Equal("1 member loaded", GroupViewModel.DescribeMembers(1, 1, false));
+    public void LastPageCountsOnlyWhatItHas()
+        => Assert.Equal("Showing 201–250 of 250 members", GroupViewModel.DescribeMembers(50, 250, false, page: 2));
 
     [Fact]
-    public void UnknownTotalDoesNotInventOne()
-        => Assert.Equal("7 members loaded", GroupViewModel.DescribeMembers(7, 0, false));
+    public void SmallGroupStillShowsItsRange()
+        => Assert.Equal("Showing 1–5 of 5 members", GroupViewModel.DescribeMembers(5, 5, false));
+
+    [Fact]
+    public void UnknownTotalOmitsTheTotal()
+        => Assert.Equal("Showing 1–7 members", GroupViewModel.DescribeMembers(7, 0, false));
 
     [Theory]
     [InlineData(false, "No members loaded.")]
     [InlineData(true, "Loading members…")]
     public void EmptyListExplainsItself(bool isLoading, string expected)
         => Assert.Equal(expected, GroupViewModel.DescribeMembers(0, 27812, isLoading));
+
+    [Fact]
+    public void SearchCountsMatches()
+        => Assert.Equal(
+            "3 members match “bob”",
+            GroupViewModel.DescribeMembers(3, 27812, false, 0, searchQuery: "bob"));
+
+    [Fact]
+    public void SingleSearchMatchIsSingular()
+        => Assert.Equal(
+            "1 member matches “bob”",
+            GroupViewModel.DescribeMembers(1, 27812, false, 0, searchQuery: "bob"));
+
+    [Fact]
+    public void EmptySearchSaysSo()
+        => Assert.Equal(
+            "No members match “bob” in this group.",
+            GroupViewModel.DescribeMembers(0, 27812, false, 0, searchQuery: "bob"));
 }

@@ -1,10 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
-using System.Net.Http;
-using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
@@ -14,83 +8,99 @@ using Xunit;
 namespace VrcCompanion.Tests;
 
 /// <summary>
-/// VRChat's group members endpoint pages with n=100 and offset. Load more continues past the
-/// rows already shown, and a short page ends the roster even when the cached count is stale.
+/// The roster pages 100 members at a time with Previous and Next, asking VRChat for the offset
+/// that matches the page, rather than growing one list with a Load more button.
 /// </summary>
 public class GroupMembersPagingTests
 {
     [Fact]
-    public async Task LoadMoreAppendsTheNextPageUntilTheRosterEnds()
+    public async Task FirstPageOffersNextButNotPrevious()
     {
-        using var handler = new MemberPageHandler(total: 250);
+        using var handler = new GroupMemberTestHandler(total: 250);
         using var api = new VrcApiClient(null, handler);
         var vm = new GroupViewModel(api)
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
 
+        await SettleAsync(vm);
+
+        Assert.Equal(100, vm.Members.Count);
+        Assert.Equal("Showing 1–100 of 250 members", vm.MembersSummary);
+        Assert.Equal("Page 1 of 3", vm.MembersPageText);
+        Assert.False(vm.CanGoToPreviousMembersPage);
+        Assert.True(vm.CanGoToNextMembersPage);
+        Assert.Equal(new[] { 0 }, handler.Offsets);
+        Assert.Equal("Member 0000", vm.Members[0].DisplayName);
+    }
+
+    [Fact]
+    public async Task NextMovesForwardAndPreviousComesBack()
+    {
+        using var handler = new GroupMemberTestHandler(total: 250);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
+        };
+        await SettleAsync(vm);
+
+        vm.NextMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+        Assert.Equal("Showing 101–200 of 250 members", vm.MembersSummary);
+        Assert.Equal("Page 2 of 3", vm.MembersPageText);
+        Assert.True(vm.CanGoToPreviousMembersPage);
+        Assert.Equal(new[] { 0, 100 }, handler.Offsets);
+
+        vm.NextMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+        Assert.Equal(50, vm.Members.Count);
+        Assert.Equal("Showing 201–250 of 250 members", vm.MembersSummary);
+        Assert.False(vm.CanGoToNextMembersPage);
+
+        vm.PreviousMembersPageCommand.Execute(null);
         await SettleAsync(vm);
         Assert.Equal(100, vm.Members.Count);
-        Assert.True(vm.HasMoreMembers);
-        Assert.True(vm.CanLoadMoreMembers);
-        Assert.Equal(
-            "Showing 100 of 250 members — Load more fetches the next 100.",
-            vm.MembersSummary);
-
-        vm.LoadMoreMembersCommand.Execute(null);
-        await SettleAsync(vm);
-        Assert.Equal(200, vm.Members.Count);
-        Assert.True(vm.CanLoadMoreMembers);
-
-        vm.LoadMoreMembersCommand.Execute(null);
-        await SettleAsync(vm);
-        Assert.Equal(250, vm.Members.Count);
-        Assert.False(vm.HasMoreMembers);
-        Assert.False(vm.CanLoadMoreMembers);
-        Assert.Equal("250 members loaded", vm.MembersSummary);
-        Assert.Equal(new[] { 0, 100, 200 }, handler.Offsets);
+        Assert.Equal("Page 2 of 3", vm.MembersPageText);
+        Assert.Equal(new[] { 0, 100, 200, 100 }, handler.Offsets);
     }
 
     [Fact]
-    public async Task ShortPageStopsPagingEvenWhenTheCachedCountIsHigher()
+    public async Task RefreshingReturnsToTheFirstPage()
     {
-        using var handler = new MemberPageHandler(total: 120);
-        using var api = new VrcApiClient(null, handler);
-        var vm = new GroupViewModel(api)
-        {
-            SelectedGroup = new Group { Id = "grp_1", MemberCount = 5000 }
-        };
-
-        await SettleAsync(vm);
-        vm.LoadMoreMembersCommand.Execute(null);
-        await SettleAsync(vm);
-
-        Assert.Equal(120, vm.Members.Count);
-        Assert.False(vm.HasMoreMembers);
-        Assert.False(vm.CanLoadMoreMembers);
-    }
-
-    [Fact]
-    public async Task RefreshingMembersStartsAgainFromTheFirstPage()
-    {
-        using var handler = new MemberPageHandler(total: 250);
+        using var handler = new GroupMemberTestHandler(total: 250);
         using var api = new VrcApiClient(null, handler);
         var vm = new GroupViewModel(api)
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-
         await SettleAsync(vm);
-        vm.LoadMoreMembersCommand.Execute(null);
+        vm.NextMembersPageCommand.Execute(null);
         await SettleAsync(vm);
-        Assert.Equal(200, vm.Members.Count);
 
         vm.RefreshMembersCommand.Execute(null);
         await SettleAsync(vm);
 
-        Assert.Equal(100, vm.Members.Count);
-        Assert.True(vm.CanLoadMoreMembers);
+        Assert.Equal("Page 1 of 3", vm.MembersPageText);
         Assert.Equal(new[] { 0, 100, 0 }, handler.Offsets);
+    }
+
+    [Fact]
+    public async Task MemberRowsCarryTheNestedUserNameAndAvatar()
+    {
+        using var handler = new GroupMemberTestHandler(total: 3);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 3 }
+        };
+
+        await SettleAsync(vm);
+
+        Assert.Equal(3, vm.Members.Count);
+        Assert.All(vm.Members, member => Assert.StartsWith("Member 000", member.DisplayName));
+        Assert.All(vm.Members, member => Assert.EndsWith(".png", member.AvatarUrl));
+        Assert.Equal("Showing 1–3 of 3 members", vm.MembersSummary);
     }
 
     private static async Task SettleAsync(GroupViewModel vm)
@@ -102,61 +112,5 @@ public class GroupMembersPagingTests
         }
 
         Assert.False(vm.IsBusy);
-    }
-
-    private sealed class MemberPageHandler : HttpMessageHandler
-    {
-        private readonly int _total;
-
-        public MemberPageHandler(int total) => _total = total;
-
-        public List<int> Offsets { get; } = new();
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
-            var query = request.RequestUri?.Query ?? string.Empty;
-            if (!path.EndsWith("/members", StringComparison.Ordinal))
-            {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("[]", Encoding.UTF8, "application/json")
-                });
-            }
-
-            var offset = ReadInt(query, "offset");
-            var count = ReadInt(query, "n", fallback: 100);
-            Offsets.Add(offset);
-
-            var available = Math.Max(0, Math.Min(count, _total - offset));
-            var members = Enumerable.Range(offset, available)
-                .Select(index => $$"""
-                    {"userId":"usr_{{index}}","userName":"Member {{index:D4}}"}
-                    """);
-
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    "[" + string.Join(",", members) + "]",
-                    Encoding.UTF8,
-                    "application/json")
-            });
-        }
-
-        private static int ReadInt(string query, string key, int fallback = 0)
-        {
-            foreach (var pair in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var parts = pair.Split('=', 2);
-                if (parts.Length == 2 && parts[0] == key && int.TryParse(parts[1], out var value))
-                {
-                    return value;
-                }
-            }
-
-            return fallback;
-        }
     }
 }

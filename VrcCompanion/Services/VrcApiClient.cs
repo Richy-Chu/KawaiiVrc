@@ -3266,6 +3266,44 @@ public sealed class VrcApiClient : IDisposable
         return DeserializeList<GroupMember>(body);
     }
 
+    /// <summary>Group members matching a display name; VRChat requires at least 3 characters.</summary>
+    public async Task<IReadOnlyList<GroupMember>> SearchGroupMembersAsync(
+        string groupId,
+        string query,
+        int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            $"groups/{Uri.EscapeDataString(groupId)}/members/search" +
+            $"?query={Uri.EscapeDataString(query.Trim())}&n=100&offset={Math.Max(0, offset)}",
+            null,
+            cancellationToken);
+        var parsed = Deserialize<GroupMember.SearchResponse>(body);
+        return parsed?.Results ?? DeserializeList<GroupMember>(body);
+    }
+
+    /// <summary>One member of a group by user id, or null when that user is not a member.</summary>
+    public async Task<GroupMember?> GetGroupMemberAsync(
+        string groupId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var body = await SendApiAsync(
+                HttpMethod.Get,
+                $"groups/{Uri.EscapeDataString(groupId)}/members/{Uri.EscapeDataString(userId)}",
+                null,
+                cancellationToken);
+            return Deserialize<GroupMember>(body);
+        }
+        catch (VrcApiException ex) when (ex.StatusCode == 404)
+        {
+            return null;
+        }
+    }
+
     public async Task<Group?> CreateGroupAsync(
         string name,
         string description,
