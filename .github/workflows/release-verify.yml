@@ -52,6 +52,9 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # build/ReleaseVerifier authenticates with this; anonymous checks hit GitHub's
+          # 60-per-hour per-IP limit on shared runners.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_FROM: ${{ inputs.from }}

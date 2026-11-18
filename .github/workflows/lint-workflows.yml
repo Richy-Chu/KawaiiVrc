@@ -64,7 +64,7 @@ jobs:
       # rule and why.
       - name: Install PSScriptAnalyzer
         shell: pwsh
-        run: Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -ErrorAction Stop
+        run: if (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version -eq '1.25.0' }) { Write-Host 'PSScriptAnalyzer 1.25.0 is already available.' } else { Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -ErrorAction Stop }
 
       - name: Lint build/*.ps1
         shell: pwsh

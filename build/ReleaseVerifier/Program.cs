@@ -30,6 +30,11 @@ var targetVersion = Required("target");
 var appId = options.TryGetValue("app-id", out var givenAppId) ? givenAppId : "KawaiiVrc";
 var expectedDeltas = options.TryGetValue("expect", out var rawExpect) ? int.Parse(rawExpect) : 0;
 
+// Anonymous GitHub API calls are limited to 60 per hour per IP, which shared CI runners
+// exhaust, so authenticate when a token is in the environment. It is never printed.
+var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+if (string.IsNullOrWhiteSpace(token)) { token = null; }
+
 var root = Path.Combine(Path.GetTempPath(), "KawaiiVrcReleaseVerify", Guid.NewGuid().ToString("N"));
 var packages = Path.Combine(root, "packages");
 var content = Path.Combine(root, "current");
@@ -64,7 +69,8 @@ try
 
     var logger = new ProbeLogger();
     var locator = new TestVelopackLocator(appId, baseVersion, packages, content, root, updateExe, "win", logger);
-    var manager = new UpdateManager(new GithubSource($"https://github.com/{repo}", null, false), locator: locator);
+    Console.WriteLine($"auth   {(token is null ? "anonymous" : "token")}");
+    var manager = new UpdateManager(new GithubSource($"https://github.com/{repo}", token, false), locator: locator);
 
     var update = await manager.CheckForUpdatesAsync();
     if (update is null)
