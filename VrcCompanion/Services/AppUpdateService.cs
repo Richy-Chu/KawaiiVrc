@@ -67,12 +67,18 @@ public sealed class AppUpdateService : IAppUpdateService
             if (manager.IsInstalled)
             {
                 _manager = manager;
+                LifecycleLog.Write($"updater: installed {manager.CurrentVersion}, feed {repositoryUrl}");
+            }
+            else
+            {
+                LifecycleLog.Write("updater: not an installed build, checks disabled");
             }
         }
         catch (Exception ex)
         {
             // Running from bin\Debug, a portable copy, or with a broken install.
             // Updates are simply unavailable; startup continues normally.
+            LifecycleLog.Write($"updater: unavailable ({ex.GetType().Name}: {ex.Message})");
             Debug.WriteLine($"Updater unavailable: {ex}");
         }
     }

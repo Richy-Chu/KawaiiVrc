@@ -219,7 +219,22 @@ public sealed class UpdateViewModel : ViewModelBase
         _ = CheckAfterStartupDelayAsync();
     }
 
-    internal async Task CheckNowAsync(bool manual)
+    /// <summary>
+    /// Runs a check on the UI thread. Timed checks resume on a thread-pool thread, and
+    /// the properties below are bound to the window, so they must not be touched there.
+    /// </summary>
+    internal Task CheckNowAsync(bool manual)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            return CheckNowCoreAsync(manual);
+        }
+
+        return dispatcher.InvokeAsync(() => CheckNowCoreAsync(manual)).Task.Unwrap();
+    }
+
+    private async Task CheckNowCoreAsync(bool manual)
     {
         if (!_service.IsSupported || IsBusy)
         {
@@ -231,8 +246,8 @@ public sealed class UpdateViewModel : ViewModelBase
         ErrorText = string.Empty;
         StatusText = "Checking for updates…";
 
-        var result = await OnUiAsync(() => _service.CheckAsync()).ConfigureAwait(false);
-        await OnUiAsync(() => ApplyCheckResult(result, manual)).ConfigureAwait(false);
+        var result = await _service.CheckAsync();
+        ApplyCheckResult(result, manual);
     }
 
     internal async Task DownloadNowAsync()
@@ -299,12 +314,20 @@ public sealed class UpdateViewModel : ViewModelBase
             return;
         }
 
-        await CheckNowAsync(manual: false).ConfigureAwait(false);
+        try
+        {
+            await CheckNowAsync(manual: false).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LifecycleLog.Write($"updater: check threw {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private void ApplyCheckResult(AppUpdateCheckResult result, bool manual)
     {
         IsChecking = false;
+        LifecycleLog.Write($"updater: check {(manual ? "manual" : "automatic")} -> {result.State} {result.Version}".TrimEnd());
 
         switch (result.State)
         {
@@ -409,20 +432,10 @@ public sealed class UpdateViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Checks fall back to a thread-pool thread, so UI-bound changes are marshalled.
-    /// Tests and design-time hosts have no Application; the action then runs inline.
+    /// Download completion falls back to a thread-pool thread, so UI-bound changes are
+    /// marshalled. Tests and design-time hosts have no Application; the action then runs
+    /// inline.
     /// </summary>
-    private static Task<T> OnUiAsync<T>(Func<Task<T>> action)
-    {
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.CheckAccess())
-        {
-            return action();
-        }
-
-        return dispatcher.InvokeAsync(action).Task.Unwrap();
-    }
-
     private static Task OnUiAsync(Action action)
     {
         var dispatcher = Application.Current?.Dispatcher;
