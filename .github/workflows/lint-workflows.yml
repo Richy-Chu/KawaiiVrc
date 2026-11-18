@@ -7,9 +7,14 @@ on:
   push:
     paths:
       - ".github/workflows/**"
+      # The hook and the scripts the workflows call, so touching them re-checks the lint.
+      - "build/hooks/**"
+      - "build/*.ps1"
   pull_request:
     paths:
       - ".github/workflows/**"
+      - "build/hooks/**"
+      - "build/*.ps1"
   workflow_dispatch:
 
 permissions:
@@ -47,3 +52,7 @@ jobs:
           ./actionlint -version
           shellcheck --version | head -3
           ./actionlint -color
+
+      # actionlint only looks inside workflows, so lint the pre-push hook directly.
+      - name: Lint build/hooks/pre-push
+        run: shellcheck build/hooks/pre-push
