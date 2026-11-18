@@ -427,7 +427,10 @@ if (-not $SkipFetch) {
             if ($tag -notmatch '^v?\d') { continue }
             $downloadExit = Invoke-Native "gh" @("release", "download", $tag, "--repo", $Repo, "--pattern", "*.nupkg", "--dir", $releasesDir, "--skip-existing")
             if ($downloadExit -ne 0) {
-                Write-Host "  Could not fetch $tag packages; older versions will get the full download." -ForegroundColor DarkGray
+                # A partial base packs a delta against packages that are not all there.
+                throw ("Could not download the packages of $tag from $Repo (gh exit $downloadExit); " +
+                    "refusing to build a delta from an incomplete base. Re-run when GitHub is reachable, " +
+                    "or pass -SkipFetch to accept a full-only release.")
             }
         }
     }
@@ -489,9 +492,16 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 }
 
 $tag = "v$Version"
-$viewExit = Invoke-Native "gh" @("release", "view", $tag, "--repo", $Repo)
-if ($viewExit -eq 0) {
+$view = Invoke-NativeCapture "gh" @("release", "view", $tag, "--repo", $Repo)
+if ($view.ExitCode -eq 0) {
     throw "Release $tag already exists on $Repo. Bump the version instead of reusing a tag."
+}
+
+# Only "not found" means the tag is free. A rate limit or auth error reads the same way to
+# a bare exit-code check, which would send the release on to gh release create.
+$viewText = (($view.Output | ForEach-Object { "$_" }) -join " ") -replace '\s+', ' '
+if ($view.ExitCode -ne 1 -or $viewText -notmatch '(?i)not found') {
+    throw "Could not check whether $tag exists on $Repo (gh exit $($view.ExitCode)): $viewText"
 }
 
 $releaseArgs = @(

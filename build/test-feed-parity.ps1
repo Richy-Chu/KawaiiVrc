@@ -1,15 +1,27 @@
 # Proves the release checks that read GitHub cannot mistake a failed read for an answer, by
 # driving the real pack-release.ps1 against a stub gh on PATH: a release without its feed is
-# drift, while a feed that will not download, a chain listing that fails and a delta-base
-# listing that fails are infrastructure or a refused build, never a silent skip.
+# drift, while a feed that will not download, a chain listing that fails, a delta-base listing
+# or download that fails, and a tag check that errors are infrastructure or a refused build,
+# never a silent skip or a full-only release.
 $ErrorActionPreference = "Stop"
 
+$repoRoot = Split-Path -Parent $PSScriptRoot
 $releaseScript = Join-Path $PSScriptRoot "pack-release.ps1"
 if (-not (Test-Path $releaseScript)) { throw "pack-release.ps1 is missing." }
+
+# The readiness check compares the project version with the release, so the publish cases use it.
+$csproj = Join-Path (Join-Path $repoRoot "VrcCompanion") "VrcCompanion.csproj"
+if (-not (Test-Path $csproj)) { throw "VrcCompanion.csproj is missing." }
+$versionMatch = Select-String -Path $csproj -Pattern '<Version>([^<]+)</Version>' | Select-Object -First 1
+if (-not $versionMatch) { throw "VrcCompanion.csproj has no <Version>." }
+$projectVersion = $versionMatch.Matches[0].Groups[1].Value
 
 $onWindows = [System.IO.Path]::DirectorySeparatorChar -eq '\'
 $shimDir = Join-Path ([System.IO.Path]::GetTempPath()) ("kawaiivrc-gh-stub-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
+
+$releasesDir = Join-Path (Join-Path $repoRoot "artifacts") "releases"
+New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null
 
 function Write-Stub([string]$Path, [string[]]$Lines, [string]$NewLine) {
     ($Lines -join $NewLine) | Set-Content -Path $Path -Encoding Ascii
@@ -35,25 +47,37 @@ function Write-GhStub([string]$Directory, [bool]$Windows) {
             '',
             ':release_list',
             'if "%GH_MODE%"=="fetch-list-fails" goto fail',
-            'if not "%GH_MODE%"=="chain-list-fails" goto release_list_ok',
-            'if not exist "%GH_STATE%" goto release_list_first',
+            'if not "%GH_MODE%"=="chain-list-fails" goto list_ok',
+            'if not exist "%GH_STATE%" goto list_first',
             'goto fail',
             '',
-            ':release_list_first',
+            ':list_first',
             'type nul > "%GH_STATE%"',
             'exit /b 0',
             '',
-            ':release_list_ok',
+            ':list_ok',
             'echo v1.0.0',
             'exit /b 0',
             '',
             ':release_view',
+            'if "%GH_MODE%"=="view-error" goto rate_limit',
+            'if "%GH_MODE%"=="view-absent" goto absent',
             'echo KawaiiVrc-1.0.0-full.nupkg',
             'if not "%GH_MODE%"=="missing-feed" echo releases.win.json',
             'exit /b 0',
             '',
             ':release_download',
+            'if "%GH_MODE%"=="view-error" goto done',
+            'if "%GH_MODE%"=="view-absent" goto done',
             'echo download failed: connection reset 1>&2',
+            'exit /b 1',
+            '',
+            ':rate_limit',
+            'echo gh: API rate limit exceeded 1>&2',
+            'exit /b 1',
+            '',
+            ':absent',
+            'echo release not found 1>&2',
             'exit /b 1',
             '',
             ':fail',
@@ -79,26 +103,45 @@ function Write-GhStub([string]$Directory, [bool]$Windows) {
         '    echo v1.0.0',
         '    exit 0 ;;',
         '  "release view")',
+        '    if [ "$GH_MODE" = "view-error" ]; then echo "gh: API rate limit exceeded" >&2; exit 1; fi',
+        '    if [ "$GH_MODE" = "view-absent" ]; then echo "release not found" >&2; exit 1; fi',
         '    echo KawaiiVrc-1.0.0-full.nupkg',
         '    if [ "$GH_MODE" != "missing-feed" ]; then echo releases.win.json; fi',
         '    exit 0 ;;',
-        '  "release download") echo "download failed: connection reset" >&2; exit 1 ;;',
+        '  "release download")',
+        '    if [ "$GH_MODE" = "view-error" ] || [ "$GH_MODE" = "view-absent" ]; then exit 0; fi',
+        '    echo "download failed: connection reset" >&2; exit 1 ;;',
         'esac',
         'exit 0'
     )
 }
 
-# pack-release.ps1 only needs vpk to exist before the fetch, since the fetch fails first.
+# pack-release.ps1 only needs vpk to exist before the fetch. For the publish cases it also
+# needs a pack that produces a feed and a matching nupkg, which this writes to VPK_OUT_DIR.
 function Write-VpkStub([string]$Directory, [bool]$Windows) {
     if ($Windows) {
-        Write-Stub -Path (Join-Path $Directory "vpk.cmd") -NewLine "`r`n" -Lines @('@echo off', 'exit /b 0')
+        Write-Stub -Path (Join-Path $Directory "vpk.cmd") -NewLine "`r`n" -Lines @(
+            '@echo off',
+            'if "%VPK_OUT_DIR%"=="" exit /b 0',
+            'echo {"Assets":[{"FileName":"KawaiiVrc-%VPK_VERSION%-full.nupkg","Version":"%VPK_VERSION%"}]}>"%VPK_OUT_DIR%\releases.win.json"',
+            'type nul > "%VPK_OUT_DIR%\KawaiiVrc-%VPK_VERSION%-full.nupkg"',
+            'exit /b 0'
+        )
     }
     else {
-        Write-Stub -Path (Join-Path $Directory "vpk") -NewLine "`n" -Lines @('#!/bin/sh', 'exit 0')
+        Write-Stub -Path (Join-Path $Directory "vpk") -NewLine "`n" -Lines @(
+            '#!/bin/sh',
+            '[ -n "$VPK_OUT_DIR" ] || exit 0',
+            'printf %s "{\"Assets\":[{\"FileName\":\"KawaiiVrc-$VPK_VERSION-full.nupkg\",\"Version\":\"$VPK_VERSION\"}]}" > "$VPK_OUT_DIR/releases.win.json"',
+            ': > "$VPK_OUT_DIR/KawaiiVrc-$VPK_VERSION-full.nupkg"',
+            'exit 0'
+        )
     }
 }
 
 $verifyArguments = @('-VerifyOnly', '-Version', '1.0.0', '-Repo', 'owner/repo')
+$publishArguments = @('-Version', $projectVersion, '-Repo', 'owner/repo', '-SkipPublish', '-AllowDirty', '-SkipVerify')
+$fetchArguments = @('-Version', '1.0.0', '-Repo', 'owner/repo', '-SkipPublish', '-SkipUpload', '-SkipVerify')
 
 # Markers come from the plain messages, not the rendered error record: PowerShell wraps that
 # record with a gutter that ends up inside the text on Linux.
@@ -106,12 +149,17 @@ $checks = @(
     @{ Name = "feed asset missing"; Mode = "missing-feed"; Expected = 1; Marker = "has no feed asset"; Arguments = $verifyArguments },
     @{ Name = "listed feed will not download"; Mode = "feed-download-fails"; Expected = 3; Marker = "Could not download the feed"; Arguments = $verifyArguments },
     @{ Name = "chain listing fails"; Mode = "chain-list-fails"; Expected = 3; Marker = "Could not list releases for the chain check"; Arguments = $verifyArguments },
-    @{ Name = "delta-base listing fails"; Mode = "fetch-list-fails"; Expected = 1; Marker = "refusing to build a release without its delta base"; Arguments = @('-Version', '1.0.0', '-Repo', 'owner/repo', '-SkipPublish', '-SkipUpload', '-SkipVerify') }
+    @{ Name = "delta-base listing fails"; Mode = "fetch-list-fails"; Expected = 1; Marker = "refusing to build a release without its delta base"; Arguments = $fetchArguments },
+    @{ Name = "delta-base download fails"; Mode = "base-download-fails"; Expected = 1; Marker = "refusing to build a delta from an incomplete base"; Arguments = $fetchArguments },
+    @{ Name = "tag check errors"; Mode = "view-error"; Expected = 1; Marker = "Could not check whether v$projectVersion exists"; Arguments = $publishArguments },
+    @{ Name = "absent tag publishes"; Mode = "view-absent"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $publishArguments }
 )
 
 $savedPath = $env:PATH
 $savedMode = $env:GH_MODE
 $savedState = $env:GH_STATE
+$savedOutDir = $env:VPK_OUT_DIR
+$savedVpkVersion = $env:VPK_VERSION
 $failures = 0
 
 try {
@@ -119,6 +167,8 @@ try {
     Write-VpkStub -Directory $shimDir -Windows $onWindows
     $env:PATH = "$shimDir$([System.IO.Path]::PathSeparator)$savedPath"
     $env:GH_STATE = Join-Path $shimDir "list-state"
+    $env:VPK_OUT_DIR = $releasesDir
+    $env:VPK_VERSION = $projectVersion
 
     # If the stub is not what runs, the checks would silently exercise the real GitHub.
     $stubPath = Join-Path $shimDir $(if ($onWindows) { "gh.cmd" } else { "gh" })
@@ -170,7 +220,13 @@ finally {
     $env:PATH = $savedPath
     $env:GH_MODE = $savedMode
     $env:GH_STATE = $savedState
+    $env:VPK_OUT_DIR = $savedOutDir
+    $env:VPK_VERSION = $savedVpkVersion
     Remove-Item $shimDir -Recurse -Force -ErrorAction SilentlyContinue
+
+    # The publish cases pack into artifacts/releases; leave nothing of the stub's behind.
+    Remove-Item (Join-Path $releasesDir "releases.win.json") -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $releasesDir "KawaiiVrc-$projectVersion-full.nupkg") -ErrorAction SilentlyContinue
 }
 
 if ($failures -gt 0) {
