@@ -43,6 +43,7 @@ public sealed class WorldInstanceItem : ViewModelBase
     private string? _groupName;
     private bool _groupResolved;
     private bool _isGroupMember;
+    private string? _groupMembershipStatus;
     private string? _groupJoinState;
 
     public WorldInstanceItem(VrcInstance instance, string worldId)
@@ -73,13 +74,15 @@ public sealed class WorldInstanceItem : ViewModelBase
             ? "loading…"
             : _isGroupMember
                 ? "Joined"
-                : _groupJoinState switch
-                {
-                    "open" => "Open to join",
-                    "request" => "Request to join",
-                    null or "" or "unknown" => "View group",
-                    _ => "Invite only"
-                };
+                : string.Equals(_groupMembershipStatus, "requested", StringComparison.OrdinalIgnoreCase)
+                    ? "Request pending"
+                    : _groupJoinState switch
+                    {
+                        "open" => "Open to join",
+                        "request" => "Request to join",
+                        null or "" or "unknown" => "View group",
+                        _ => "Invite only"
+                    };
 
     public string GroupChipText => HasGroup ? $"Group · {GroupStateText}" : string.Empty;
 
@@ -126,15 +129,17 @@ public sealed class WorldInstanceItem : ViewModelBase
     public bool CanJoin => !string.IsNullOrWhiteSpace(InstanceId);
 
     /// <summary>Applies what the group lookup learned; null means it could not be read.</summary>
-    /// <summary>Keeps an open row honest when the group popup joins or leaves.</summary>
-    public void SetGroupMembership(bool isMember)
+    /// <summary>Keeps an open row honest when the group popup joins, requests or leaves.</summary>
+    public void SetGroupMembership(bool isMember, string? membershipStatus = null)
     {
-        if (_isGroupMember == isMember)
+        if (_isGroupMember == isMember &&
+            string.Equals(_groupMembershipStatus, membershipStatus, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
         _isGroupMember = isMember;
+        _groupMembershipStatus = membershipStatus;
         OnPropertyChanged(nameof(IsGroupMember));
         OnPropertyChanged(nameof(GroupStateText));
         OnPropertyChanged(nameof(GroupChipText));
@@ -145,6 +150,7 @@ public sealed class WorldInstanceItem : ViewModelBase
         _groupResolved = true;
         _groupName = group?.Name;
         _isGroupMember = group?.IsMember == true;
+        _groupMembershipStatus = group?.MembershipStatus;
         _groupJoinState = group?.JoinState;
         OnPropertyChanged(nameof(GroupName));
         OnPropertyChanged(nameof(Title));
@@ -585,7 +591,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
     /// Joining or leaving from the group popup invalidates the cached group and updates
     /// the rows already on screen, so a refresh does not resurrect the old membership.
     /// </summary>
-    public void ApplyGroupMembership(string groupId, bool isMember)
+    public void ApplyGroupMembership(string groupId, bool isMember, string? membershipStatus = null)
     {
         if (string.IsNullOrWhiteSpace(groupId))
         {
@@ -596,7 +602,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
         foreach (var item in Instances.Where(item =>
                      string.Equals(item.GroupId, groupId, StringComparison.OrdinalIgnoreCase)))
         {
-            item.SetGroupMembership(isMember);
+            item.SetGroupMembership(isMember, membershipStatus);
         }
     }
 

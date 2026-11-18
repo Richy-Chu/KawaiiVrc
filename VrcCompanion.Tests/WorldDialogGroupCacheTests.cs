@@ -76,6 +76,28 @@ public class WorldDialogGroupCacheTests
         Assert.Equal(2, handler.GroupRequests);
     }
 
+    [Fact]
+    public async Task RequestPendingReachesTheChip()
+    {
+        using var handler = new GroupCountingHandler(membership: "inactive", joinState: "request");
+        using var api = new VrcApiClient(null, handler);
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared);
+
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
+        await (dialog.GroupHydration ?? Task.CompletedTask);
+
+        var groupRows = dialog.Instances.Where(item => item.HasGroup).ToList();
+        Assert.All(groupRows, item => Assert.Equal("Group · Request to join", item.GroupChipText));
+
+        // What the group popup publishes after a successful request.
+        dialog.ApplyGroupMembership("grp_abc", isMember: false, membershipStatus: "requested");
+
+        Assert.All(groupRows, item => Assert.Equal("Group · Request pending", item.GroupChipText));
+    }
+
     private sealed class GroupCountingHandler : HttpMessageHandler
     {
         private readonly string _membership;

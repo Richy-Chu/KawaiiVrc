@@ -244,6 +244,7 @@ public sealed class GroupViewModel : ViewModelBase
                 OnPropertyChanged(nameof(GroupJoinHint));
                 OnPropertyChanged(nameof(IsGroupJoinOpen));
                 OnPropertyChanged(nameof(IsGroupJoinRequest));
+                OnPropertyChanged(nameof(IsJoinRequestPending));
                 OnPropertyChanged(nameof(CanUseGroupJoinButton));
                 OnPropertyChanged(nameof(GroupJoinButtonText));
                 OnPropertyChanged(nameof(GroupJoinButtonToolTip));
@@ -289,6 +290,7 @@ public sealed class GroupViewModel : ViewModelBase
                 OnPropertyChanged(nameof(HasGroupInfoMembershipLabel));
                 OnPropertyChanged(nameof(GroupJoinHint));
                 OnPropertyChanged(nameof(IsGroupJoinOpen));
+                OnPropertyChanged(nameof(IsJoinRequestPending));
                 OnPropertyChanged(nameof(CanUseGroupJoinButton));
                 OnPropertyChanged(nameof(GroupJoinButtonText));
                 OnPropertyChanged(nameof(GroupJoinButtonToolTip));
@@ -348,26 +350,37 @@ public sealed class GroupViewModel : ViewModelBase
 
     public bool IsGroupJoinOpen => string.Equals(GroupInfo?.JoinState, "open", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>VRChat only takes join requests on the website, but the button is still the way in.</summary>
+    /// <summary>The group takes join requests rather than open joins.</summary>
     public bool IsGroupJoinRequest => string.Equals(GroupInfo?.JoinState, "request", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Join acts on open groups, and hands request-only groups to vrchat.com.</summary>
+    /// <summary>A request is with the group's staff, so there is nothing left to click.</summary>
+    public bool IsJoinRequestPending => !IsMemberOfGroupInfo
+        && string.Equals(GroupInfo?.MembershipStatus, "requested", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Open groups join straight away, request groups send the request from here.</summary>
     public bool CanUseGroupJoinButton => !IsMemberOfGroupInfo
+        && !IsJoinRequestPending
         && !IsGroupInfoBusy
         && (IsGroupJoinOpen || IsGroupJoinRequest);
 
-    public string GroupJoinButtonText => IsGroupJoinRequest ? "Request to join" : "Join group";
+    public string GroupJoinButtonText => IsJoinRequestPending
+        ? "Request pending"
+        : IsGroupJoinRequest ? "Request to join" : "Join group";
 
-    public string GroupJoinButtonToolTip => IsGroupJoinRequest
-        ? "Send a join request on vrchat.com"
-        : "Join this open group";
+    public string GroupJoinButtonToolTip => IsJoinRequestPending
+        ? "Waiting for the group to accept your request"
+        : IsGroupJoinRequest
+            ? "Send a join request from here"
+            : "Join this open group";
 
     public string GroupJoinHint => GroupInfo is null || IsMemberOfGroupInfo
         ? string.Empty
-        : GroupInfo.JoinState?.ToLowerInvariant() switch
+        : IsJoinRequestPending
+            ? "Your join request is pending. You become a member once the group accepts it."
+            : GroupInfo.JoinState?.ToLowerInvariant() switch
         {
             "open" => "This group is open — Join group adds you right away.",
-            "request" => "This group takes join requests: Request to join opens it on vrchat.com to send one.",
+            "request" => "This group takes join requests — Request to join sends one from here.",
             "invite" => "This group is invite-only. Ask a member for an invite on vrchat.com.",
             "closed" => "This group is closed to new members.",
             _ => string.Empty
@@ -810,19 +823,29 @@ public sealed class GroupViewModel : ViewModelBase
             return;
         }
 
-        // VRChat's API only joins open groups; a request has to be sent on the website.
-        // Sending the user there is the request, instead of a greyed-out button.
-        if (IsGroupJoinRequest)
-        {
-            OpenGroupInfoOnWeb();
-            return;
-        }
-
         IsGroupInfoBusy = true;
         GroupInfoError = null;
         try
         {
-            await _api.JoinGroupAsync(GroupInfo.EffectiveId);
+            // VRChat answers from the group's join state: an open group makes the account
+            // a member, while a request-only group records a join request instead.
+            var status = await _api.JoinGroupAsync(GroupInfo.EffectiveId);
+            if (string.Equals(status, "requested", StringComparison.OrdinalIgnoreCase))
+            {
+                GroupInfo.MembershipStatus = "requested";
+                OnPropertyChanged(nameof(GroupInfoMemberText));
+                OnPropertyChanged(nameof(GroupInfoMembershipLabel));
+                OnPropertyChanged(nameof(HasGroupInfoMembershipLabel));
+                OnPropertyChanged(nameof(GroupJoinHint));
+                OnPropertyChanged(nameof(IsJoinRequestPending));
+                OnPropertyChanged(nameof(CanUseGroupJoinButton));
+                OnPropertyChanged(nameof(GroupJoinButtonText));
+                OnPropertyChanged(nameof(GroupJoinButtonToolTip));
+                RaiseCommandStates();
+                PublishMembershipChanged(GroupInfo, false);
+                return;
+            }
+
             IsMemberOfGroupInfo = true;
             GroupInfo.MembershipStatus = "member";
             OnPropertyChanged(nameof(GroupInfoMemberText));

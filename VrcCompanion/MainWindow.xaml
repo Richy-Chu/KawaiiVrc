@@ -9384,7 +9384,7 @@
                                                     Command="{Binding GroupViewModel.OpenGroupInfoOnWebCommand}" />
                                         </WrapPanel>
 
-                                        <TextBlock Text="Moderation and role changes stay on vrchat.com; join requests are sent there too, and this popup joins or leaves open groups directly."
+                                        <TextBlock Text="Moderation and role changes stay on vrchat.com; joins, join requests and leaving happen here."
                                                    FontSize="9" Foreground="{StaticResource DimBrush}"
                                                    TextWrapping="Wrap" Margin="0,8,0,0" />
                                     </StackPanel>

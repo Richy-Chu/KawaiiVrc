@@ -45,6 +45,7 @@ public class WorldInstanceGroupTests
 
     [Theory]
     [InlineData("member", "open", "Group · Joined")]
+    [InlineData("requested", "request", "Group · Request pending")]
     [InlineData(null, "open", "Group · Open to join")]
     [InlineData(null, "request", "Group · Request to join")]
     [InlineData(null, "invite", "Group · Invite only")]

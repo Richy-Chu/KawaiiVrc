@@ -202,7 +202,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private void OnGroupMembershipChanged(Group group, bool isMember)
     {
         SelectedFriendDetail?.ApplyGroupMembership(group, isMember);
-        WorldDialog?.ApplyGroupMembership(group.EffectiveId, isMember);
+        WorldDialog?.ApplyGroupMembership(group.EffectiveId, isMember, group.MembershipStatus);
     }
 
     private void OnAvatarSearchResultsChanged()

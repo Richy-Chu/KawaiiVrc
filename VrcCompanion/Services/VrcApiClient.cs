@@ -3201,18 +3201,23 @@ public sealed class VrcApiClient : IDisposable
         return DeserializeList<GroupInstance>(body);
     }
 
-    /// <summary>Joins a public group (POST groups/{id}/join).</summary>
-    public async Task JoinGroupAsync(
+    /// <summary>
+    /// Joins a group, or asks to join one that takes requests: VRChat decides from the
+    /// group's join state and answers with the member object (POST groups/{id}/join).
+    /// Returns that answer's membershipStatus — "member" or "requested".
+    /// </summary>
+    public async Task<string?> JoinGroupAsync(
         string groupId,
         CancellationToken cancellationToken = default)
     {
         using var content = JsonContent.Create(new { });
-        await SendApiAsync(
+        var body = await SendApiAsync(
             HttpMethod.Post,
             $"groups/{Uri.EscapeDataString(groupId)}/join",
             content,
             cancellationToken);
         _myGroupsCache = null;
+        return Deserialize<GroupMember>(body)?.MembershipStatus;
     }
 
     /// <summary>

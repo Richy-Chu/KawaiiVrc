@@ -1,3 +1,8 @@
+using System;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -6,8 +11,9 @@ using Xunit;
 namespace VrcCompanion.Tests;
 
 /// <summary>
-/// The group popup used to show a greyed-out "Join group" for groups that take join
-/// requests. The button now says what it will do and stays usable.
+/// The popup joins and requests through VRChat's own endpoint: POST groups/{id}/join answers
+/// with the member object, and its membershipStatus says whether the account is now a member
+/// or has a request pending.
 /// </summary>
 public class GroupJoinButtonTests
 {
@@ -27,6 +33,7 @@ public class GroupJoinButtonTests
         Assert.Equal(text, vm.GroupJoinButtonText);
         Assert.Equal(enabled, vm.CanUseGroupJoinButton);
         Assert.Equal(enabled, vm.JoinGroupInfoCommand.CanExecute(null));
+        Assert.False(vm.IsJoinRequestPending);
     }
 
     [Fact]
@@ -43,20 +50,90 @@ public class GroupJoinButtonTests
     }
 
     [Fact]
-    public void RequestToJoinOpensTheGroupOnTheWeb()
+    public async Task OpenGroupJoinsFromTheApp()
     {
-        using var api = new VrcApiClient();
-        string? opened = null;
-        var vm = new GroupViewModel(api, openUrl: url =>
+        using var handler = new JoinHandler("member");
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
         {
-            opened = url;
-            return true;
-        });
-        vm.GroupInfo = new Group { Id = "grp_req", JoinState = "request", Name = "KushCOOKIES" };
+            GroupInfo = new Group { Id = "grp_open", JoinState = "open" }
+        };
 
+        await JoinAsync(vm);
+
+        Assert.Equal(1, handler.JoinPosts);
+        Assert.True(vm.IsMemberOfGroupInfo);
+        Assert.Equal("You are a member", vm.GroupInfoMemberText);
+        Assert.Equal("Joined", vm.GroupInfoMembershipLabel);
+        Assert.Equal(string.Empty, vm.GroupJoinHint);
+        Assert.False(vm.CanUseGroupJoinButton);
+    }
+
+    [Fact]
+    public async Task RequestOnlyGroupSendsTheRequestFromTheAppAndShowsPending()
+    {
+        using var handler = new JoinHandler("requested");
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            GroupInfo = new Group { Id = "grp_req", JoinState = "request", Name = "KushCOOKIES" }
+        };
+
+        await JoinAsync(vm);
+
+        Assert.Equal(1, handler.JoinPosts);
+        Assert.False(vm.IsMemberOfGroupInfo);
+        Assert.True(vm.IsJoinRequestPending);
+        Assert.Equal("Your join request is pending", vm.GroupInfoMemberText);
+        Assert.Equal("Request pending", vm.GroupInfoMembershipLabel);
+        Assert.Equal("Request pending", vm.GroupJoinButtonText);
+        Assert.False(vm.CanUseGroupJoinButton);
+        Assert.Contains("pending", vm.GroupJoinHint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task JoinAsync(GroupViewModel vm)
+    {
         vm.JoinGroupInfoCommand.Execute(null);
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (vm.IsGroupInfoBusy && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+    }
 
-        // VRChat's API only joins open groups, so the request is sent on the website.
-        Assert.Equal("https://vrchat.com/home/group/grp_req", opened);
+    private sealed class JoinHandler : HttpMessageHandler
+    {
+        private readonly string _status;
+
+        public JoinHandler(string status) => _status = status;
+
+        public int JoinPosts { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/join", StringComparison.Ordinal))
+            {
+                JoinPosts++;
+                return Json($$"""
+                    {
+                      "id": "gmem_1",
+                      "groupId": "grp_1",
+                      "userId": "usr_1",
+                      "membershipStatus": "{{_status}}"
+                    }
+                    """);
+            }
+
+            return Json("[]");
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
     }
 }
