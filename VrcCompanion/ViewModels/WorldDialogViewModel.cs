@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -125,6 +126,20 @@ public sealed class WorldInstanceItem : ViewModelBase
     public bool CanJoin => !string.IsNullOrWhiteSpace(InstanceId);
 
     /// <summary>Applies what the group lookup learned; null means it could not be read.</summary>
+    /// <summary>Keeps an open row honest when the group popup joins or leaves.</summary>
+    public void SetGroupMembership(bool isMember)
+    {
+        if (_isGroupMember == isMember)
+        {
+            return;
+        }
+
+        _isGroupMember = isMember;
+        OnPropertyChanged(nameof(IsGroupMember));
+        OnPropertyChanged(nameof(GroupStateText));
+        OnPropertyChanged(nameof(GroupChipText));
+    }
+
     public void ApplyGroup(Group? group)
     {
         _groupResolved = true;
@@ -173,6 +188,9 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private string? _errorMessage;
     private bool _isLoading;
     private bool _isCreating;
+    // Group details do not change while a world is open, so a refresh reuses them
+    // instead of re-querying the same group for every rebuilt row.
+    private readonly ConcurrentDictionary<string, Group> _groupCache = new(StringComparer.OrdinalIgnoreCase);
 
     public WorldDialogViewModel(WorldItem summary, VrcApiClient api, ImageLoader images)
     {
@@ -560,6 +578,28 @@ public sealed class WorldDialogViewModel : ViewModelBase
 
     public void ReportError(string message) => ErrorMessage = message;
 
+    /// <summary>The group lookups the last instance rebuild started, so they can be awaited.</summary>
+    internal Task? GroupHydration { get; private set; }
+
+    /// <summary>
+    /// Joining or leaving from the group popup invalidates the cached group and updates
+    /// the rows already on screen, so a refresh does not resurrect the old membership.
+    /// </summary>
+    public void ApplyGroupMembership(string groupId, bool isMember)
+    {
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return;
+        }
+
+        _groupCache.TryRemove(groupId, out _);
+        foreach (var item in Instances.Where(item =>
+                     string.Equals(item.GroupId, groupId, StringComparison.OrdinalIgnoreCase)))
+        {
+            item.SetGroupMembership(isMember);
+        }
+    }
+
     private async Task LoadUpdatedInstancesAsync(CancellationToken cancellationToken)
     {
         try
@@ -604,7 +644,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
         }
 
         OnPropertyChanged(nameof(HasActiveInstances));
-        _ = HydrateGroupsAsync(added, cancellationToken);
+        GroupHydration = HydrateGroupsAsync(added, cancellationToken);
     }
 
     /// <summary>
@@ -615,11 +655,27 @@ public sealed class WorldDialogViewModel : ViewModelBase
         IReadOnlyCollection<WorldInstanceItem> items,
         CancellationToken cancellationToken)
     {
-        var groups = items
-            .Where(item => item.HasGroup)
-            .GroupBy(item => item.GroupId!, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (groups.Count == 0)
+        var pending = new List<IGrouping<string, WorldInstanceItem>>();
+        foreach (var grouping in items
+                     .Where(item => item.HasGroup)
+                     .GroupBy(item => item.GroupId!, StringComparer.OrdinalIgnoreCase))
+        {
+            // A refresh rebuilds every row, so a group this dialog already read is
+            // applied straight from the cache instead of being fetched again.
+            if (_groupCache.TryGetValue(grouping.Key, out var cached))
+            {
+                foreach (var item in grouping)
+                {
+                    item.ApplyGroup(cached);
+                }
+
+                continue;
+            }
+
+            pending.Add(grouping);
+        }
+
+        if (pending.Count == 0)
         {
             return;
         }
@@ -627,7 +683,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
         try
         {
             using var gate = new SemaphoreSlim(4);
-            await Task.WhenAll(groups.Select(async grouping =>
+            await Task.WhenAll(pending.Select(async grouping =>
             {
                 await gate.WaitAsync(cancellationToken);
                 try
@@ -647,8 +703,14 @@ public sealed class WorldDialogViewModel : ViewModelBase
                         return;
                     }
 
-                    // A failed lookup still resolves the rows, so their chip stops saying
+                    // Only a real answer is cached; a failed lookup is retried on the
+                    // next refresh. Either way the rows resolve, so the chip stops saying
                     // "loading" and falls back to opening the group.
+                    if (info is not null)
+                    {
+                        _groupCache[grouping.Key] = info;
+                    }
+
                     foreach (var item in grouping)
                     {
                         item.ApplyGroup(info);
