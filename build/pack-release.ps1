@@ -153,7 +153,9 @@ $packExit = Invoke-Native "vpk" $packArgs
 if ($packExit -ne 0) { throw "vpk pack failed with exit code $packExit." }
 
 $assets = Get-ChildItem $releasesDir -File | Where-Object {
-    $_.Extension -in @(".exe", ".nupkg", ".json", ".zip") -or $_.Name -eq "RELEASES"
+    ($_.Extension -in @(".exe", ".nupkg", ".json", ".zip") -or $_.Name -eq "RELEASES") -and
+    # Older nupkgs are downloaded for deltas only; uploading them would bloat every release.
+    ($_.Extension -ne ".nupkg" -or $_.Name -like "*$Version*")
 }
 
 if (-not $assets) { throw "vpk produced no release assets in $releasesDir." }
