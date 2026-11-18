@@ -219,17 +219,19 @@ function Test-ReleaseFeedParity {
                 exit 3
             }
 
-            $assets = @($assetOutput.Output | ForEach-Object { "$_".Trim() } | Where-Object { $_ -like "*.nupkg" } | Sort-Object)
+            $names = @($assetOutput.Output | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+            $assets = @($names | Where-Object { $_ -like "*.nupkg" } | Sort-Object)
+
+            # Whether the feed exists is decided by the asset list, not by how a failed
+            # download is worded: a listed feed that will not download is a transport problem.
+            if ($names -notcontains "releases.win.json") {
+                Write-Host "  $tag has no feed asset." -ForegroundColor Yellow
+                $failures.Add("$tag : releases.win.json is missing")
+                continue
+            }
 
             $download = Invoke-NativeCapture "gh" @("release", "download", $tag, "--repo", $Repo, "--pattern", "releases.win.json", "--dir", $scratch, "--clobber")
             if ($download.ExitCode -ne 0) {
-                # A release that has no feed is drift; failing to fetch one is not.
-                if ("$($download.Output)" -match '404|Not Found') {
-                    Write-Host "  $tag has no feed." -ForegroundColor Yellow
-                    $failures.Add("$tag : releases.win.json is missing")
-                    continue
-                }
-
                 Write-Host "Could not download the feed of $tag (gh exit $($download.ExitCode)); this is not release drift." -ForegroundColor Yellow
                 exit 3
             }

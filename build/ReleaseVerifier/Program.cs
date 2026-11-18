@@ -14,8 +14,18 @@ using Velopack.Sources;
 var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 for (var i = 0; i < args.Length; i++)
 {
-    if (!args[i].StartsWith("--", StringComparison.Ordinal) || i + 1 >= args.Length) { continue; }
-    options[args[i][2..]] = args[++i];
+    if (!args[i].StartsWith("--", StringComparison.Ordinal)) { continue; }
+
+    // A flag may stand alone (--classify-missing-update-exe) or take the next argument.
+    var name = args[i][2..];
+    if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+    {
+        options[name] = args[++i];
+    }
+    else
+    {
+        options[name] = string.Empty;
+    }
 }
 
 // Diagnostic used by build/test-exit-codes.ps1: reports which exit code an HTTP status maps
@@ -25,6 +35,15 @@ if (options.TryGetValue("classify-status", out var rawStatus) && int.TryParse(ra
     var mapped = ExitCodeFor(new HttpRequestException("simulated", null, (HttpStatusCode)simulatedStatus));
     Console.WriteLine($"status {simulatedStatus} -> exit {mapped}");
     return mapped;
+}
+
+// Diagnostic used by build/test-exit-codes.ps1: proves a missing patcher maps to the
+// infrastructure code, using a scratch search root so no real files on the machine move.
+if (options.ContainsKey("classify-missing-update-exe"))
+{
+    var scratch = Path.Combine(Path.GetTempPath(), "kawaiivrc-no-update-exe");
+    Directory.CreateDirectory(scratch);
+    return TryResolvePatcher(options, scratch, out _) ? 0 : 3;
 }
 
 string Required(string name)
@@ -57,17 +76,7 @@ var basePackagePath = Path.Combine(packages, basePackageName);
 
 // Resolve the patcher before downloading: without it nothing can be verified, and there is
 // no point fetching the whole base package first.
-string updateExeSource;
-try
-{
-    updateExeSource = ResolveUpdateExe(options);
-}
-catch (FileNotFoundException ex)
-{
-    // The patcher is part of the tooling, not the release, so nothing was verified.
-    Console.WriteLine($"INFRASTRUCTURE: {ex.Message}");
-    return 3;
-}
+if (!TryResolvePatcher(options, searchRoot: null, out var updateExeSource)) { return 3; }
 
 try
 {
@@ -188,9 +197,18 @@ static int ExitCodeFor(Exception ex)
 
 // Packages carry only app files; Update.exe ships with the vpk tool (vendor/update.exe)
 // and is also installed next to an installed app. Either copy can drive the patcher.
-static string ResolveUpdateExe(Dictionary<string, string> options)
+static string ResolveUpdateExe(Dictionary<string, string> options, string? searchRoot = null)
 {
     if (options.TryGetValue("update-exe", out var given) && File.Exists(given)) { return given; }
+
+    // A search root replaces the real lookup, so the missing-tool path can be exercised
+    // without moving files that belong to the machine.
+    if (searchRoot is not null)
+    {
+        var candidate = Path.Combine(searchRoot, "Update.exe");
+        if (File.Exists(candidate)) { return candidate; }
+        throw NoPatcher();
+    }
 
     var store = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "tools", ".store", "vpk");
@@ -207,8 +225,27 @@ static string ResolveUpdateExe(Dictionary<string, string> options)
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KawaiiVrc", "Update.exe");
     if (File.Exists(installed)) { return installed; }
 
-    throw new FileNotFoundException(
-        "No Update.exe found. Install the vpk tool (dotnet tool install -g vpk) or pass --update-exe <path>.");
+    throw NoPatcher();
+}
+
+static FileNotFoundException NoPatcher() => new(
+    "No Update.exe found. Install the vpk tool (dotnet tool install -g vpk) or pass --update-exe <path>.");
+
+// A missing patcher is a tooling problem, so it reports the infrastructure exit code and
+// the callers never mistake it for a failed verification.
+static bool TryResolvePatcher(Dictionary<string, string> options, string? searchRoot, out string source)
+{
+    try
+    {
+        source = ResolveUpdateExe(options, searchRoot);
+        return true;
+    }
+    catch (FileNotFoundException ex)
+    {
+        Console.WriteLine($"INFRASTRUCTURE: {ex.Message}");
+        source = string.Empty;
+        return false;
+    }
 }
 
 static string? ReadPackagedVersion(string package)
