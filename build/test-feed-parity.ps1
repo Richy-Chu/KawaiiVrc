@@ -5,7 +5,8 @@
 # never a silent skip or a full-only release. A tag that already exists is refused for reuse,
 # and -SkipPublish packs the build already in artifacts/publish, so a sentinel left there
 # proves the run did not clear it. A stub git makes the readiness checks answer for
-# themselves: only git's own "no upstream configured" may skip the push check.
+# themselves: only git's own "no upstream configured" may skip the push check, and a dirty
+# or unreadable tree must stop the release.
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -158,10 +159,23 @@ function Write-GitStub([string]$Directory, [bool]$Windows) {
     if ($Windows) {
         Write-Stub -Path (Join-Path $Directory "git.cmd") -NewLine "`r`n" -Lines @(
             '@echo off',
-            'if /I "%1"=="status" exit /b 0',
+            'if /I "%1"=="status" goto status_check',
             'if /I "%1"=="rev-parse" goto rev_parse',
             'if /I "%1"=="rev-list" goto rev_list',
             'exit /b 0',
+            '',
+            ':status_check',
+            'if "%GIT_MODE%"=="dirty" goto status_dirty',
+            'if "%GIT_MODE%"=="status-error" goto status_error',
+            'exit /b 0',
+            '',
+            ':status_dirty',
+            'echo  M VrcCompanion/Program.cs',
+            'exit /b 0',
+            '',
+            ':status_error',
+            'echo fatal: not a git repository 1>&2',
+            'exit /b 128',
             '',
             ':rev_parse',
             'if "%GIT_MODE%"=="upstream-error" goto upstream_error',
@@ -192,7 +206,10 @@ function Write-GitStub([string]$Directory, [bool]$Windows) {
     Write-Stub -Path (Join-Path $Directory "git") -NewLine "`n" -Lines @(
         '#!/bin/sh',
         'case "$1" in',
-        '  status) exit 0 ;;',
+        '  status)',
+        '    if [ "$GIT_MODE" = "dirty" ]; then echo " M VrcCompanion/Program.cs"; exit 0; fi',
+        '    if [ "$GIT_MODE" = "status-error" ]; then echo "fatal: not a git repository" >&2; exit 128; fi',
+        '    exit 0 ;;',
         '  rev-parse)',
         '    if [ "$GIT_MODE" = "no-upstream" ]; then echo "fatal: no upstream configured for branch master" >&2; exit 128; fi',
         '    if [ "$GIT_MODE" = "upstream-error" ]; then echo "fatal: unable to read repository" >&2; exit 128; fi',
@@ -225,7 +242,9 @@ $checks = @(
     @{ Name = "upstream check errors"; Mode = "view-absent"; GitMode = "upstream-error"; Expected = 1; Marker = "Could not check the upstream branch"; Arguments = $readyArguments },
     @{ Name = "unpushed count errors"; Mode = "view-absent"; GitMode = "count-error"; Expected = 1; Marker = "Could not count unpushed commits"; Arguments = $readyArguments },
     @{ Name = "no upstream still publishes"; Mode = "view-absent"; GitMode = "no-upstream"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments },
-    @{ Name = "clean tree publishes"; Mode = "view-absent"; GitMode = "clean"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments }
+    @{ Name = "clean tree publishes"; Mode = "view-absent"; GitMode = "clean"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments },
+    @{ Name = "dirty tree is refused"; Mode = "view-absent"; GitMode = "dirty"; Expected = 1; Marker = "Working tree has uncommitted changes"; Arguments = $readyArguments },
+    @{ Name = "status check errors"; Mode = "view-absent"; GitMode = "status-error"; Expected = 1; Marker = "git status failed"; Arguments = $readyArguments }
 )
 
 $savedPath = $env:PATH
