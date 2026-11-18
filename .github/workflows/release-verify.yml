@@ -1,0 +1,71 @@
+name: Release verification
+
+# Checks the published releases without building or publishing anything: every release's
+# nupkgs must match its own feed, and an install two versions back must still reach the
+# latest release through delta patches. Catches feed or chain drift on GitHub, e.g. an
+# asset removed by hand, before a user finds it.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to verify (defaults to the latest published release)
+        required: false
+        type: string
+      from:
+        description: Release to update from (defaults to two releases back)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # Velopack's patcher is Update.exe and the verifier drives it, so this is Windows-only.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # The patched nupkg is rebuilt by the Update.exe shipped inside the vpk tool, which
+      # the verifier looks up under ~/.dotnet/tools/.store. Keep the version in step with
+      # the Velopack package the app and build/ReleaseVerifier reference.
+      - name: Install vpk
+        run: dotnet tool install --global vpk --version 1.2.161
+
+      - name: Verify feeds and delta chain
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # The project version can be ahead of the published releases while a release is
+          # being prepared, so default to what is actually on GitHub.
+          $version = "${{ inputs.version }}"
+          if (-not $version) {
+            $version = gh release list --repo "${{ github.repository }}" --limit 1 --json tagName --jq ".[].tagName"
+            $version = "$version".Trim() -replace "^v", ""
+          }
+          if (-not $version) { throw "No release to verify on ${{ github.repository }}." }
+          Write-Host "Verifying release $version."
+
+          $arguments = @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "build/pack-release.ps1",
+            "-VerifyOnly", "-Version", $version
+          )
+          if ("${{ inputs.from }}") { $arguments += @("-VerifyFrom", "${{ inputs.from }}") }
+
+          pwsh @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
