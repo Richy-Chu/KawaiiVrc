@@ -2,7 +2,9 @@
 # driving the real pack-release.ps1 against a stub gh on PATH: a release without its feed is
 # drift, while a feed that will not download, a chain listing that fails, a delta-base listing
 # or download that fails, and a tag check that errors are infrastructure or a refused build,
-# never a silent skip or a full-only release.
+# never a silent skip or a full-only release. A tag that already exists is refused for reuse,
+# and -SkipPublish packs the build already in artifacts/publish, so a sentinel left there
+# proves the run did not clear it.
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -22,6 +24,12 @@ New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
 
 $releasesDir = Join-Path (Join-Path $repoRoot "artifacts") "releases"
 New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null
+
+# The publish cases run with -SkipPublish against whatever build .NET last put here.
+$publishDir = Join-Path (Join-Path $repoRoot "artifacts") "publish"
+$sentinel = Join-Path $publishDir "kawaiivrc-skip-publish-sentinel.txt"
+New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+Set-Content -Path $sentinel -Value "A -SkipPublish run must not delete this file." -Encoding Ascii
 
 function Write-Stub([string]$Path, [string[]]$Lines, [string]$NewLine) {
     ($Lines -join $NewLine) | Set-Content -Path $Path -Encoding Ascii
@@ -67,8 +75,11 @@ function Write-GhStub([string]$Directory, [bool]$Windows) {
             'exit /b 0',
             '',
             ':release_download',
-            'if "%GH_MODE%"=="view-error" goto done',
-            'if "%GH_MODE%"=="view-absent" goto done',
+            'if "%GH_MODE%"=="feed-download-fails" goto download_fails',
+            'if "%GH_MODE%"=="base-download-fails" goto download_fails',
+            'exit /b 0',
+            '',
+            ':download_fails',
             'echo download failed: connection reset 1>&2',
             'exit /b 1',
             '',
@@ -109,8 +120,9 @@ function Write-GhStub([string]$Directory, [bool]$Windows) {
         '    if [ "$GH_MODE" != "missing-feed" ]; then echo releases.win.json; fi',
         '    exit 0 ;;',
         '  "release download")',
-        '    if [ "$GH_MODE" = "view-error" ] || [ "$GH_MODE" = "view-absent" ]; then exit 0; fi',
-        '    echo "download failed: connection reset" >&2; exit 1 ;;',
+        '    if [ "$GH_MODE" = "feed-download-fails" ] || [ "$GH_MODE" = "base-download-fails" ]; then',
+        '      echo "download failed: connection reset" >&2; exit 1; fi',
+        '    exit 0 ;;',
         'esac',
         'exit 0'
     )
@@ -152,7 +164,8 @@ $checks = @(
     @{ Name = "delta-base listing fails"; Mode = "fetch-list-fails"; Expected = 1; Marker = "refusing to build a release without its delta base"; Arguments = $fetchArguments },
     @{ Name = "delta-base download fails"; Mode = "base-download-fails"; Expected = 1; Marker = "refusing to build a delta from an incomplete base"; Arguments = $fetchArguments },
     @{ Name = "tag check errors"; Mode = "view-error"; Expected = 1; Marker = "Could not check whether v$projectVersion exists"; Arguments = $publishArguments },
-    @{ Name = "absent tag publishes"; Mode = "view-absent"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $publishArguments }
+    @{ Name = "absent tag publishes"; Mode = "view-absent"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $publishArguments },
+    @{ Name = "existing tag is refused"; Mode = "view-exists"; Expected = 1; Marker = "already exists on owner/repo. Bump the version instead of reusing a tag."; Arguments = $publishArguments }
 )
 
 $savedPath = $env:PATH
@@ -215,6 +228,11 @@ try {
             $failures++
         }
     }
+
+    if (-not (Test-Path $sentinel)) {
+        Write-Host "publish output was destroyed: artifacts/publish no longer holds the sentinel."
+        $failures++
+    }
 }
 finally {
     $env:PATH = $savedPath
@@ -227,11 +245,16 @@ finally {
     # The publish cases pack into artifacts/releases; leave nothing of the stub's behind.
     Remove-Item (Join-Path $releasesDir "releases.win.json") -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $releasesDir "KawaiiVrc-$projectVersion-full.nupkg") -ErrorAction SilentlyContinue
+
+    # Only the sentinel is this run's; the folder holds a real build's output.
+    Remove-Item $sentinel -ErrorAction SilentlyContinue
 }
 
+$checkCount = $checks.Count + 1
+
 if ($failures -gt 0) {
-    Write-Host "$failures of $($checks.Count) feed-parity check(s) failed."
+    Write-Host "$failures of $checkCount feed-parity check(s) failed."
     exit 1
 }
 
-Write-Host "$($checks.Count) feed-parity check(s) passed."
+Write-Host "$checkCount feed-parity check(s) passed."

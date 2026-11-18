@@ -384,11 +384,14 @@ if (-not (Get-Command vpk -ErrorAction SilentlyContinue)) {
     }
 }
 
-if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
-New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
 New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null
 
 if (-not $SkipPublish) {
+    # artifacts/publish is dotnet's output, so only a build may replace it. -SkipPublish packs
+    # the build already there, so it must not clear the folder.
+    if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+
     $selfContained = if ($FrameworkDependent) { "false" } else { "true" }
     Write-Host "Publishing ($Runtime, self-contained=$selfContained)..." -ForegroundColor Cyan
     $publishArgs = @(
