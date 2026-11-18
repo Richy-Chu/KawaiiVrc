@@ -44,6 +44,6 @@ jobs:
 
       - name: Lint .github/workflows
         run: |
-          actionlint -version
+          ./actionlint -version
           shellcheck --version | head -3
-          actionlint -color
+          ./actionlint -color
