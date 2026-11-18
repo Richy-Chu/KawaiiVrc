@@ -46,8 +46,9 @@ case "$1 $2" in
 esac
 exit 0
 '@ | Set-Content -Path $path -Encoding Ascii
-    & chmod '+x' $path
-    if ($LASTEXITCODE -ne 0) { throw "Could not make the gh stub executable." }
+    # Set the bit through .NET rather than trusting an external chmod.
+    $mode = [System.IO.UnixFileMode]'UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute'
+    [System.IO.File]::SetUnixFileMode($path, $mode)
 }
 
 $savedPath = $env:PATH
@@ -56,6 +57,11 @@ $failures = 0
 try {
     Write-GhStub -Directory $shimDir -Windows $onWindows
     $env:PATH = "$shimDir$([System.IO.Path]::PathSeparator)$savedPath"
+
+    # If the stub is not what runs, the checks would silently exercise the real GitHub.
+    $stubPath = Join-Path $shimDir $(if ($onWindows) { "gh.cmd" } else { "gh" })
+    $resolved = (Get-Command gh -ErrorAction SilentlyContinue).Source
+    if ($resolved -ne $stubPath) { throw "gh resolves to '$resolved' instead of the stub at '$stubPath'." }
 
     $shell = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
     $arguments = if ($onWindows) {
@@ -93,7 +99,8 @@ try {
         }
 
         if ("$($output -join "`n")" -notlike "*$($check.Marker)*") {
-            Write-Host ("{0}: output did not contain '{1}'" -f $check.Name, $check.Marker)
+            Write-Host ("{0}: output did not contain '{1}'. Output was:" -f $check.Name, $check.Marker)
+            $output | ForEach-Object { Write-Host "    $_" }
             $failures++
         }
     }
