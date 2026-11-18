@@ -57,6 +57,9 @@ internal sealed class GroupModerationTestHandler : HttpMessageHandler
 
     public List<string> Kicked { get; } = new();
 
+    /// <summary>PUT bodies for a member, prefixed with the user id.</summary>
+    public List<string> MemberUpdates { get; } = new();
+
     public List<string> RolesAdded { get; } = new();
 
     public List<string> RolesRemoved { get; } = new();
@@ -222,6 +225,9 @@ internal sealed class GroupModerationTestHandler : HttpMessageHandler
                     groupId = GroupId,
                     userId,
                     membershipStatus = "member",
+                    joinedAt = new DateTimeOffset(2025, 3, 12, 10, 0, 0, TimeSpan.Zero),
+                    visibility = "visible",
+                    managerNotes = index == 0 ? "Regular" : string.Empty,
                     roleIds = index == 0 ? new[] { RoleVipId } : Array.Empty<string>(),
                     user = new
                     {
@@ -237,7 +243,16 @@ internal sealed class GroupModerationTestHandler : HttpMessageHandler
 
         if (path.Contains("/members/", StringComparison.Ordinal))
         {
-            Kicked.Add(path[(path.LastIndexOf('/') + 1)..]);
+            var userId = path[(path.LastIndexOf('/') + 1)..];
+            if (method == HttpMethod.Delete)
+            {
+                Kicked.Add(userId);
+            }
+            else
+            {
+                MemberUpdates.Add($"{userId}|{body}");
+            }
+
             return Empty();
         }
 

@@ -165,6 +165,14 @@ public sealed class GroupMember
     [JsonPropertyName("requestCreatedAt")]
     public DateTimeOffset RequestCreatedAt { get; set; }
 
+    /// <summary>Staff-only notes on the member, editable from the moderation card.</summary>
+    [JsonPropertyName("managerNotes")]
+    public string ManagerNotes { get; set; } = string.Empty;
+
+    /// <summary>public, friends or hidden — who can see this member in the group.</summary>
+    [JsonPropertyName("visibility")]
+    public string Visibility { get; set; } = string.Empty;
+
     public string EffectiveUserId => !string.IsNullOrWhiteSpace(UserId)
         ? UserId
         : User?.Id ?? string.Empty;

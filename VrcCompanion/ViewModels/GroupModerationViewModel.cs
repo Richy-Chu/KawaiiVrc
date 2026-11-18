@@ -55,6 +55,8 @@ public sealed class GroupModerationViewModel : ViewModelBase
     private bool _isRoleEditorOpen;
     private bool _permissionsLoaded;
     private ObservableCollection<RolePermissionOption> _rolePermissions = new();
+    private bool _isMemberCardOpen;
+    private string _cardManagerNotes = string.Empty;
     private bool _bansLoaded;
     private bool _requestsLoaded;
     private bool _invitesLoaded;
@@ -76,6 +78,10 @@ public sealed class GroupModerationViewModel : ViewModelBase
             SaveRoleAsync,
             () => CanManageRoles && !IsBusy && RoleEditorName.Trim().Length > 0);
         CloseRoleEditorCommand = new RelayCommand(CloseRoleEditor);
+        CloseMemberCardCommand = new RelayCommand(CloseMemberCard, () => IsMemberCardOpen);
+        SaveMemberSettingsCommand = new AsyncRelayCommand(
+            SaveMemberSettingsAsync,
+            () => CanManageMemberData && !IsBusy && IsMemberCardOpen);
     }
 
     /// <summary>Raised with (userId, displayName, avatarUrl) so a row can open a profile.</summary>
@@ -172,6 +178,7 @@ public sealed class GroupModerationViewModel : ViewModelBase
                 OnPropertyChanged(nameof(HasSelectedMember));
                 OnPropertyChanged(nameof(SelectedMemberName));
                 OnPropertyChanged(nameof(SelectedMemberText));
+                OnPropertyChanged(nameof(CardVisibilityText));
                 RefreshRoleAssignment();
             }
         }
@@ -564,6 +571,12 @@ public sealed class GroupModerationViewModel : ViewModelBase
                 RefreshRoleAssignment();
             }
         }
+
+        // Rows show their role names, so they have to be told once the roles exist.
+        foreach (var row in Members)
+        {
+            row.NotifyRoleText();
+        }
     }
 
     private async Task LoadBansAsync()
@@ -707,7 +720,95 @@ public sealed class GroupModerationViewModel : ViewModelBase
 
     // ------------------------------------------------------------ actions
 
-    public void SelectMember(ModerationMemberRow row) => SelectedMember = row;
+    /// <summary>
+    /// Opens the member card — the per-member moderation popup, the way VRCX opens its member
+    /// moderation dialog instead of pouring the tools into the roster list.
+    /// </summary>
+    public void OpenMemberCard(ModerationMemberRow row)
+    {
+        SelectedMember = row;
+        CardManagerNotes = row.ManagerNotes;
+        IsMemberCardOpen = true;
+        if (Roles.Count == 0)
+        {
+            _ = LoadRolesAsync();
+        }
+
+        if (!_permissionsLoaded)
+        {
+            _ = LoadPermissionOptionsAsync();
+        }
+    }
+
+    public void CloseMemberCard()
+    {
+        IsMemberCardOpen = false;
+        SelectedMember = null;
+    }
+
+    // ------------------------------------------------------- member card
+
+    public bool IsMemberCardOpen
+    {
+        get => _isMemberCardOpen;
+        private set
+        {
+            if (SetProperty(ref _isMemberCardOpen, value))
+            {
+                RaiseCommandStates();
+            }
+        }
+    }
+
+    public string CardManagerNotes
+    {
+        get => _cardManagerNotes;
+        set => SetProperty(ref _cardManagerNotes, value);
+    }
+
+    public string CardVisibilityText => SelectedMember switch
+    {
+        null => string.Empty,
+        { Visibility: { Length: > 0 } visibility } => $"Profile visibility: {visibility}",
+        _ => string.Empty
+    };
+
+    public bool CanManageMemberData => HasPermission("group-members-manage");
+
+    public RelayCommand CloseMemberCardCommand { get; }
+
+    public AsyncRelayCommand SaveMemberSettingsCommand { get; }
+
+    internal async Task SaveMemberSettingsAsync()
+    {
+        if (_group is not { } group || SelectedMember is not { } member)
+        {
+            return;
+        }
+
+        if (!CanManageMemberData)
+        {
+            StatusMessage = "This account cannot manage member data on this group.";
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var notes = CardManagerNotes.Trim();
+            await _api.UpdateGroupMemberAsync(group.EffectiveId, member.UserId, notes);
+            member.SetSettings(notes);
+            StatusMessage = $"Saved notes for {member.DisplayName}.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = Describe(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
 
     public void OpenProfileOf(ModerationMemberRow row)
     {
@@ -799,6 +900,7 @@ public sealed class GroupModerationViewModel : ViewModelBase
             Members.Remove(row);
             SelectedMember = null;
             StatusMessage = $"{row.DisplayName} was removed from the group.";
+            CloseMemberCard();
             AfterMemberRemoved();
             await BackToLastPageIfEmptyAsync();
             RaiseTabFlags();
@@ -828,6 +930,7 @@ public sealed class GroupModerationViewModel : ViewModelBase
             SelectedMember = null;
             _bansLoaded = false;
             StatusMessage = $"{row.DisplayName} was banned from the group.";
+            CloseMemberCard();
             AfterMemberRemoved();
             await BackToLastPageIfEmptyAsync();
             RaiseTabFlags();
@@ -1399,6 +1502,8 @@ public sealed class GroupModerationViewModel : ViewModelBase
         ConfirmCommand.RaiseCanExecuteChanged();
         StartNewRoleCommand.RaiseCanExecuteChanged();
         SaveRoleCommand.RaiseCanExecuteChanged();
+        CloseMemberCardCommand.RaiseCanExecuteChanged();
+        SaveMemberSettingsCommand.RaiseCanExecuteChanged();
     }
 }
 
@@ -1422,7 +1527,12 @@ public sealed class ModerationMemberRow : ViewModelBase
         DisplayName = name.Length > 0 ? name : "Member without a visible name";
         AvatarUrl = member.EffectiveAvatarUrl;
         RoleIds = member.RoleIds?.ToList() ?? new List<string>();
-        SelectCommand = new RelayCommand(() => _owner.SelectMember(this));
+        ManagerNotes = member.ManagerNotes;
+        Visibility = member.Visibility;
+        JoinedText = member.JoinedAt == default
+            ? string.Empty
+            : "joined " + member.JoinedAt.ToLocalTime().ToString("d MMM yyyy", CultureInfo.InvariantCulture);
+        SelectCommand = new RelayCommand(() => _owner.OpenMemberCard(this));
         KickCommand = new RelayCommand(() => _owner.RequestKick(this), () => owner.CanKick);
         BanCommand = new RelayCommand(() => _owner.RequestBan(this), () => owner.CanBan);
         OpenProfileCommand = new RelayCommand(() => _owner.OpenProfileOf(this));
@@ -1435,6 +1545,53 @@ public sealed class ModerationMemberRow : ViewModelBase
     public string AvatarUrl { get; }
 
     public string IdText => UserId;
+
+    public string ManagerNotes { get; private set; }
+
+    public string Visibility { get; private set; }
+
+    /// <summary>"joined 12 Mar 2025", blank when VRChat does not report the join date.</summary>
+    public string JoinedText { get; }
+
+    public string NoteText => string.IsNullOrWhiteSpace(ManagerNotes) ? string.Empty : ManagerNotes;
+
+    public bool HasNote => !string.IsNullOrWhiteSpace(ManagerNotes);
+
+    /// <summary>The roles this member holds, resolved to names once the role list is loaded.</summary>
+    public string RoleText
+    {
+        get
+        {
+            var names = new List<string>();
+            foreach (var role in _owner.Roles)
+            {
+                if (string.Equals(role.Name, "Everyone", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (RoleIds.Contains(role.RoleId, StringComparer.Ordinal))
+                {
+                    names.Add(role.Name);
+                }
+            }
+
+            return string.Join(" · ", names);
+        }
+    }
+
+    internal void NotifyRoleText()
+    {
+        OnPropertyChanged(nameof(RoleText));
+    }
+
+    internal void SetSettings(string notes)
+    {
+        ManagerNotes = notes;
+        OnPropertyChanged(nameof(ManagerNotes));
+        OnPropertyChanged(nameof(NoteText));
+        OnPropertyChanged(nameof(HasNote));
+    }
 
     public List<string> RoleIds { get; }
 

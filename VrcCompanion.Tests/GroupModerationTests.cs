@@ -153,7 +153,7 @@ public class GroupModerationTests
     public async Task RoleChipsAssignAndRemoveForTheSelectedMember()
     {
         var (vm, handler) = await OpenAsync();
-        vm.SelectMember(vm.Members[0]);
+        vm.OpenMemberCard(vm.Members[0]);
 
         var admin = vm.Roles.Single(role => role.RoleId == GroupModerationTestHandler.RoleAdminId);
         var vip = vm.Roles.Single(role => role.RoleId == GroupModerationTestHandler.RoleVipId);
@@ -194,6 +194,44 @@ public class GroupModerationTests
 
         Assert.Equal("usr_invited", Assert.Single(handler.InvitesSent));
         Assert.Equal(string.Empty, vm.InviteUserId);
+    }
+
+    [Fact]
+    public async Task ModeratingAMemberOpensTheirCard()
+    {
+        var (vm, _) = await OpenAsync();
+        Assert.False(vm.IsMemberCardOpen);
+
+        vm.OpenMemberCard(vm.Members[0]);
+        await vm.LoadTabAsync(GroupModerationViewModel.RolesTab);
+
+        Assert.True(vm.IsMemberCardOpen);
+        Assert.Equal("Member Person", vm.SelectedMember!.DisplayName);
+        Assert.Equal("Member Person", vm.SelectedMemberName);
+        Assert.Contains("joined", vm.SelectedMember.JoinedText);
+        Assert.Contains("VIP", vm.SelectedMember.RoleText);
+
+        vm.CloseMemberCard();
+        Assert.False(vm.IsMemberCardOpen);
+        Assert.Null(vm.SelectedMember);
+    }
+
+    [Fact]
+    public async Task SavingANoteSendsOnlyTheNote()
+    {
+        var (vm, handler) = await OpenAsync();
+        vm.OpenMemberCard(vm.Members[0]);
+        Assert.Equal("Regular", vm.CardManagerNotes);
+
+        vm.CardManagerNotes = "Chill regular, helps with events.";
+        await vm.SaveMemberSettingsAsync();
+
+        var sent = Assert.Single(handler.MemberUpdates);
+        Assert.StartsWith($"{GroupModerationTestHandler.MemberUserId}|", sent);
+        Assert.Contains("Chill regular", sent);
+        Assert.DoesNotContain("visibility", sent);
+        Assert.True(vm.SelectedMember!.HasNote);
+        Assert.Contains("Saved notes", vm.StatusMessage);
     }
 
     [Fact]

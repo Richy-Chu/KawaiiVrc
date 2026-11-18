@@ -3360,6 +3360,21 @@ public sealed class VrcApiClient : IDisposable
         _myGroupsCache = null;
     }
 
+    /// <summary>Updates the staff-only moderator notes of one member.</summary>
+    public async Task UpdateGroupMemberAsync(
+        string groupId,
+        string userId,
+        string managerNotes,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(new { managerNotes });
+        await SendApiAsync(
+            HttpMethod.Put,
+            GroupModerationPath(groupId, $"members/{Uri.EscapeDataString(userId)}"),
+            content,
+            cancellationToken);
+    }
+
     public async Task AddGroupMemberRoleAsync(
         string groupId,
         string userId,

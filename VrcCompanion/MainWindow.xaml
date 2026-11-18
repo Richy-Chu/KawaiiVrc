@@ -3800,34 +3800,10 @@
 
                                     <!-- Members: pick one, then kick, ban or swap its roles -->
                                     <StackPanel Visibility="{Binding DataContext.GroupViewModel.Moderation.ShowMembers, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.SelectedMemberText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        <TextBlock Text="Moderate opens that member's card — kick, ban, roles and staff notes in one place."
                                                    Style="{StaticResource MutedText}"
                                                    TextWrapping="Wrap"
-                                                   Margin="0,0,0,6" />
-                                        <ItemsControl ItemsSource="{Binding DataContext.GroupViewModel.Moderation.Roles, RelativeSource={RelativeSource AncestorType=Window}}">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <WrapPanel />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Button Style="{StaticResource ChipButton}"
-                                                            Margin="0,0,6,6"
-                                                            Command="{Binding ToggleCommand}"
-                                                            ToolTip="{Binding Name}">
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Text="{Binding Name}" FontSize="10.5" VerticalAlignment="Center" />
-                                                            <TextBlock Text="{Binding ActionText}"
-                                                                       FontSize="9"
-                                                                       Foreground="{StaticResource PinkBrush}"
-                                                                       Margin="6,0,0,0"
-                                                                       VerticalAlignment="Center" />
-                                                        </StackPanel>
-                                                    </Button>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
+                                                   Margin="0,0,0,8" />
                                         <ItemsControl ItemsSource="{Binding DataContext.GroupViewModel.Moderation.Members, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,4,0,0">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
@@ -3850,6 +3826,10 @@
                                                                 <TextBlock Text="{Binding DisplayName}" FontSize="11.5" FontWeight="SemiBold"
                                                                            Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis" />
                                                                 <TextBlock Text="{Binding IdText}" FontSize="9" Foreground="{StaticResource MutedBrush}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{Binding RoleText}" FontSize="9" Foreground="{StaticResource PinkBrush}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{Binding NoteText}" FontSize="9" Foreground="{StaticResource MutedBrush}"
                                                                            TextTrimming="CharacterEllipsis" />
                                                             </StackPanel>
                                                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -4054,6 +4034,181 @@
                                 </StackPanel>
                                 </Grid>
                             </ScrollViewer>
+
+                            <!-- Member moderation popup: opened by Moderate, grouped the way VRCX does it -->
+                            <Grid Grid.RowSpan="2"
+                                  Panel.ZIndex="6"
+                                  Visibility="{Binding DataContext.GroupViewModel.Moderation.IsMemberCardOpen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                <Button Command="{Binding DataContext.GroupViewModel.Moderation.CloseMemberCardCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Focusable="False"
+                                        Cursor="Arrow"
+                                        AutomationProperties.Name="Close member card">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="#D9060810" />
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+
+                                <Border Width="470"
+                                        MaxHeight="600"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Background="{StaticResource PanelBrush}"
+                                        BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="14">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+
+                                        <Border Padding="16,12"
+                                                BorderBrush="{StaticResource SoftBorderBrush}"
+                                                BorderThickness="0,0,0,1">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="46" Height="46" CornerRadius="23" Background="#1B2130" Margin="0,0,12,0">
+                                                    <Grid>
+                                                        <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.SelectedMember.Initial, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   FontSize="15" FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource MutedBrush}"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                        <controls:AsyncImage SourceUrl="{Binding DataContext.GroupViewModel.Moderation.SelectedMember.AvatarUrl, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             DecodeWidth="92"
+                                                                             CornerRadius="23" />
+                                                    </Grid>
+                                                </Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.SelectedMember.DisplayName, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               FontSize="15" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource TextBrush}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.SelectedMember.IdText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               FontSize="9.5" Foreground="{StaticResource MutedBrush}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.SelectedMember.JoinedText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   FontSize="9.5" Foreground="{StaticResource MutedBrush}" Margin="0,0,8,0" />
+                                                        <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.CardVisibilityText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   FontSize="9.5" Foreground="{StaticResource MutedBrush}" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                                <Button Grid.Column="2"
+                                                        Content="Close"
+                                                        Style="{StaticResource GhostButton}"
+                                                        Padding="9,4"
+                                                        FontSize="10"
+                                                        VerticalAlignment="Top"
+                                                        Command="{Binding DataContext.GroupViewModel.Moderation.CloseMemberCardCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                            </Grid>
+                                        </Border>
+
+                                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,12,16,16">
+                                            <StackPanel>
+                                                <TextBlock Text="MODERATION" Style="{StaticResource FieldLabel}" />
+                                                <WrapPanel Margin="0,6,0,0">
+                                                    <Button Content="Open profile"
+                                                            Style="{StaticResource SecondaryButton}"
+                                                            Padding="10,5" FontSize="10.5" Margin="0,0,6,6"
+                                                            Command="{Binding DataContext.GroupViewModel.Moderation.SelectedMember.OpenProfileCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    <Button Content="Kick from group"
+                                                            Style="{StaticResource SecondaryButton}"
+                                                            Padding="10,5" FontSize="10.5" Margin="0,0,6,6"
+                                                            Command="{Binding DataContext.GroupViewModel.Moderation.SelectedMember.KickCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    <Button Content="Ban from group"
+                                                            Style="{StaticResource SecondaryButton}"
+                                                            Padding="10,5" FontSize="10.5" Margin="0,0,6,6"
+                                                            Command="{Binding DataContext.GroupViewModel.Moderation.SelectedMember.BanCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                </WrapPanel>
+
+                                                <TextBlock Text="ROLES" Style="{StaticResource FieldLabel}" Margin="0,12,0,2" />
+                                                <TextBlock Text="Click a role to give it to this member, click it again to take it away."
+                                                           Style="{StaticResource MutedText}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,0,0,6" />
+                                                <ItemsControl ItemsSource="{Binding DataContext.GroupViewModel.Moderation.Roles, RelativeSource={RelativeSource AncestorType=Window}}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Button Style="{StaticResource ChipButton}"
+                                                                    Margin="0,0,6,6"
+                                                                    Command="{Binding ToggleCommand}"
+                                                                    ToolTip="{Binding Name}">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock Text="{Binding Name}" FontSize="10.5" VerticalAlignment="Center" />
+                                                                    <TextBlock Text="{Binding ActionText}"
+                                                                               FontSize="9"
+                                                                               Foreground="{StaticResource PinkBrush}"
+                                                                               Margin="6,0,0,0"
+                                                                               VerticalAlignment="Center" />
+                                                                </StackPanel>
+                                                            </Button>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <TextBlock Text="STAFF NOTES" Style="{StaticResource FieldLabel}" Margin="0,12,0,2" />
+                                                <TextBlock Text="Only group managers see these notes."
+                                                           Style="{StaticResource MutedText}"
+                                                           Margin="0,0,0,6" />
+                                                <TextBox Text="{Binding DataContext.GroupViewModel.Moderation.CardManagerNotes, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                                                         Style="{StaticResource InputBox}"
+                                                         Padding="10,6"
+                                                         FontSize="11.5"
+                                                         MinHeight="64"
+                                                         AcceptsReturn="True"
+                                                         TextWrapping="Wrap"
+                                                         VerticalScrollBarVisibility="Auto"
+                                                         AutomationProperties.Name="Staff notes"
+                                                         AutomationProperties.AutomationId="GroupMemberNotesBox" />
+                                                <Button Content="Save notes"
+                                                        Style="{StaticResource PrimaryButton}"
+                                                        Padding="12,6"
+                                                        FontSize="10.5"
+                                                        Margin="0,8,0,0"
+                                                        HorizontalAlignment="Left"
+                                                        Command="{Binding DataContext.GroupViewModel.Moderation.SaveMemberSettingsCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                                                <Border Background="#2A1430"
+                                                        BorderBrush="{StaticResource PinkBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="9"
+                                                        Padding="10,7"
+                                                        Margin="0,12,0,0"
+                                                        Visibility="{Binding DataContext.GroupViewModel.Moderation.IsConfirmOpen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding DataContext.GroupViewModel.Moderation.ConfirmText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   FontSize="10.5"
+                                                                   Foreground="{StaticResource TextBrush}"
+                                                                   TextWrapping="Wrap"
+                                                                   VerticalAlignment="Center" />
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
+                                                            <Button Content="Confirm" Style="{StaticResource PrimaryButton}" Padding="11,5" FontSize="10.5"
+                                                                    Command="{Binding DataContext.GroupViewModel.Moderation.ConfirmCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                            <Button Content="Cancel" Style="{StaticResource GhostButton}" Padding="9,5" FontSize="10.5" Margin="4,0,0,0"
+                                                                    Command="{Binding DataContext.GroupViewModel.Moderation.CancelConfirmCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </StackPanel>
+                                        </ScrollViewer>
+                                    </Grid>
+                                </Border>
+                            </Grid>
                         </Grid>
                     </Border>
                 </Grid>
