@@ -818,6 +818,26 @@ public sealed class GroupModerationViewModel : ViewModelBase
         }
     }
 
+    internal void CopyEntryId(ModerationEntryRow row)
+    {
+        if (string.IsNullOrWhiteSpace(row.UserId))
+        {
+            StatusMessage = "This row has no user id to copy.";
+            return;
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(row.UserId);
+            StatusMessage = $"Copied {row.UserId}.";
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            StatusMessage = "Could not access the clipboard.";
+        }
+    }
+
     public void OpenProfileOf(ModerationEntryRow row)
     {
         if (!string.IsNullOrWhiteSpace(row.UserId))
@@ -1640,6 +1660,7 @@ public sealed class ModerationEntryRow : ViewModelBase
         Reason = entry.Reason;
         Detail = DescribeEntry(entry, kind);
         OpenProfileCommand = new RelayCommand(() => owner.OpenProfileOf(this));
+        CopyIdCommand = new RelayCommand(() => owner.CopyEntryId(this));
         UnbanCommand = new RelayCommand(() => owner.RequestUnban(this), () => owner.CanBan);
         AcceptCommand = new RelayCommand(() => owner.RequestJoinResponse(this, true, false), () => owner.CanReviewRequests);
         RejectCommand = new RelayCommand(() => owner.RequestJoinResponse(this, false, false), () => owner.CanReviewRequests);
@@ -1679,6 +1700,8 @@ public sealed class ModerationEntryRow : ViewModelBase
     }
 
     public RelayCommand OpenProfileCommand { get; }
+
+    public RelayCommand CopyIdCommand { get; }
 
     public RelayCommand UnbanCommand { get; }
 
