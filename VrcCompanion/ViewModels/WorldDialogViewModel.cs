@@ -37,17 +37,50 @@ public sealed class RegionOption
     public string Detail { get; }
 }
 
-public sealed class WorldInstanceItem
+public sealed class WorldInstanceItem : ViewModelBase
 {
+    private string? _groupName;
+    private bool _groupResolved;
+    private bool _isGroupMember;
+    private string? _groupJoinState;
+
     public WorldInstanceItem(VrcInstance instance, string worldId)
     {
         Instance = instance;
         WorldId = worldId;
+        GroupId = ParseGroupId(instance.InstanceId) ?? ParseGroupId(instance.Location);
     }
 
     public VrcInstance Instance { get; }
     public string WorldId { get; }
     public string InstanceId => Instance.InstanceId;
+
+    /// <summary>Group instances carry their group in the instance id,
+    /// e.g. `12345~group(grp_…)~groupAccessType(public)`; other instances have none.</summary>
+    public string? GroupId { get; }
+
+    public bool HasGroup => !string.IsNullOrWhiteSpace(GroupId);
+
+    public string? GroupName => _groupName;
+
+    public bool IsGroupMember => _isGroupMember;
+
+    /// <summary>Says what the viewer can do with the group, so the chip is not just "Group".</summary>
+    public string GroupStateText => !HasGroup
+        ? string.Empty
+        : !_groupResolved
+            ? "loading…"
+            : _isGroupMember
+                ? "Joined"
+                : _groupJoinState switch
+                {
+                    "open" => "Open to join",
+                    "request" => "Request to join",
+                    null or "" or "unknown" => "View group",
+                    _ => "Invite only"
+                };
+
+    public string GroupChipText => HasGroup ? $"Group · {GroupStateText}" : string.Empty;
 
     public string Location
     {
@@ -83,11 +116,46 @@ public sealed class WorldInstanceItem
 
     public string DetailText => $"{OccupancyText} · {RegionLabel}";
 
-    public string Title => string.IsNullOrWhiteSpace(Instance.DisplayName)
-        ? $"{AccessLabel} instance"
-        : Instance.DisplayName!;
+    public string Title => !string.IsNullOrWhiteSpace(_groupName)
+        ? _groupName!
+        : string.IsNullOrWhiteSpace(Instance.DisplayName)
+            ? $"{AccessLabel} instance"
+            : Instance.DisplayName!;
 
     public bool CanJoin => !string.IsNullOrWhiteSpace(InstanceId);
+
+    /// <summary>Applies what the group lookup learned; null means it could not be read.</summary>
+    public void ApplyGroup(Group? group)
+    {
+        _groupResolved = true;
+        _groupName = group?.Name;
+        _isGroupMember = group?.IsMember == true;
+        _groupJoinState = group?.JoinState;
+        OnPropertyChanged(nameof(GroupName));
+        OnPropertyChanged(nameof(Title));
+        OnPropertyChanged(nameof(IsGroupMember));
+        OnPropertyChanged(nameof(GroupStateText));
+        OnPropertyChanged(nameof(GroupChipText));
+    }
+
+    private static string? ParseGroupId(string? value)
+    {
+        const string marker = "~group(";
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var start = value.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+        {
+            return null;
+        }
+
+        start += marker.Length;
+        var end = value.IndexOf(')', start);
+        return end <= start ? null : value[start..end];
+    }
 }
 
 /// <summary>State for the world details overlay.</summary>
@@ -411,7 +479,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
             }
 
             World = world;
-            RebuildInstances();
+            RebuildInstances(cancellationToken);
             _ = LoadHeroImageAsync(world, cancellationToken);
         }
         catch (OperationCanceledException)
@@ -503,7 +571,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
             }
 
             World = world;
-            RebuildInstances();
+            RebuildInstances(cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -515,7 +583,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
         }
     }
 
-    private void RebuildInstances()
+    private void RebuildInstances(CancellationToken cancellationToken = default)
     {
         Instances.Clear();
         if (World is null)
@@ -524,15 +592,82 @@ public sealed class WorldDialogViewModel : ViewModelBase
             return;
         }
 
+        var added = new List<WorldInstanceItem>();
         foreach (var instance in World.SlimInstances
                      .Where(item => !string.IsNullOrWhiteSpace(item.InstanceId))
                      .OrderByDescending(item => item.Occupants)
                      .Take(12))
         {
-            Instances.Add(new WorldInstanceItem(instance, World.Id));
+            var item = new WorldInstanceItem(instance, World.Id);
+            Instances.Add(item);
+            added.Add(item);
         }
 
         OnPropertyChanged(nameof(HasActiveInstances));
+        _ = HydrateGroupsAsync(added, cancellationToken);
+    }
+
+    /// <summary>
+    /// Instances only name their group by id, so resolve each group once and let every
+    /// row using it show the real name and the viewer's membership.
+    /// </summary>
+    private async Task HydrateGroupsAsync(
+        IReadOnlyCollection<WorldInstanceItem> items,
+        CancellationToken cancellationToken)
+    {
+        var groups = items
+            .Where(item => item.HasGroup)
+            .GroupBy(item => item.GroupId!, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (groups.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            using var gate = new SemaphoreSlim(4);
+            await Task.WhenAll(groups.Select(async grouping =>
+            {
+                await gate.WaitAsync(cancellationToken);
+                try
+                {
+                    Group? info = null;
+                    try
+                    {
+                        info = await _api.GetGroupAsync(grouping.Key, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"world dialog group {grouping.Key}: {ex.Message}");
+                    }
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    // A failed lookup still resolves the rows, so their chip stops saying
+                    // "loading" and falls back to opening the group.
+                    foreach (var item in grouping)
+                    {
+                        item.ApplyGroup(info);
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }));
+        }
+        catch (OperationCanceledException)
+        {
+            // Dialog closed while the groups were loading.
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
     }
 
     private async Task LoadHeroImageAsync(VrcWorld world, CancellationToken cancellationToken)

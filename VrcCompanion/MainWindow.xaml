@@ -11463,7 +11463,7 @@
                                                                HorizontalAlignment="Right"
                                                                VerticalAlignment="Center" />
                                                 </Grid>
-                                                <TextBlock Text="Only public and friends-visible instances are shown. Private instances require an invite."
+                                                <TextBlock Text="Only public and friends-visible instances are shown. Group instances link to their group, where you can join it."
                                                            Style="{StaticResource MutedText}"
                                                            TextWrapping="Wrap"
                                                            Margin="0,3,0,8" />
@@ -11497,6 +11497,21 @@
                                                                                    FontSize="10"
                                                                                    Foreground="{StaticResource MutedBrush}"
                                                                                    Margin="12,3,0,0" />
+                                                                        <Button Style="{StaticResource GhostButton}"
+                                                                                HorizontalAlignment="Left"
+                                                                                Padding="0,2"
+                                                                                Margin="12,1,0,0"
+                                                                                Visibility="{Binding HasGroup, Converter={StaticResource BoolToVis}}"
+                                                                                Command="{Binding DataContext.OpenWorldInstanceGroupCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                                CommandParameter="{Binding}"
+                                                                                ToolTip="Open the group: members, join or leave, and its instances">
+                                                                            <StackPanel Orientation="Horizontal">
+                                                                                <TextBlock Text="&#xE716;" FontFamily="Segoe MDL2 Assets" FontSize="9.5"
+                                                                                           Foreground="{StaticResource VioletBrush}" VerticalAlignment="Center" />
+                                                                                <TextBlock Text="{Binding GroupChipText}" FontSize="10"
+                                                                                           Foreground="{StaticResource VioletBrush}" Margin="5,0,0,0" />
+                                                                            </StackPanel>
+                                                                        </Button>
                                                                     </StackPanel>
                                                                     <Button Grid.Column="1"
                                                                             Style="{StaticResource SecondaryButton}"

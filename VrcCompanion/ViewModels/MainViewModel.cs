@@ -632,6 +632,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         JoinWorldInstanceCommand = Track(new RelayCommand<WorldInstanceItem>(
             JoinWorldInstance,
             instance => instance is not null && instance.CanJoin));
+        OpenWorldInstanceGroupCommand = Track(new RelayCommand<WorldInstanceItem>(
+            OpenWorldInstanceGroup,
+            instance => instance is not null && instance.HasGroup));
         QuickJoinCommand = Track(new AsyncRelayCommand(
             QuickJoinAsync,
             () => IsLoggedIn && !IsBusy && !string.IsNullOrWhiteSpace(QuickJoinInput)));
@@ -2375,6 +2378,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand CopyCreatedInstanceLinkCommand { get; }
     public RelayCommand<WorldItem> OpenWorldInBrowserCommand { get; }
     public RelayCommand<WorldInstanceItem> JoinWorldInstanceCommand { get; }
+    public RelayCommand<WorldInstanceItem> OpenWorldInstanceGroupCommand { get; }
     public AsyncRelayCommand QuickJoinCommand { get; }
     public AsyncRelayCommand<NotificationItem> AcceptFriendRequestCommand { get; }
     public AsyncRelayCommand<NotificationItem> JoinInviteCommand { get; }
@@ -3959,6 +3963,35 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         // Same desktop/VR choice as friends, so every join behaves the same.
         OpenLaunchChooser(instance.Location, WorldDialog?.Name ?? "this world");
+    }
+
+    /// <summary>
+    /// The group chip on a world's instance row. The group popup already carries the
+    /// membership state, join/request/leave and the group's own instances.
+    /// </summary>
+    private void OpenWorldInstanceGroup(WorldInstanceItem? instance)
+    {
+        if (instance?.GroupId is not { Length: > 0 } groupId)
+        {
+            return;
+        }
+
+        if (GroupViewModel is not null)
+        {
+            _ = GroupViewModel.OpenGroupInfoAsync(groupId);
+            return;
+        }
+
+        // Guests can browse worlds without the group popup existing, so fall back to the web.
+        try
+        {
+            LaunchService.OpenUrl($"https://vrchat.com/home/group/{groupId}");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            ShowError("Couldn't open that group in your browser.");
+        }
     }
 
     private void OpenWorldInBrowser(WorldItem? world)
