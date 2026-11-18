@@ -33,7 +33,7 @@ function Compare-Semver([string]$Left, [string]$Right) {
 
 # Descending order. Release lists are short, so an insertion sort keeps the ordering
 # rules in one place instead of duplicating them in a Sort-Object key.
-function Sort-Semver([string[]]$Values) {
+function Get-SortedSemver([string[]]$Values) {
     $sorted = @($Values)
     for ($i = 1; $i -lt $sorted.Count; $i++) {
         $current = $sorted[$i]

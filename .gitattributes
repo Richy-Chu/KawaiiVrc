@@ -1,0 +1,3 @@
+# Shell scripts must stay LF: a CRLF shebang breaks /bin/sh and shellcheck reports SC1017.
+*.sh text eol=lf
+build/hooks/* text eol=lf

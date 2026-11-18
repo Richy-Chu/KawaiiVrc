@@ -152,7 +152,9 @@ function Get-CsprojValue([string]$Pattern) {
 
 # A published release is a promise: the tag names a commit that contains the built code,
 # and the feed it serves can be resolved. Check both before anything is uploaded.
-function Assert-ReleasePreconditions {
+function Test-ReleaseReadiness {
+    param([switch]$AllowDirty)
+
     $projectVersion = Get-CsprojValue '<Version>([^<]+)</Version>'
     if ($projectVersion -ne $Version) {
         throw "VrcCompanion.csproj is at $projectVersion but the release is $Version. Bump <Version> first so the tag matches the build."
@@ -190,7 +192,7 @@ function Assert-ReleasePreconditions {
 
 # Velopack merges the feeds of the last ten releases, so a release whose assets are not
 # exactly what its own feed lists breaks chaining for everyone who skipped a version.
-function Assert-ReleaseAssetsMatchFeeds {
+function Test-ReleaseFeedParity {
     $list = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", "20", "--json", "tagName", "--jq", ".[].tagName")
     if ($list.ExitCode -ne 0 -or -not $list.Output) {
         Write-Host "  Could not list releases; skipping the feed/asset check." -ForegroundColor DarkGray
@@ -237,7 +239,12 @@ function Assert-ReleaseAssetsMatchFeeds {
     }
 }
 
-function Invoke-ChainVerification([string]$TargetVersion) {
+function Invoke-ChainVerification {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetVersion,
+        [string]$VerifyFrom
+    )
+
     $verifier = Join-Path $PSScriptRoot "ReleaseVerifier\ReleaseVerifier.csproj"
     if (-not (Test-Path $verifier)) {
         throw "build/ReleaseVerifier/ReleaseVerifier.csproj is missing; cannot verify the delta chain."
@@ -247,7 +254,7 @@ function Invoke-ChainVerification([string]$TargetVersion) {
     $versions = @($list.Output |
         ForEach-Object { "$_".Trim().TrimStart("v") } |
         Where-Object { $_ -match '^\d+\.\d+\.\d+(-[0-9A-Za-z.\-]+)?(\+[0-9A-Za-z.\-]+)?$' })
-    $versions = @(Sort-Semver $versions)
+    $versions = @(Get-SortedSemver $versions)
 
     $prior = @($versions | Where-Object { (Compare-Semver $_ $TargetVersion) -lt 0 })
     $baseVersion = if ($VerifyFrom) { $VerifyFrom.TrimStart("v") } else { $null }
@@ -307,13 +314,13 @@ if (-not $Repo) {
 }
 
 if ($VerifyOnly) {
-    Assert-ReleaseAssetsMatchFeeds
-    Invoke-ChainVerification -TargetVersion $Version
+    Test-ReleaseFeedParity
+    Invoke-ChainVerification -TargetVersion $Version -VerifyFrom $VerifyFrom
     return
 }
 
 if (-not $SkipUpload) {
-    Assert-ReleasePreconditions
+    Test-ReleaseReadiness -AllowDirty:$AllowDirty
 }
 
 Write-Host "KawaiiVrc $Version  ->  $Repo" -ForegroundColor Cyan
@@ -454,8 +461,8 @@ Write-Host ""
 Write-Host "Published $tag to $Repo." -ForegroundColor Green
 
 if (-not $SkipVerify) {
-    Assert-ReleaseAssetsMatchFeeds
-    Invoke-ChainVerification -TargetVersion $Version
+    Test-ReleaseFeedParity
+    Invoke-ChainVerification -TargetVersion $Version -VerifyFrom $VerifyFrom
 }
 
 Write-Host "Anyone on an installed build will see the update popup within a few minutes." -ForegroundColor Green

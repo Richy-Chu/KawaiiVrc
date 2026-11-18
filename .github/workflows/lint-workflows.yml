@@ -10,11 +10,13 @@ on:
       # The hook and the scripts the workflows call, so touching them re-checks the lint.
       - "build/hooks/**"
       - "build/*.ps1"
+      - "build/*.psd1"
   pull_request:
     paths:
       - ".github/workflows/**"
       - "build/hooks/**"
       - "build/*.ps1"
+      - "build/*.psd1"
   workflow_dispatch:
 
 permissions:
@@ -56,3 +58,14 @@ jobs:
       # actionlint only looks inside workflows, so lint the pre-push hook directly.
       - name: Lint build/hooks/pre-push
         run: shellcheck build/hooks/pre-push
+
+      # The PowerShell scripts the workflows call are neither YAML nor bash, so nothing
+      # else above inspects them. Pinned module; the settings file lists the one excluded
+      # rule and why.
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -ErrorAction Stop
+
+      - name: Lint build/*.ps1
+        shell: pwsh
+        run: pwsh -NoProfile -File build/lint-powershell.ps1
