@@ -39,10 +39,31 @@ jobs:
           dotnet-version: "8.0.x"
 
       # The patched nupkg is rebuilt by the Update.exe shipped inside the vpk tool, which
-      # the verifier looks up under ~/.dotnet/tools/.store. Keep the version in step with
-      # the Velopack package the app and build/ReleaseVerifier reference.
+      # the verifier looks up under ~/.dotnet/tools/.store. vpk is released in step with the
+      # Velopack package, so read the referenced version instead of pinning one that goes
+      # stale the next time Velopack is bumped.
       - name: Install vpk
-        run: dotnet tool install --global vpk --version 1.2.161
+        shell: pwsh
+        run: |
+          $projects = @("VrcCompanion/VrcCompanion.csproj", "build/ReleaseVerifier/ReleaseVerifier.csproj")
+          $versions = @($projects | ForEach-Object {
+            if (-not (Test-Path $_)) { throw "Missing project file: $_" }
+            $match = Select-String -Path $_ -Pattern 'Include="Velopack"\s+Version="([^"]+)"' | Select-Object -First 1
+            if (-not $match) { throw "No Velopack PackageReference found in $_." }
+            $match.Matches[0].Groups[1].Value
+          })
+
+          # A patcher older than the Velopack package would test a different delta path
+          # than users run, so a half-finished bump fails here instead of verifying anyway.
+          $distinct = @($versions | Sort-Object -Unique)
+          if ($distinct.Count -ne 1) {
+            throw "Velopack versions disagree: $($projects -join ' and ') reference $($versions -join ' and ')."
+          }
+
+          $version = $distinct[0]
+          Write-Host "Installing vpk $version to match the referenced Velopack package."
+          dotnet tool install --global vpk --version $version
+          if ($LASTEXITCODE -ne 0) { throw "vpk $version could not be installed." }
 
       - name: Verify feeds and delta chain
         shell: pwsh
