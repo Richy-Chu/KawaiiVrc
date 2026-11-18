@@ -156,9 +156,9 @@ try {
             continue
         }
 
-        # PowerShell wraps long error text, inserting line breaks mid-sentence, so compare
-        # against a whitespace-collapsed copy without colour codes.
-        $text = (($output -join "`n") -replace '\x1b\[[0-9;]*m', '') -replace '\s+', ' '
+        # PowerShell wraps long error text and draws a gutter inside the wrapped lines
+        # ("refusing to | build"), so drop colour codes, gutters and padding before matching.
+        $text = (($output -join "`n") -replace '\x1b\[[0-9;]*m', '') -replace '\s*\|\s*', ' ' -replace '\s+', ' '
         if ($text -notlike "*$($check.Marker)*") {
             Write-Host ("{0}: output did not contain '{1}'. Output was:" -f $check.Name, $check.Marker)
             $output | ForEach-Object { Write-Host "    $_" }
