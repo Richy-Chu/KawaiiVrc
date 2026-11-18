@@ -1,0 +1,28 @@
+#!/bin/sh
+# Lints .github/workflows before a push leaves the machine, so a YAML or expression
+# mistake fails here instead of in Actions. Enable it once per clone with:
+#   git config core.hooksPath build/hooks
+#
+# Runs the same actionlint the Lint workflows job uses, and skips with a warning when
+# actionlint is not installed so a push is never blocked by a missing tool.
+# Bypass a deliberate failure with: git push --no-verify
+
+set -u
+
+if ! command -v actionlint >/dev/null 2>&1; then
+    echo "pre-push: actionlint is not installed; skipping the workflow lint." >&2
+    echo "pre-push: install it with: go install github.com/rhysd/actionlint/cmd/actionlint@latest" >&2
+    exit 0
+fi
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+set -- "$root"/.github/workflows/*.yml
+if [ ! -f "$1" ]; then
+    exit 0
+fi
+
+echo "pre-push: linting workflow files..."
+if ! actionlint "$@"; then
+    echo "pre-push: workflow lint failed. Fix it, or push with --no-verify to skip." >&2
+    exit 1
+fi

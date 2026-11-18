@@ -1,0 +1,35 @@
+name: Lint workflows
+
+# A YAML or expression mistake in .github/workflows otherwise only shows up as a broken
+# run after pushing. build/hooks/pre-push runs the same check locally.
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned release; bump it here and in build/hooks/pre-push's install hint together.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+        run: |
+          curl -sSL -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint --version
+
+      - name: Lint .github/workflows
+        run: ./actionlint -color
