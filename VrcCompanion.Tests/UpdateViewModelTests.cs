@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.IO;
+using System.Windows;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
 using Xunit;
@@ -102,6 +104,30 @@ public class UpdateViewModelTests : IDisposable
         Assert.True(viewModel.ShowDownloadAction);
         Assert.False(viewModel.ShowInstallAction);
         Assert.Equal("Download failed.", viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task AutomaticCheckRaisesBoundPropertyChangesOnTheUiThread()
+    {
+        // The 20-second startup check resumes on a thread-pool thread. Changing the
+        // window-bound properties there makes WPF throw, which is exactly how the
+        // automatic popup stayed hidden in installed builds; this pins the marshalling.
+        WpfTestHost.Run(() => { });
+        var uiThreadId = Application.Current!.Dispatcher.Thread.ManagedThreadId;
+
+        var service = new FakeUpdateService
+        {
+            CheckResult = new AppUpdateCheckResult(AppUpdateCheckState.Available, "1.4.0")
+        };
+        var viewModel = new UpdateViewModel(service, _settings);
+        var changedOn = new ConcurrentBag<int>();
+        viewModel.PropertyChanged += (_, _) => changedOn.Add(Environment.CurrentManagedThreadId);
+
+        await Task.Run(() => viewModel.CheckNowAsync(manual: false));
+
+        Assert.True(viewModel.IsOpen);
+        Assert.NotEmpty(changedOn);
+        Assert.All(changedOn, threadId => Assert.Equal(uiThreadId, threadId));
     }
 
     [Fact]
