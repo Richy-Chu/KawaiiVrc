@@ -1,20 +1,64 @@
 <#
 .SYNOPSIS
-    Builds a Velopack release for KawaiiVrc and (optionally) publishes it to GitHub Releases.
+    Builds a Velopack release for KawaiiVrc and publishes it to GitHub Releases.
 
 .DESCRIPTION
     Velopack updates only work for apps installed by a Velopack Setup.exe. This script
     publishes the app, packs the release assets (Setup, full/delta nupkg, releases.win.json)
     and uploads them to a GitHub release, which is the feed the in-app updater reads.
 
-    Run it from anywhere:
-
-        pwsh -File build/pack-release.ps1 -Version 1.1.0 -NotesFile notes.md
+    Three steps run in order: dotnet publish into artifacts/publish, vpk pack into
+    artifacts/releases, then gh release upload. A cancel anywhere after the build leaves
+    only local files behind.
 
     Requirements:
       * .NET 8 SDK
       * vpk            -> dotnet tool install -g vpk
-      * GitHub CLI     -> https://cli.github.com  (for -NoUpload use -SkipUpload)
+      * GitHub CLI     -> https://cli.github.com
+
+.EXAMPLE
+    pwsh -File build/pack-release.ps1 -Version 1.1.0
+
+    Full release: builds, packs a delta against the previous release, and publishes.
+
+.EXAMPLE
+    pwsh -File build/pack-release.ps1 -Version 1.1.0 -SkipUpload -SkipFetch
+
+    Local rehearsal: builds and packs into artifacts/releases without touching GitHub.
+    Use -SkipUpload for this, not -SkipPublish.
+
+.PARAMETER Version
+    Version to build, for example 1.1.0.
+
+.PARAMETER Repo
+    GitHub owner/name to publish to. Defaults to the update repository compiled into the app.
+
+.PARAMETER NotesFile
+    Markdown file with release notes, uploaded with the release.
+
+.PARAMETER Configuration
+    Build configuration passed to dotnet publish. Defaults to Release.
+
+.PARAMETER Runtime
+    Target runtime identifier. Defaults to win-x64.
+
+.PARAMETER HistoryDepth
+    How many previous releases to download as delta bases. Defaults to 1 (the previous
+    release), which is what the new delta needs.
+
+.PARAMETER FrameworkDependent
+    Publishes framework-dependent instead of self-contained.
+
+.PARAMETER SkipPublish
+    Skips the dotnet publish step only. vpk pack reads artifacts/publish, so this fails
+    unless that folder already holds a build. For a local rehearsal use -SkipUpload instead.
+
+.PARAMETER SkipUpload
+    Builds and packs but uploads nothing, so GitHub releases and assets stay untouched.
+    This is the flag for a local rehearsal.
+
+.PARAMETER SkipFetch
+    Skips downloading previous releases, so the new release is built without a delta.
 
 .NOTES
     The repository comes from <AssemblyMetadata Include="UpdateRepository" ...> in
