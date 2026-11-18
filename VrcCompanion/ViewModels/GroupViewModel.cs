@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -28,6 +29,7 @@ public sealed class GroupViewModel : ViewModelBase
     private string _groupSearchMessage = string.Empty;
     private Group? _selectedGroup;
     private ObservableCollection<GroupMember> _members = new();
+    private bool _isLoadingMembers;
     private bool _isBusy;
     private string? _errorMessage;
     private string _createName = string.Empty;
@@ -490,7 +492,48 @@ public sealed class GroupViewModel : ViewModelBase
         ? string.Empty
         : $"https://vrchat.com/home/group/{SelectedGroup.EffectiveId}";
 
-    public string MembersSummary => Members.Count == 1 ? "1 member loaded" : $"{Members.Count} members loaded";
+    public bool IsLoadingMembers
+    {
+        get => _isLoadingMembers;
+        private set
+        {
+            if (SetProperty(ref _isLoadingMembers, value))
+            {
+                OnPropertyChanged(nameof(MembersSummary));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The popup lists one page of members: VRChat's endpoint takes n=100 and does not
+    /// page further here, so say how many of the group's total are actually shown.
+    /// </summary>
+    public string MembersSummary => DescribeMembers(
+        Members.Count,
+        SelectedGroup?.MemberCount ?? 0,
+        IsLoadingMembers);
+
+    internal static string DescribeMembers(int loaded, int total, bool isLoading)
+    {
+        if (isLoading && loaded == 0)
+        {
+            return "Loading members…";
+        }
+
+        if (loaded == 0)
+        {
+            return "No members loaded.";
+        }
+
+        if (total > loaded)
+        {
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"Showing {loaded:N0} of {total:N0} members — VRChat returns 100 per request.");
+        }
+
+        return loaded == 1 ? "1 member loaded" : $"{loaded} members loaded";
+    }
 
     public RelayCommand CloseGroupDetailsCommand { get; }
 
@@ -930,6 +973,7 @@ public sealed class GroupViewModel : ViewModelBase
 
         IsBusy = true;
         ErrorMessage = null;
+        IsLoadingMembers = true;
 
         try
         {
@@ -956,6 +1000,7 @@ public sealed class GroupViewModel : ViewModelBase
         }
         finally
         {
+            IsLoadingMembers = false;
             IsBusy = false;
         }
     }

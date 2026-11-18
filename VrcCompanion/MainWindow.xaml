@@ -3473,9 +3473,13 @@
                                         </ItemsControl>
                                     </StackPanel>
 
+                                    <TextBlock Text="MEMBERS"
+                                               Style="{StaticResource FieldLabel}"
+                                               Margin="0,18,0,4" />
                                     <TextBlock Text="{Binding DataContext.GroupViewModel.MembersSummary, RelativeSource={RelativeSource AncestorType=Window}}"
                                                Style="{StaticResource MutedText}"
-                                               Margin="0,14,0,6" />
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,6" />
 
                                     <ItemsControl ItemsSource="{Binding DataContext.GroupViewModel.Members, RelativeSource={RelativeSource AncestorType=Window}}">
                                         <ItemsControl.ItemTemplate>
