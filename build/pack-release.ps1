@@ -39,6 +39,26 @@ $project = Join-Path $root "VrcCompanion\VrcCompanion.csproj"
 $publishDir = Join-Path $root "artifacts\publish"
 $releasesDir = Join-Path $root "artifacts\releases"
 
+# Native tools write progress and warnings to stderr. Under ErrorActionPreference = Stop,
+# Windows PowerShell turns that into a terminating error, so run them under Continue and
+# decide from the exit code instead.
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Exe @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
+        return $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Get-CsprojValue([string]$Pattern) {
     $match = Select-String -Path $project -Pattern $Pattern | Select-Object -First 1
     if ($null -eq $match) { return $null }
@@ -85,24 +105,26 @@ New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null
 if (-not $SkipPublish) {
     $selfContained = if ($FrameworkDependent) { "false" } else { "true" }
     Write-Host "Publishing ($Runtime, self-contained=$selfContained)..." -ForegroundColor Cyan
-    dotnet publish $project `
-        -c $Configuration `
-        -r $Runtime `
-        --self-contained $selfContained `
-        -p:Version=$Version `
-        -p:InformationalVersion=$Version `
-        -o $publishDir
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed." }
+    $publishArgs = @(
+        "publish", $project,
+        "-c", $Configuration,
+        "-r", $Runtime,
+        "--self-contained", $selfContained,
+        "-p:Version=$Version",
+        "-p:InformationalVersion=$Version",
+        "-o", $publishDir
+    )
+    $publishExit = Invoke-Native "dotnet" $publishArgs
+    if ($publishExit -ne 0) { throw "dotnet publish failed with exit code $publishExit." }
 }
 
 # Velopack only builds delta packages when it can see the previous release's nupkg,
 # so pull the last release's packages into the output folder first.
-if (-not $SkipUpload -and (Get-Command gh -ErrorAction SilentlyContinue)) {
+if (-not $SkipUpload) {
     Write-Host "Fetching the previous release packages for delta updates..." -ForegroundColor Cyan
-    gh release download --repo $Repo --pattern "*.nupkg" --dir $releasesDir 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $downloadExit = Invoke-Native "gh" @("release", "download", "--repo", $Repo, "--pattern", "*.nupkg", "--dir", $releasesDir)
+    if ($downloadExit -ne 0) {
         Write-Host "  No previous release found; this will be a full-only release." -ForegroundColor DarkGray
-        $global:LASTEXITCODE = 0
     }
 }
 
@@ -127,8 +149,8 @@ if ($NotesFile) {
 }
 
 Write-Host "Packing..." -ForegroundColor Cyan
-vpk @packArgs
-if ($LASTEXITCODE -ne 0) { throw "vpk pack failed." }
+$packExit = Invoke-Native "vpk" $packArgs
+if ($packExit -ne 0) { throw "vpk pack failed with exit code $packExit." }
 
 $assets = Get-ChildItem $releasesDir -File | Where-Object {
     $_.Extension -in @(".exe", ".nupkg", ".json", ".zip") -or $_.Name -eq "RELEASES"
@@ -149,24 +171,30 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 }
 
 $tag = "v$Version"
-gh release view $tag --repo $Repo *> $null
-if ($LASTEXITCODE -eq 0) {
+$viewExit = Invoke-Native "gh" @("release", "view", $tag, "--repo", $Repo)
+if ($viewExit -eq 0) {
     throw "Release $tag already exists on $Repo. Bump the version instead of reusing a tag."
 }
 
-$notes = if ($NotesFile) { (Resolve-Path $NotesFile).Path } else { $null }
 $releaseArgs = @(
     "release", "create", $tag,
     "--repo", $Repo,
     "--title", "KawaiiVrc $Version",
     "--latest"
 )
-if ($notes) { $releaseArgs += @("--notes-file", $notes) } else { $releaseArgs += @("--generate-notes") }
+
+if ($NotesFile) {
+    $releaseArgs += @("--notes-file", (Resolve-Path $NotesFile).Path)
+}
+else {
+    $releaseArgs += @("--generate-notes")
+}
+
+$releaseArgs += @($assets | ForEach-Object { $_.FullName })
 
 Write-Host "Publishing $tag..." -ForegroundColor Cyan
-$releaseArgs += @($assets | ForEach-Object { $_.FullName })
-gh @releaseArgs
-if ($LASTEXITCODE -ne 0) { throw "gh release create failed." }
+$releaseExit = Invoke-Native "gh" $releaseArgs
+if ($releaseExit -ne 0) { throw "gh release create failed with exit code $releaseExit." }
 
 Write-Host ""
 Write-Host "Published $tag to $Repo." -ForegroundColor Green
