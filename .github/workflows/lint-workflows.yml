@@ -31,5 +31,19 @@ jobs:
           tar -xzf actionlint.tar.gz actionlint
           ./actionlint --version
 
+      # actionlint inspects the bash in run: blocks with shellcheck when it finds it on
+      # PATH, so install it before linting. Pinned like actionlint above.
+      - name: Install shellcheck
+        env:
+          SHELLCHECK_VERSION: "0.11.0"
+        run: |
+          curl -sSL -o shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar -xJf shellcheck.tar.xz "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          echo "$PWD/shellcheck-v${SHELLCHECK_VERSION}" >> "$GITHUB_PATH"
+          "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" --version | head -3
+
       - name: Lint .github/workflows
-        run: ./actionlint -color
+        run: |
+          actionlint -version
+          shellcheck --version | head -3
+          actionlint -color

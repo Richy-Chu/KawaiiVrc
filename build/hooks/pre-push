@@ -15,6 +15,13 @@ if ! command -v actionlint >/dev/null 2>&1; then
     exit 0
 fi
 
+# actionlint only checks run: blocks when shellcheck is available, so say when the local
+# check is weaker than CI instead of passing quietly.
+if ! command -v shellcheck >/dev/null 2>&1; then
+    echo "pre-push: shellcheck is not installed; run: blocks are not checked locally." >&2
+    echo "pre-push: install it with: go install github.com/koalaman/shellcheck/cmd/shellcheck@latest" >&2
+fi
+
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 set -- "$root"/.github/workflows/*.yml
 if [ ! -f "$1" ]; then
