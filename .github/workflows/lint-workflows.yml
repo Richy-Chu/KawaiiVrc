@@ -41,6 +41,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File build/test-exit-codes.ps1
 
+      - name: Test feed-parity decisions
+        shell: pwsh
+        run: pwsh -NoProfile -File build/test-feed-parity.ps1
+
   actionlint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
