@@ -56,12 +56,16 @@ public sealed class GroupViewModel : ViewModelBase
     internal void PublishMembershipChanged(Group group, bool isMember)
         => MembershipChanged?.Invoke(group, isMember);
 
+    private readonly Func<string, bool> _openUrl;
+
     public GroupViewModel(
         VrcApiClient api,
-        Action<string, string>? openLaunchChooser = null)
+        Action<string, string>? openLaunchChooser = null,
+        Func<string, bool>? openUrl = null)
     {
         _api = api;
         _openLaunchChooser = openLaunchChooser;
+        _openUrl = openUrl ?? (url => LaunchService.OpenUrl(url));
 
         LoadGroupsCommand = Track(new AsyncRelayCommand(() => LoadGroupsAsync(), () => !IsBusy));
         CreateGroupCommand = Track(new AsyncRelayCommand(CreateGroupAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(CreateName)));
@@ -89,7 +93,7 @@ public sealed class GroupViewModel : ViewModelBase
         RefreshInstancesCommand = Track(new AsyncRelayCommand(LoadGroupInstancesAsync, () => SelectedGroup is not null && !IsBusy));
         JoinGroupInstanceCommand = Track(new RelayCommand<GroupInstance>(JoinGroupInstance, instance => instance?.CanJoin == true));
         CloseGroupInfoCommand = Track(new RelayCommand(CloseGroupInfo));
-        JoinGroupInfoCommand = Track(new AsyncRelayCommand(JoinGroupInfoAsync, () => GroupInfo is not null && IsGroupJoinOpen && !IsGroupInfoBusy && !IsMemberOfGroupInfo));
+        JoinGroupInfoCommand = Track(new AsyncRelayCommand(JoinGroupInfoAsync, () => CanUseGroupJoinButton));
         LeaveGroupInfoCommand = Track(new AsyncRelayCommand(LeaveGroupInfoAsync, () => GroupInfo is not null && !IsGroupInfoBusy && IsMemberOfGroupInfo));
         OpenGroupInfoOnWebCommand = Track(new RelayCommand(OpenGroupInfoOnWeb, () => GroupInfo is not null));
         RequestLeaveGroupCommand = Track(new RelayCommand(() => IsLeaveGroupConfirmOpen = true, () => GroupInfo is not null && IsMemberOfGroupInfo && !IsGroupInfoBusy));
@@ -239,6 +243,10 @@ public sealed class GroupViewModel : ViewModelBase
                 OnPropertyChanged(nameof(HasGroupInfoMembershipLabel));
                 OnPropertyChanged(nameof(GroupJoinHint));
                 OnPropertyChanged(nameof(IsGroupJoinOpen));
+                OnPropertyChanged(nameof(IsGroupJoinRequest));
+                OnPropertyChanged(nameof(CanUseGroupJoinButton));
+                OnPropertyChanged(nameof(GroupJoinButtonText));
+                OnPropertyChanged(nameof(GroupJoinButtonToolTip));
                 RaiseCommandStates();
             }
         }
@@ -257,6 +265,7 @@ public sealed class GroupViewModel : ViewModelBase
         {
             if (SetProperty(ref _isGroupInfoBusy, value))
             {
+                OnPropertyChanged(nameof(CanUseGroupJoinButton));
                 RaiseCommandStates();
             }
         }
@@ -280,6 +289,9 @@ public sealed class GroupViewModel : ViewModelBase
                 OnPropertyChanged(nameof(HasGroupInfoMembershipLabel));
                 OnPropertyChanged(nameof(GroupJoinHint));
                 OnPropertyChanged(nameof(IsGroupJoinOpen));
+                OnPropertyChanged(nameof(CanUseGroupJoinButton));
+                OnPropertyChanged(nameof(GroupJoinButtonText));
+                OnPropertyChanged(nameof(GroupJoinButtonToolTip));
                 RaiseCommandStates();
             }
         }
@@ -336,12 +348,26 @@ public sealed class GroupViewModel : ViewModelBase
 
     public bool IsGroupJoinOpen => string.Equals(GroupInfo?.JoinState, "open", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>VRChat only takes join requests on the website, but the button is still the way in.</summary>
+    public bool IsGroupJoinRequest => string.Equals(GroupInfo?.JoinState, "request", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Join acts on open groups, and hands request-only groups to vrchat.com.</summary>
+    public bool CanUseGroupJoinButton => !IsMemberOfGroupInfo
+        && !IsGroupInfoBusy
+        && (IsGroupJoinOpen || IsGroupJoinRequest);
+
+    public string GroupJoinButtonText => IsGroupJoinRequest ? "Request to join" : "Join group";
+
+    public string GroupJoinButtonToolTip => IsGroupJoinRequest
+        ? "Send a join request on vrchat.com"
+        : "Join this open group";
+
     public string GroupJoinHint => GroupInfo is null || IsMemberOfGroupInfo
         ? string.Empty
         : GroupInfo.JoinState?.ToLowerInvariant() switch
         {
             "open" => "This group is open — Join group adds you right away.",
-            "request" => "This group requires a join request, which VRChat only accepts on vrchat.com.",
+            "request" => "This group takes join requests: Request to join opens it on vrchat.com to send one.",
             "invite" => "This group is invite-only. Ask a member for an invite on vrchat.com.",
             "closed" => "This group is closed to new members.",
             _ => string.Empty
@@ -774,13 +800,21 @@ public sealed class GroupViewModel : ViewModelBase
             return;
         }
 
-        LaunchService.OpenUrl($"https://vrchat.com/home/group/{GroupInfo.EffectiveId}");
+        _openUrl($"https://vrchat.com/home/group/{GroupInfo.EffectiveId}");
     }
 
     private async Task JoinGroupInfoAsync()
     {
         if (GroupInfo is null || IsGroupInfoBusy)
         {
+            return;
+        }
+
+        // VRChat's API only joins open groups; a request has to be sent on the website.
+        // Sending the user there is the request, instead of a greyed-out button.
+        if (IsGroupJoinRequest)
+        {
+            OpenGroupInfoOnWeb();
             return;
         }
 

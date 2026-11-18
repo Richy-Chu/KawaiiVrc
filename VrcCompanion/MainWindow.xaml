@@ -9365,13 +9365,13 @@
                                         </StackPanel>
 
                                         <WrapPanel Margin="0,12,0,0">
-                                            <Button Content="Join group"
+                                            <Button Content="{Binding GroupViewModel.GroupJoinButtonText}"
                                                     Style="{StaticResource PrimaryButton}"
                                                     Padding="12,6" FontSize="11" Margin="0,0,8,6"
                                                     Command="{Binding GroupViewModel.JoinGroupInfoCommand}"
                                                     Visibility="{Binding GroupViewModel.IsMemberOfGroupInfo, Converter={StaticResource InverseBoolToVis}}"
-                                                    IsEnabled="{Binding GroupViewModel.IsGroupJoinOpen}"
-                                                    ToolTip="Join this open group" />
+                                                    IsEnabled="{Binding GroupViewModel.CanUseGroupJoinButton}"
+                                                    ToolTip="{Binding GroupViewModel.GroupJoinButtonToolTip}" />
                                             <Button Content="Leave group"
                                                     Style="{StaticResource SecondaryButton}"
                                                     Padding="12,6" FontSize="11" Margin="0,0,8,6"
@@ -9384,7 +9384,7 @@
                                                     Command="{Binding GroupViewModel.OpenGroupInfoOnWebCommand}" />
                                         </WrapPanel>
 
-                                        <TextBlock Text="Moderation and role changes stay on vrchat.com; this popup only joins or leaves public groups."
+                                        <TextBlock Text="Moderation and role changes stay on vrchat.com; join requests are sent there too, and this popup joins or leaves open groups directly."
                                                    FontSize="9" Foreground="{StaticResource DimBrush}"
                                                    TextWrapping="Wrap" Margin="0,8,0,0" />
                                     </StackPanel>
