@@ -17,6 +17,9 @@ public sealed class NavItem : ViewModelBase
 
     public string Glyph { get; }
 
+    /// <summary>False when this section is reached from the top bar instead of the sidebar.</summary>
+    public bool IsVisible { get; set; } = true;
+
     public string Badge
     {
         get => _badge;

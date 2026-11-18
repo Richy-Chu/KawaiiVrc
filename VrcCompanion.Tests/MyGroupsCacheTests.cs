@@ -44,6 +44,27 @@ public class MyGroupsCacheTests
     }
 
     [Fact]
+    public async Task DecliningAGroupInviteInvalidatesTheMembershipCache()
+    {
+        var handler = new CountingHandler();
+        using var api = new VrcApiClient(null, handler);
+        TestHooks.SetCurrentUser(api, new VrcUser
+        {
+            Id = "usr_cache",
+            DisplayName = "Cache",
+            Username = "cache"
+        });
+
+        await api.GetMyGroupsAsync();
+        await api.DeclineGroupInviteAsync("grp_2");
+        await api.GetMyGroupsAsync();
+
+        Assert.Equal(2, handler.GroupGets);
+        Assert.Equal(1, handler.InviteDeclines);
+        Assert.Equal(0, handler.MembershipPosts);
+    }
+
+    [Fact]
     public async Task FriendGroupListIsCachedUntilRefreshForcesIt()
     {
         var handler = new CountingHandler();
@@ -65,6 +86,8 @@ public class MyGroupsCacheTests
 
         public int MembershipPosts { get; private set; }
 
+        public int InviteDeclines { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
@@ -83,6 +106,12 @@ public class MyGroupsCacheTests
             {
                 FriendGroupGets++;
                 return Json("[{\"id\":\"gmem_2\",\"groupId\":\"grp_2\",\"name\":\"Friend Group\",\"membershipStatus\":\"member\"}]");
+            }
+
+            if (request.Method == HttpMethod.Put &&
+                path.EndsWith("/invites", StringComparison.Ordinal))
+            {
+                InviteDeclines++;
             }
 
             if (request.Method == HttpMethod.Post &&

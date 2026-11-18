@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace VrcCompanion.Models;
@@ -58,6 +59,36 @@ public sealed class VrcInstance
 
     [JsonPropertyName("full")]
     public bool Full { get; set; }
+
+    [JsonPropertyName("world")]
+    public VrcWorld? World { get; set; }
+
+    [JsonPropertyName("users")]
+    public List<VrcUser> Users { get; set; } = new();
+
+    [JsonPropertyName("tags")]
+    public List<string> Tags { get; set; } = new();
+
+    [JsonPropertyName("platforms")]
+    public Dictionary<string, int>? Platforms { get; set; }
+
+    [JsonPropertyName("ageGate")]
+    public bool AgeGate { get; set; }
+
+    [JsonPropertyName("queueEnabled")]
+    public bool QueueEnabled { get; set; }
+
+    [JsonPropertyName("queueSize")]
+    public int QueueSize { get; set; }
+
+    [JsonPropertyName("roleRestricted")]
+    public bool RoleRestricted { get; set; }
+
+    [JsonPropertyName("closedAt")]
+    public System.DateTimeOffset? ClosedAt { get; set; }
+
+    [JsonPropertyName("minimumAvatarPerformance")]
+    public string? MinimumAvatarPerformance { get; set; }
 
     public int Occupants => UserCountAlt > 0 ? UserCountAlt : UserCount;
 }

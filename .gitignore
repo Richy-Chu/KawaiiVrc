@@ -3,6 +3,10 @@ bin/
 obj/
 [Bb]in/
 [Oo]bj/
+VrcCompanion.NativeAdBlock/target/
+
+# Release packaging output (build/pack-release.ps1)
+artifacts/
 
 # Visual Studio / Rider local state
 .vs/
@@ -20,6 +24,10 @@ coverage*.xml
 # Local tool state
 .freebuff/
 .vscode/
+
+# Local chat attachments and scratch notes (never publish these)
+.cloud-attachments/
+.tmp-*
 
 # OS noise
 Thumbs.db

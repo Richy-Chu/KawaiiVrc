@@ -1,216 +1,59 @@
-using System.IO;
-using System.Net;
-using System.Net.Http;
-using System.Text;
+using VrcCompanion.Models;
 using VrcCompanion.Services;
-using VrcCompanion.ViewModels;
 using Xunit;
 
 namespace VrcCompanion.Tests;
 
-public class ChatboxLyricsPauseTests
+public class ChatboxProviderEdgeCaseTests
 {
     [Fact]
-    public void ManualMessageThroughSendCommandPausesLyrics()
+    public void StatusIconCanBeDisabledWithoutChangingTheSavedStatus()
     {
-        using var fixture = new ViewModelFixture();
-        var vm = fixture.CreateViewModel();
+        var provider = new StatusChatboxProvider();
+        var context = new ChatboxProviderContext
+        {
+            IncludeStatus = true,
+            ActiveStatus = "back in 5",
+            ShowStatusIcon = false,
+            StatusIcon = "💭"
+        };
 
-        vm.MessageText = "manual message";
-        vm.SendCommand.Execute(null);
-
-        Assert.True(vm.IsLyricsPaused);
-        Assert.Equal(new[] { "manual message" }, fixture.Sender.Sent);
+        Assert.Equal("back in 5", provider.Build(context));
+        Assert.Equal(
+            "💭 back in 5",
+            provider.Build(context with { ShowStatusIcon = true }));
     }
 
     [Fact]
-    public void RotationMessageThroughRotationSendPathDoesNotPauseLyrics()
+    public void LyricsProviderOnlyAddsALineWhenOneIsDisplaying()
     {
-        using var fixture = new ViewModelFixture();
-        var vm = fixture.CreateViewModel();
+        var provider = new LyricsChatboxProvider();
+        var context = new ChatboxProviderContext
+        {
+            IncludeLyrics = true,
+            Lyric = string.Empty,
+            LyricsFormat = "♪ {lyric}"
+        };
 
-        vm.RotationMessages.Add("rotation message");
-        vm.RotateNextForTest();
-
-        Assert.False(vm.IsLyricsPaused);
-        Assert.Equal(new[] { "rotation message" }, fixture.Sender.Sent);
+        Assert.Null(provider.Build(context));
+        Assert.Equal(
+            "♪ 世界中の誰よりきっと",
+            provider.Build(context with { Lyric = "世界中の誰よりきっと" }));
     }
 
     [Fact]
-    public async Task RetryLyricsCommandReloadsAfterATemporaryFailure()
+    public void WindowProviderUsesTheDesktopHeadingAndFormatsTheFocusedApp()
     {
-        using var fixture = new ViewModelFixture();
-        var handler = new SequenceHandler();
-        using var http = new HttpClient(handler)
+        var provider = new WindowChatboxProvider();
+        var context = new ChatboxProviderContext
         {
-            BaseAddress = new Uri("https://lrclib.net")
+            IncludeWindow = true,
+            IsVR = false,
+            Window = new WindowActivityInfo("Blender", "scene.blend"),
+            WindowFormat = "{heading} · {app}"
         };
-        var lyrics = new LyricsService(http);
-        var vm = fixture.CreateViewModel(lyrics);
-        vm.SetTrackForTest(new NowPlayingInfo(
-            "Ain't My Fault",
-            "Zara Larsson",
-            "YouTube",
-            Duration: TimeSpan.Zero));
 
-        await vm.LyricsLoadTaskForTest!;
-        Assert.Contains("busy", vm.LyricsStatusText);
-        Assert.False(vm.HasLyrics);
-        Assert.True(vm.RetryLyricsCommand.CanExecute(null));
-
-        vm.RetryLyricsCommand.Execute(null);
-        await vm.LyricsLoadTaskForTest!;
-
-        Assert.True(vm.HasLyrics);
-        Assert.Equal(2, handler.Calls);
-        Assert.Contains("Synced lyrics", vm.LyricsStatusText);
-        Assert.Contains("Zara Larsson", vm.LyricsMatchText);
-        Assert.Contains("Ain't My Fault", vm.LyricsMatchText);
+        Assert.Equal("On desktop · Blender", provider.Build(context));
     }
 
-    [Fact]
-    public async Task ManualSearchShowsCandidatesAndAppliesTheSelectedMatch()
-    {
-        using var fixture = new ViewModelFixture();
-        var handler = new ManualSearchHandler();
-        using var http = new HttpClient(handler)
-        {
-            BaseAddress = new Uri("https://lrclib.net")
-        };
-        var lyrics = new LyricsService(http);
-        var vm = fixture.CreateViewModel(lyrics);
-        vm.SetTrackForTest(new NowPlayingInfo(
-            "Ain't My Fault",
-            "Zara Larsson",
-            "YouTube",
-            Duration: TimeSpan.FromSeconds(223)));
-        await vm.LyricsLoadTaskForTest!;
-
-        vm.LyricsSearchQuery = "Ain't My Fault";
-        await vm.SearchLyricsForTestAsync();
-
-        Assert.Equal(2, vm.LyricsCandidates.Count);
-        Assert.Null(vm.SelectedLyricsCandidate);
-        Assert.Equal("Zara Larsson — Ain't My Fault", vm.LyricsCandidates[0].DisplayText);
-        Assert.Contains("Synced lyrics", vm.LyricsCandidates[0].DetailText);
-        Assert.Equal("Automatic line", vm.LyricsCandidates[0].Snippet);
-
-        vm.SelectedLyricsCandidate = vm.LyricsCandidates[1];
-        await vm.UseSelectedLyricsForTestAsync();
-
-        Assert.Equal("Selected line", vm.LyricsText);
-        Assert.Contains("Selected Artist — Selected Song", vm.LyricsMatchText);
-        Assert.Contains("Using", vm.LyricsSearchStatusText);
-
-        // A later duration update must not replace the manual choice.
-        vm.SetTrackForTest(new NowPlayingInfo(
-            "Ain't My Fault",
-            "Zara Larsson",
-            "YouTube",
-            Duration: TimeSpan.FromSeconds(223)));
-        Assert.Equal("Selected line", vm.LyricsText);
-        Assert.Contains("Selected Artist — Selected Song", vm.LyricsMatchText);
-    }
-
-    private sealed class ViewModelFixture : IDisposable
-    {
-        private readonly string _settingsPath =
-            Path.Combine(Path.GetTempPath(), $"VrcCompanion-test-{Guid.NewGuid():N}.json");
-
-        public FakeChatboxSender Sender { get; } = new();
-
-        public ChatboxViewModel CreateViewModel(LyricsService? lyrics = null)
-        {
-            var store = new SettingsStore(_settingsPath);
-            store.Settings.ChatboxLyricsOnVrchat = true;
-            store.Settings.ChatboxPauseLyricsAfterMessage = true;
-            store.Settings.ChatboxLyricsPauseSeconds = 30;
-            store.Settings.ChatboxRotateEnabled = false;
-            return new ChatboxViewModel(store, Sender, lyrics: lyrics, startTimers: false);
-        }
-
-        public void Dispose()
-        {
-            if (File.Exists(_settingsPath))
-            {
-                File.Delete(_settingsPath);
-            }
-        }
-    }
-
-    private sealed class SequenceHandler : HttpMessageHandler
-    {
-        public int Calls { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            Calls++;
-            if (Calls == 1)
-            {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
-            }
-
-            const string json = """
-                {
-                  "trackName": "Ain't My Fault",
-                  "artistName": "Zara Larsson",
-                  "duration": 223.0,
-                  "instrumental": false,
-                  "plainLyrics": null,
-                  "syncedLyrics": "[00:01.00]Line one\n[00:05.00]Line two"
-                }
-                """;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(json, Encoding.UTF8, "application/json")
-            });
-        }
-    }
-
-    private sealed class ManualSearchHandler : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
-            return Task.FromResult(path switch
-            {
-                "/api/search" => Json("""
-                    [
-                      {"id":1,"trackName":"Ain't My Fault","artistName":"Zara Larsson","albumName":"So Good","duration":223.0,"instrumental":false,"plainLyrics":null,"syncedLyrics":"[00:01.00]Automatic line"},
-                      {"id":2,"trackName":"Selected Song","artistName":"Selected Artist","albumName":"Selected Album","duration":224.0,"instrumental":false,"plainLyrics":null,"syncedLyrics":"[00:01.00]Selected line"}
-                    ]
-                    """),
-                "/api/get/2" => Json("""
-                    {"id":2,"trackName":"Selected Song","artistName":"Selected Artist","albumName":"Selected Album","duration":224.0,"instrumental":false,"plainLyrics":null,"syncedLyrics":"[00:01.00]Selected line"}
-                    """),
-                _ => Json("""
-                    {"id":1,"trackName":"Ain't My Fault","artistName":"Zara Larsson","albumName":"So Good","duration":223.0,"instrumental":false,"plainLyrics":null,"syncedLyrics":"[00:01.00]Automatic line"}
-                    """)
-            });
-        }
-
-        private static HttpResponseMessage Json(string json) => new(HttpStatusCode.OK)
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json")
-        };
-    }
-
-    private sealed class FakeChatboxSender : IChatboxSender
-    {
-        public List<string> Sent { get; } = new();
-
-        public string Host { get; set; } = "127.0.0.1";
-
-        public int Port { get; set; } = 9000;
-
-        public void SendChatbox(string text, bool sendImmediately = true) => Sent.Add(text);
-
-        public void SendTyping(bool typing)
-        {
-        }
-    }
 }

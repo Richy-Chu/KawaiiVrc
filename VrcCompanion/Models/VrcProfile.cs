@@ -32,8 +32,32 @@ public sealed class VrcProfile
     [JsonPropertyName("bannerColor")]
     public string? BannerColor { get; set; }
 
+    [JsonPropertyName("iconFrame")]
+    public string? IconFrame { get; set; }
+
+    [JsonPropertyName("profileEffect")]
+    public string? ProfileEffect { get; set; }
+
+    [JsonPropertyName("nameplateEffect")]
+    public string? NameplateEffect { get; set; }
+
+    [JsonPropertyName("themeId")]
+    public string? ThemeId { get; set; }
+
+    [JsonPropertyName("themeIconColor")]
+    public string? ThemeIconColor { get; set; }
+
+    [JsonPropertyName("themeButtonColor")]
+    public string? ThemeButtonColor { get; set; }
+
+    [JsonPropertyName("themeSubtextColor")]
+    public string? ThemeSubtextColor { get; set; }
+
     [JsonPropertyName("currentAvatarImageUrl")]
     public string? CurrentAvatarImageUrl { get; set; }
+
+    [JsonPropertyName("currentAvatar")]
+    public string? CurrentAvatar { get; set; }
 
     [JsonPropertyName("currentAvatarThumbnailImageUrl")]
     public string? CurrentAvatarThumbnailImageUrl { get; set; }
@@ -41,8 +65,16 @@ public sealed class VrcProfile
     [JsonPropertyName("currentAvatarName")]
     public string? CurrentAvatarName { get; set; }
 
+    [JsonPropertyName("currentAvatarAuthorName")]
+    public string? CurrentAvatarAuthorName { get; set; }
+
     [JsonPropertyName("userIcon")]
     public string? UserIcon { get; set; }
+
+    // Newer VRChat profiles expose the chosen profile icon separately from
+    // userIcon. VRC+ accounts often have only this field populated.
+    [JsonPropertyName("iconUrl")]
+    public string? IconUrl { get; set; }
 
     [JsonPropertyName("ageVerified")]
     public bool AgeVerified { get; set; }

@@ -7,20 +7,25 @@ namespace VrcCompanion.ViewModels;
 
 public sealed class FriendItem : ViewModelBase
 {
-    private static readonly Brush OnlineBrush = MakeBrush("#3DDC97");
-    private static readonly Brush JoinMeBrush = MakeBrush("#FFC857");
-    private static readonly Brush AskMeBrush = MakeBrush("#FF9F43");
-    private static readonly Brush BusyBrush = MakeBrush("#FF5C7A");
-    private static readonly Brush OfflineBrush = MakeBrush("#6B7488");
+    internal static Brush OnlineBrush => UserPresence.OnlineBrush;
+    internal static Brush JoinMeBrush => UserPresence.JoinMeBrush;
+    internal static Brush AskMeBrush => UserPresence.AskMeBrush;
+    internal static Brush BusyBrush => UserPresence.BusyBrush;
+    internal static Brush OfflineBrush => UserPresence.OfflineBrush;
 
     private VrcUser _user;
     private bool _isFavorite;
     private string _worldName = string.Empty;
+    private bool _inOnlineFriends;
+    private bool _inActiveFriends;
 
     public FriendItem(VrcUser user)
     {
         _user = user;
     }
+
+    /// <summary>The API record behind this row, shared with other views.</summary>
+    public VrcUser User => _user;
 
     public bool IsFavorite
     {
@@ -38,6 +43,9 @@ public sealed class FriendItem : ViewModelBase
 
     public string Id => _user.Id;
 
+    /// <summary>Whether VRChat currently reports this user as a friend.</summary>
+    public bool IsFriend => _user.IsFriend;
+
     public string DisplayName => string.IsNullOrWhiteSpace(_user.DisplayName) ? "Unknown user" : _user.DisplayName;
 
     public string Username => _user.Username;
@@ -51,10 +59,20 @@ public sealed class FriendItem : ViewModelBase
     public string AvatarUrl
         => ImageUrlHelper.PickAvatarThumbnailUrl(
             _user.UserIcon,
-            _user.ProfilePicOverrideThumbnail,
+            _user.ProfilePicOverrideThumbnail ?? _user.IconUrl,
             _user.CurrentAvatarThumbnailImageUrl,
             _user.CurrentAvatarImageUrl,
             256) ?? string.Empty;
+
+    public string TrustLabel => UserPresentation.TrustLabel(_user.Tags, _user.DeveloperType);
+
+    public Brush TrustBrush => UserPresentation.TrustBrush(_user.Tags, _user.DeveloperType);
+
+    public string IconFrameUrl => UserPresentation.IconFrameUrl(_user.IconFrame) ?? string.Empty;
+
+    public string IconFrameIntroUrl => UserPresentation.IconFrameIntroUrl(_user.IconFrame) ?? string.Empty;
+
+    public bool HasIconFrame => IconFrameUrl.Length > 0;
 
     public string BannerUrl => _user.BannerUrl ?? string.Empty;
 
@@ -75,80 +93,55 @@ public sealed class FriendItem : ViewModelBase
         }
     }
 
-    public bool IsOnline
+    public bool IsOnline => Presence == UserPresenceState.Online;
+
+    /// <summary>Active on the VRChat web/mobile client, not in an instance.</summary>
+    public bool IsActive => Presence == UserPresenceState.Active;
+
+    /// <summary>Online, active on web/mobile, or offline.</summary>
+    public bool IsPresent => Presence != UserPresenceState.Offline;
+
+    public bool IsInOnlineFriends => _inOnlineFriends;
+
+    public bool IsInActiveFriends => _inActiveFriends;
+
+    private UserPresenceState Presence => UserPresence.Classify(
+        _user.Location,
+        _user.Status,
+        _user.State,
+        _user.Platform ?? _user.LastPlatform,
+        inOnlineFriends: _inOnlineFriends,
+        inActiveFriends: _inActiveFriends);
+
+    /// <summary>
+    /// VRChat's current-user online/active friend buckets, used to tell a real
+    /// private instance apart from a stale "private" location.
+    /// </summary>
+    public void ApplyPresenceSets(bool inOnlineFriends, bool inActiveFriends)
     {
-        get
+        if (_inOnlineFriends == inOnlineFriends && _inActiveFriends == inActiveFriends)
         {
-            var location = _user.Location ?? string.Empty;
-            var status = _user.Status ?? string.Empty;
-
-            // VRChat returns location: null or "offline" when the user is offline.
-            // A user is only online if they have a real world/instance location.
-            if (string.IsNullOrWhiteSpace(location))
-            {
-                return false;
-            }
-
-            if (string.Equals(location, "offline", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            // traveling means they're between worlds but still online.
-            if (location.StartsWith("traveling", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            // status: "offline" is the definitive offline signal.
-            if (string.Equals(status, "offline", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            return true;
+            return;
         }
+
+        _inOnlineFriends = inOnlineFriends;
+        _inActiveFriends = inActiveFriends;
+        OnAllPropertiesChanged();
     }
+
+    public int PresenceSortRank => IsOnline ? 2 : IsActive ? 1 : 0;
 
     public string StatusLabel
     {
-        get
-        {
-            if (!IsOnline)
-            {
-                return "Offline";
-            }
-
-            return (_user.Status ?? string.Empty).ToLowerInvariant() switch
-            {
-                "active" => "Online",
-                "join me" => "Join Me",
-                "ask me" => "Ask Me",
-                "busy" => "Busy",
-                _ => "Online"
-            };
-        }
+        get => UserPresence.Label(_user.Status, Presence);
     }
 
     public Brush StatusBrush
     {
-        get
-        {
-            if (!IsOnline)
-            {
-                return OfflineBrush;
-            }
-
-            return (_user.Status ?? string.Empty).ToLowerInvariant() switch
-            {
-                "active" => OnlineBrush,
-                "join me" => JoinMeBrush,
-                "ask me" => AskMeBrush,
-                "busy" => BusyBrush,
-                _ => OnlineBrush
-            };
-        }
+        get => UserPresence.Brush(_user.Status, Presence);
     }
+
+    public Brush StatusDotBrush => UserPresence.DotBrush(_user.Status, Presence);
 
     public int StatusRank => (_user.Status ?? string.Empty).ToLowerInvariant() switch
     {
@@ -189,9 +182,14 @@ public sealed class FriendItem : ViewModelBase
         get
         {
             var location = _user.Location ?? string.Empty;
-            if (!IsOnline || string.Equals(location, "offline", StringComparison.OrdinalIgnoreCase))
+            if (!IsPresent || string.Equals(location, "offline", StringComparison.OrdinalIgnoreCase))
             {
                 return "Offline";
+            }
+
+            if (IsActive)
+            {
+                return "Active";
             }
 
             if (string.Equals(location, "private", StringComparison.OrdinalIgnoreCase))
@@ -224,9 +222,14 @@ public sealed class FriendItem : ViewModelBase
         get
         {
             var location = _user.Location ?? string.Empty;
-            if (!IsOnline || string.Equals(location, "offline", StringComparison.OrdinalIgnoreCase))
+            if (!IsPresent || string.Equals(location, "offline", StringComparison.OrdinalIgnoreCase))
             {
                 return "Offline";
+            }
+
+            if (IsActive)
+            {
+                return "Active on web";
             }
 
             if (string.Equals(location, "private", StringComparison.OrdinalIgnoreCase))
@@ -288,6 +291,11 @@ public sealed class FriendItem : ViewModelBase
     {
         get
         {
+            if (IsActive)
+            {
+                return "Active on web";
+            }
+
             if (IsOnline)
             {
                 return string.IsNullOrWhiteSpace(PlatformText) ? "Online now" : PlatformText;
@@ -310,6 +318,16 @@ public sealed class FriendItem : ViewModelBase
         OnAllPropertiesChanged();
     }
 
+    /// <summary>Refreshes cosmetics after the shared decoration index arrives.</summary>
+    public void RefreshPresentation()
+    {
+        OnPropertyChanged(nameof(IconFrameUrl));
+        OnPropertyChanged(nameof(IconFrameIntroUrl));
+        OnPropertyChanged(nameof(HasIconFrame));
+        OnPropertyChanged(nameof(TrustLabel));
+        OnPropertyChanged(nameof(TrustBrush));
+    }
+
     /// <summary>
     /// Demotes the friend to offline when a fast refresh proves they are no
     /// longer in the online friend set, without downloading their offline data.
@@ -323,6 +341,7 @@ public sealed class FriendItem : ViewModelBase
 
         _user.Location = "offline";
         _user.Status = "offline";
+        _user.State = "offline";
         OnAllPropertiesChanged();
     }
 

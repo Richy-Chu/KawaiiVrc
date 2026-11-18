@@ -11,6 +11,19 @@ public sealed record FriendListDelta(
     IReadOnlyList<VrcUser> Removed)
 {
     public bool HasChanges => Added.Count > 0 || Removed.Count > 0;
+
+    /// <summary>
+    /// False when at least one candidate could not be confirmed. The persisted
+    /// friend baseline must not advance past an unverified change.
+    /// </summary>
+    public bool IsComplete { get; init; } = true;
+
+    /// <summary>
+    /// True when this comparison came from the friend snapshot saved before
+    /// the app closed. The exact event time is unknown in that case; the
+    /// timestamp shown is when the next launch verified the change.
+    /// </summary>
+    public bool DetectedAfterRelaunch { get; init; }
 }
 
 /// <summary>
@@ -28,156 +41,155 @@ public sealed class ActivityFeedService
     {
         var entries = new List<ActivityEntry>();
 
-        var previousLookup = previousFriends?.ToDictionary(f => f.Id, StringComparer.Ordinal) ?? new Dictionary<string, VrcUser>();
+        var previousLookup = previousFriends?
+            .Where(friend => !string.IsNullOrWhiteSpace(friend.Id))
+            .GroupBy(friend => friend.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal)
+            ?? new Dictionary<string, VrcUser>();
+        var trustLookup = friends
+            .Where(friend => !string.IsNullOrWhiteSpace(friend.Id))
+            .GroupBy(friend => friend.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var detectedAt = DateTimeOffset.UtcNow;
 
         foreach (var friend in friends)
         {
             var previous = previousLookup.TryGetValue(friend.Id, out var prev) ? prev : null;
             var location = WorldLocation(friend.Location);
             var previousLocation = WorldLocation(previous?.Location);
+            var isOffline = IsOffline(friend);
+            var wasOffline = IsOffline(previous);
 
             if (previous is not null)
             {
-                var bio = (friend.Bio ?? string.Empty).Trim();
-                var previousBio = (previous.Bio ?? string.Empty).Trim();
-                if (!string.Equals(bio, previousBio, StringComparison.Ordinal))
+                // A missing bio means the payload did not carry one; only an
+                // explicit string (including an empty one) is an observation.
+                // This keeps an omitted field from looking like a cleared bio.
+                if (friend.Bio is not null && previous.Bio is not null)
                 {
-                    entries.Add(new ActivityEntry
+                    var bio = friend.Bio.Trim();
+                    var previousBio = previous.Bio.Trim();
+                    if (!string.Equals(bio, previousBio, StringComparison.Ordinal))
                     {
-                        Id = $"bio-{friend.Id}",
-                        Type = ActivityType.BioChanged,
-                        UserId = friend.Id,
-                        UserName = friend.Username,
-                        DisplayName = friend.DisplayName,
-                        AvatarUrl = AvatarThumbnailUrl(friend),
-                        Location = location ?? string.Empty,
-                        Timestamp = DateTimeOffset.UtcNow,
-                        IsOnline = true,
-                        Details = bio.Length == 0
-                            ? "cleared their bio"
-                            : $"changed their bio · {Shorten(bio)}"
-                    });
+                        entries.Add(new ActivityEntry
+                        {
+                            // Include both sides so changing back to the previous bio
+                            // is a new event instead of a duplicate.
+                            Id = $"bio-{friend.Id}-{ContentKey(previousBio)}-{ContentKey(bio)}",
+                            Type = ActivityType.BioChanged,
+                            UserId = friend.Id,
+                            UserName = friend.Username,
+                            DisplayName = friend.DisplayName,
+                            AvatarUrl = AvatarThumbnailUrl(friend),
+                            Location = location ?? string.Empty,
+                            Timestamp = detectedAt,
+                            IsOnline = !isOffline,
+                            Details = bio.Length == 0
+                                ? "cleared their bio"
+                                : $"changed their bio · {Shorten(bio)}"
+                        });
+                    }
                 }
 
-                if (!string.IsNullOrWhiteSpace(friend.CurrentAvatar) &&
-                    !string.Equals(friend.CurrentAvatar, previous.CurrentAvatar, StringComparison.Ordinal))
+                var avatarKey = AvatarKey(friend);
+                var previousAvatarKey = AvatarKey(previous);
+                if (!string.IsNullOrWhiteSpace(avatarKey) &&
+                    !string.Equals(avatarKey, previousAvatarKey, StringComparison.Ordinal))
                 {
                     entries.Add(new ActivityEntry
                     {
-                        Id = $"avatar-{friend.Id}",
+                        // A -> B -> A must produce two events. The old id only
+                        // contained the destination avatar, so the return switch
+                        // was silently swallowed.
+                        Id = $"avatar-{friend.Id}-{ContentKey(previousAvatarKey)}-{ContentKey(avatarKey)}",
                         Type = ActivityType.AvatarChanged,
                         UserId = friend.Id,
                         UserName = friend.Username,
                         DisplayName = friend.DisplayName,
-                        AvatarUrl = AvatarThumbnailUrl(friend),
-                        AvatarId = friend.CurrentAvatar!,
+                        AvatarUrl = AvatarChangeThumbnailUrl(friend),
+                        AvatarId = friend.CurrentAvatar ?? string.Empty,
+                        AvatarName = friend.CurrentAvatarName ?? string.Empty,
                         Location = location ?? string.Empty,
-                        Timestamp = DateTimeOffset.UtcNow,
-                        IsOnline = true,
-                        Details = "changed avatar"
+                        Timestamp = detectedAt,
+                        IsOnline = !isOffline,
+                        Details = string.IsNullOrWhiteSpace(friend.CurrentAvatarName)
+                            ? "changed avatar"
+                            : $"changed avatar · {friend.CurrentAvatarName}"
                     });
                 }
             }
 
-            // Friend came online
-            if (previousLocation is null)
+            // A friend is online whenever VRChat does not report "offline".
+            // "traveling" and "private" are still online states; they must not
+            // be turned into an offline event or omitted from the Online filter.
+            if (!isOffline && wasOffline)
             {
-                if (location is not null &&
-                    string.Equals(friend.Status, "active", StringComparison.OrdinalIgnoreCase))
+                entries.Add(new ActivityEntry
                 {
-                    entries.Add(new ActivityEntry
-                    {
-                        Id = $"online-{friend.Id}",
-                        Type = ActivityType.FriendOnline,
-                        UserId = friend.Id,
-                        UserName = friend.Username,
-                        DisplayName = friend.DisplayName,
-                        AvatarUrl = AvatarThumbnailUrl(friend),
-                        Location = location,
-                        WorldId = LaunchService.GetWorldIdFromLocation(location) ?? string.Empty,
-                        InstanceId = LaunchService.GetInstanceIdFromLocation(location) ?? string.Empty,
-                        Timestamp = friend.LastActivity ?? DateTimeOffset.UtcNow,
-                        IsOnline = true,
-                        Details = $"came online in {location}"
-                    });
-                }
+                    // The baseline id stays stable so a relaunch does not add a
+                    // second "came online" row for everyone already in a world.
+                    Id = previous is null ? $"online-{friend.Id}" : EventId("online", friend.Id),
+                    Type = ActivityType.FriendOnline,
+                    UserId = friend.Id,
+                    UserName = friend.Username,
+                    DisplayName = friend.DisplayName,
+                    AvatarUrl = AvatarThumbnailUrl(friend),
+                    Location = location ?? string.Empty,
+                    WorldId = LaunchService.GetWorldIdFromLocation(location) ?? string.Empty,
+                    InstanceId = LaunchService.GetInstanceIdFromLocation(location) ?? string.Empty,
+                    Timestamp = friend.LastActivity ?? detectedAt,
+                    IsOnline = true,
+                    Details = location is null ? "came online" : $"came online in {location}"
+                });
             }
-            else
+            else if (!isOffline && !wasOffline && location is not null &&
+                     !string.Equals(previousLocation, location, StringComparison.Ordinal))
             {
-                // Friend changed worlds
-                if (location is not null && !string.Equals(previousLocation, location, StringComparison.Ordinal))
+                // Friend changed worlds. A transition from private/traveling to
+                // a world also counts; a trip through "traveling" does not create
+                // a false offline/online pair.
+                entries.Add(new ActivityEntry
                 {
-                    entries.Add(new ActivityEntry
-                    {
-                        Id = $"join-{friend.Id}",
-                        Type = ActivityType.FriendJoinedWorld,
-                        UserId = friend.Id,
-                        UserName = friend.Username,
-                        DisplayName = friend.DisplayName,
-                        AvatarUrl = AvatarThumbnailUrl(friend),
-                        Location = location,
-                        WorldId = LaunchService.GetWorldIdFromLocation(location) ?? string.Empty,
-                        InstanceId = LaunchService.GetInstanceIdFromLocation(location) ?? string.Empty,
-                        Timestamp = friend.LastActivity ?? DateTimeOffset.UtcNow,
-                        IsOnline = true,
-                        Details = $"joined {location}"
-                    });
-                }
+                    Id = EventId("join", friend.Id),
+                    Type = ActivityType.FriendJoinedWorld,
+                    UserId = friend.Id,
+                    UserName = friend.Username,
+                    DisplayName = friend.DisplayName,
+                    AvatarUrl = AvatarThumbnailUrl(friend),
+                    Location = location,
+                    WorldId = LaunchService.GetWorldIdFromLocation(location) ?? string.Empty,
+                    InstanceId = LaunchService.GetInstanceIdFromLocation(location) ?? string.Empty,
+                    Timestamp = friend.LastActivity ?? detectedAt,
+                    IsOnline = true,
+                    Details = $"joined {location}"
+                });
+            }
 
-                // Friend went offline
-                if (location is null)
+            // Friend went offline. This needs a previous online snapshot; an
+            // initial offline friend has no transition to record.
+            if (previous is not null && isOffline && !wasOffline)
+            {
+                entries.Add(new ActivityEntry
                 {
-                    entries.Add(new ActivityEntry
-                    {
-                        Id = $"offline-{friend.Id}",
-                        Type = ActivityType.FriendOffline,
-                        UserId = friend.Id,
-                        UserName = friend.Username,
-                        DisplayName = friend.DisplayName,
-                        AvatarUrl = AvatarThumbnailUrl(friend),
-                        Timestamp = friend.LastActivity ?? DateTimeOffset.UtcNow,
-                        IsOnline = false,
-                        Details = "went offline"
-                    });
-                }
+                    Id = EventId("offline", friend.Id),
+                    Type = ActivityType.FriendOffline,
+                    UserId = friend.Id,
+                    UserName = friend.Username,
+                    DisplayName = friend.DisplayName,
+                    AvatarUrl = AvatarThumbnailUrl(friend),
+                    Timestamp = friend.LastActivity ?? detectedAt,
+                    IsOnline = false,
+                    Details = "went offline"
+                });
             }
         }
 
-        if (previousFriends is not null)
+        foreach (var entry in entries)
         {
-            var delta = DiffFriends(friends, previousFriends);
-            foreach (var friend in delta.Added)
+            if (trustLookup.TryGetValue(entry.UserId, out var friend))
             {
-                entries.Add(new ActivityEntry
-                {
-                    Id = $"added-{friend.Id}",
-                    Type = ActivityType.FriendAdded,
-                    UserId = friend.Id,
-                    UserName = friend.Username,
-                    DisplayName = friend.DisplayName,
-                    AvatarUrl = AvatarThumbnailUrl(friend),
-                    Location = WorldLocation(friend.Location) ?? string.Empty,
-                    Timestamp = DateTimeOffset.UtcNow,
-                    IsOnline = true,
-                    Details = "friended you"
-                });
-            }
-
-            foreach (var friend in delta.Removed)
-            {
-                entries.Add(new ActivityEntry
-                {
-                    Id = $"removed-{friend.Id}",
-                    Type = ActivityType.FriendRemoved,
-                    UserId = friend.Id,
-                    UserName = friend.Username,
-                    DisplayName = friend.DisplayName,
-                    AvatarUrl = AvatarThumbnailUrl(friend),
-                    Location = WorldLocation(friend.Location) ?? string.Empty,
-                    Timestamp = DateTimeOffset.UtcNow,
-                    IsOnline = false,
-                    Details = "unfriended you"
-                });
+                entry.Tags = friend.Tags;
+                entry.DeveloperType = friend.DeveloperType;
             }
         }
 
@@ -202,8 +214,8 @@ public sealed class ActivityFeedService
     }
 
     /// <summary>
-    /// Returns the world location for a friend, or null when VRChat reports a
-    /// non-world value such as "offline" or "traveling".
+    /// Returns the joinable world location for a friend, or null when VRChat
+    /// reports a non-world value such as "offline", "traveling" or "private".
     /// </summary>
     private static string? WorldLocation(string? location)
     {
@@ -213,18 +225,75 @@ public sealed class ActivityFeedService
         }
 
         return string.Equals(location, "offline", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(location, "traveling", StringComparison.OrdinalIgnoreCase)
+               string.Equals(location, "traveling", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(location, "private", StringComparison.OrdinalIgnoreCase)
             ? null
             : location;
     }
 
+    /// <summary>
+    /// Offline is a real presence state, unlike "traveling" or "private", which
+    /// still mean the friend is online.
+    /// </summary>
+    private static bool IsOffline(VrcUser? friend)
+        => friend is null ||
+           string.Equals(friend.Status, "offline", StringComparison.OrdinalIgnoreCase) ||
+           string.IsNullOrWhiteSpace(friend.Location) ||
+           string.Equals(friend.Location, "offline", StringComparison.OrdinalIgnoreCase);
+
+    private static string EventId(string prefix, string userId)
+        => $"{prefix}-{userId}-{Guid.NewGuid():N}";
+
+    internal static string ContentKey(string? value)
+    {
+        var text = value ?? string.Empty;
+        unchecked
+        {
+            var hash = 14695981039346656037UL;
+            foreach (var character in text)
+            {
+                hash ^= character;
+                hash *= 1099511628211UL;
+            }
+
+            return $"{text.Length}-{hash:X16}";
+        }
+    }
+
     private static string AvatarThumbnailUrl(VrcUser friend)
         => ImageUrlHelper.PickAvatarThumbnailUrl(
-               null,
-               null,
+               friend.UserIcon,
+               friend.ProfilePicOverrideThumbnail ?? friend.IconUrl,
                friend.CurrentAvatarThumbnailImageUrl,
                friend.CurrentAvatarImageUrl,
                128) ?? string.Empty;
+
+    /// <summary>
+    /// Avatar-change rows must show the avatar itself, not the user icon that
+    /// normally represents a friend in the timeline.
+    /// </summary>
+    private static string AvatarChangeThumbnailUrl(VrcUser friend)
+        => ImageUrlHelper.PickAvatarThumbnailUrl(
+               friend.CurrentAvatarThumbnailImageUrl,
+               friend.CurrentAvatarImageUrl,
+               AvatarThumbnailUrl(friend),
+               null,
+               128) ?? string.Empty;
+
+    private static string? AvatarKey(VrcUser friend)
+    {
+        if (!string.IsNullOrWhiteSpace(friend.CurrentAvatar))
+        {
+            return friend.CurrentAvatar;
+        }
+
+        if (!string.IsNullOrWhiteSpace(friend.CurrentAvatarThumbnailImageUrl))
+        {
+            return friend.CurrentAvatarThumbnailImageUrl;
+        }
+
+        return friend.CurrentAvatarImageUrl;
+    }
 
     private static string Shorten(string text) =>
         text.Length > 80 ? text[..80].TrimEnd() + "…" : text;
@@ -240,19 +309,42 @@ public sealed class ActivityFeedService
     }
 
     /// <summary>
-    /// Search activity entries by user name or details.
+    /// Search activity entries by display name, username, user id, details or
+    /// world. User ids match with or without the "usr_" prefix, so an id copied
+    /// from a profile keeps finding that person after they rename themselves.
     /// </summary>
     public List<ActivityEntry> Search(List<ActivityEntry> entries, string query)
     {
         if (string.IsNullOrWhiteSpace(query))
             return entries;
 
-        var q = query.Trim().ToLowerInvariant();
+        var q = query.Trim();
         return entries.Where(e =>
-            e.DisplayName.ToLowerInvariant().Contains(q) ||
-            e.UserName.ToLowerInvariant().Contains(q) ||
-            e.Details.ToLowerInvariant().Contains(q) ||
-            e.WorldName.ToLowerInvariant().Contains(q)
+            e.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+            e.UserName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+            MatchesUserId(e.UserId, q) ||
+            e.Details.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+            e.WorldName.Contains(q, StringComparison.OrdinalIgnoreCase)
         ).ToList();
     }
+
+    /// <summary>Matches a VRChat user id with or without its "usr_" prefix.</summary>
+    public static bool MatchesUserId(string? userId, string? query)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(query))
+            return false;
+
+        var id = userId.Trim();
+        var q = query.Trim();
+        if (id.Contains(q, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var bareId = WithoutUserIdPrefix(id);
+        var bareQuery = WithoutUserIdPrefix(q);
+        return bareQuery.Length >= 4 &&
+               bareId.Contains(bareQuery, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string WithoutUserIdPrefix(string value) =>
+        value.StartsWith("usr_", StringComparison.OrdinalIgnoreCase) ? value[4..] : value;
 }

@@ -26,6 +26,7 @@ public sealed class AvatarViewModel : ViewModelBase
     private ObservableCollection<Avatar> _avatars = new();
     private string _searchTerm = string.Empty;
     private bool _isBusy;
+    private bool _isWearingAvatar;
     private string? _errorMessage;
     private string? _statusMessage;
     private int _totalCount;
@@ -43,12 +44,16 @@ public sealed class AvatarViewModel : ViewModelBase
 
     // The account's complete avatar library; the grid shows a filtered view of it.
     private List<Avatar> _library = new();
-    private int _publishedLibraryCount;
     private string? _currentAvatarId;
     private string? _originalAvatarId;
     private string? _previousAvatarId;
     private string? _activeSlotTag;
     private bool _favoritesOnly;
+    private FilterOption _selectedAvatarSort = null!;
+    private FilterOption _selectedFavoriteSort = null!;
+    private bool _isAvatarSortOpen;
+    private bool _isFavoriteSortOpen;
+    private CancellationTokenSource? _avatarOscCancellation;
 
     private readonly List<IRelayCommand> _commands = new();
 
@@ -59,9 +64,9 @@ public sealed class AvatarViewModel : ViewModelBase
         SearchCommand = Track(new RelayCommand(ApplyFilter));
         RefreshCommand = Track(new AsyncRelayCommand(LoadAsync, () => !IsBusy));
         ToggleFavoriteCommand = Track(new AsyncRelayCommand<string>(ToggleFavoriteAsync, _ => !IsBusy));
-        WearAvatarCommand = Track(new AsyncRelayCommand<string>(WearAvatarAsync, _ => !IsBusy));
+        WearAvatarCommand = Track(new AsyncRelayCommand<string>(WearAvatarAsync, _ => !IsWearingAvatar));
         OpenAvatarDetailsCommand = Track(new RelayCommand<string>(OpenDetails));
-        CloseAvatarDetailsCommand = Track(new RelayCommand(() => SelectedAvatar = null));
+        CloseAvatarDetailsCommand = Track(new RelayCommand(CloseAvatarDetails));
         ClearSearchCommand = Track(new RelayCommand(ClearSearch));
         ToggleFavoritesFilterCommand = Track(new RelayCommand(ToggleFavoritesFilter));
         OpenAvatarOnWebCommand = Track(new RelayCommand<string>(OpenAvatarOnWeb, id => !string.IsNullOrWhiteSpace(id)));
@@ -70,10 +75,10 @@ public sealed class AvatarViewModel : ViewModelBase
         CancelFavoriteSlotCommand = Track(new RelayCommand(() => IsSlotPickerOpen = false));
         RevertPreviousAvatarCommand = Track(new AsyncRelayCommand(
             () => WearAvatarAsync(_previousAvatarId),
-            () => !IsBusy && CanRevertPrevious));
+            () => !IsWearingAvatar && CanRevertPrevious));
         WearOriginalAvatarCommand = Track(new AsyncRelayCommand(
             () => WearAvatarAsync(_originalAvatarId),
-            () => !IsBusy && CanRevertAvatar));
+            () => !IsWearingAvatar && CanRevertAvatar));
         ToggleLocalFavoriteCommand = Track(new RelayCommand<string>(ToggleLocalFavorite, id => !string.IsNullOrWhiteSpace(id)));
         GlobalSearchCommand = Track(new RelayCommand(
             () =>
@@ -103,6 +108,33 @@ public sealed class AvatarViewModel : ViewModelBase
             () => HasPreviousGlobal));
         ClearGlobalSearchCommand = Track(new RelayCommand(ClearGlobalSearch));
         RefreshBrowseCommand = Track(new RelayCommand(RefreshBrowse, () => !IsGlobalBusy));
+
+        ToggleProviderFilterCommand = Track(new RelayCommand(
+            () => IsProviderFilterOpen = !IsProviderFilterOpen));
+        SelectAllProvidersCommand = Track(new RelayCommand(() => SetProviderSelection(true)));
+        SelectNoProvidersCommand = Track(new RelayCommand(() => SetProviderSelection(false)));
+        ToggleAvatarSortCommand = Track(new RelayCommand(
+            () => IsAvatarSortOpen = !IsAvatarSortOpen));
+        ToggleFavoriteSortCommand = Track(new RelayCommand(
+            () => IsFavoriteSortOpen = !IsFavoriteSortOpen));
+
+        AvatarSortOptions = new ObservableCollection<FilterOption>
+        {
+            new("date-added", "Date Added"),
+            new("last-updated", "Last Updated"),
+            new("name", "Name"),
+            new("recently-used", "Recently Used"),
+            new("performance", "Performance")
+        };
+        _selectedAvatarSort = ResolveAvatarSort(SettingsStore.Shared.Settings.UploadedAvatarSort);
+        _selectedFavoriteSort = ResolveAvatarSort(SettingsStore.Shared.Settings.FavoriteAvatarSort);
+
+        foreach (var providerName in VrcApiClient.CommunityProviderNames)
+        {
+            ProviderFilterOptions.Add(new ProviderFilterOption(providerName, OnProviderFilterChanged));
+        }
+
+        SetProviderSelection(true);
 
         LoadLocalFavorites();
     }
@@ -155,6 +187,19 @@ public sealed class AvatarViewModel : ViewModelBase
         }
     }
 
+    /// <summary>True only while an avatar switch is in flight, never during a library load.</summary>
+    public bool IsWearingAvatar
+    {
+        get => _isWearingAvatar;
+        private set
+        {
+            if (SetProperty(ref _isWearingAvatar, value))
+            {
+                RaiseCommandStates();
+            }
+        }
+    }
+
     public string? ErrorMessage
     {
         get => _errorMessage;
@@ -182,6 +227,55 @@ public sealed class AvatarViewModel : ViewModelBase
     }
 
     public string FavoritesFilterLabel => FavoritesOnly ? "All avatars" : "Favourites";
+
+    /// <summary>The game's five avatar sort modes, in its menu order.</summary>
+    public ObservableCollection<FilterOption> AvatarSortOptions { get; }
+
+    public FilterOption SelectedAvatarSort
+    {
+        get => _selectedAvatarSort;
+        set
+        {
+            if (value is null || !SetProperty(ref _selectedAvatarSort, value))
+            {
+                return;
+            }
+
+            SettingsStore.Shared.Settings.UploadedAvatarSort = value.Key;
+            SettingsStore.Shared.Save();
+            IsAvatarSortOpen = false;
+            ApplyFilter();
+        }
+    }
+
+    public FilterOption SelectedFavoriteSort
+    {
+        get => _selectedFavoriteSort;
+        set
+        {
+            if (value is null || !SetProperty(ref _selectedFavoriteSort, value))
+            {
+                return;
+            }
+
+            SettingsStore.Shared.Settings.FavoriteAvatarSort = value.Key;
+            SettingsStore.Shared.Save();
+            IsFavoriteSortOpen = false;
+            BuildFavorites();
+        }
+    }
+
+    public bool IsAvatarSortOpen
+    {
+        get => _isAvatarSortOpen;
+        set => SetProperty(ref _isAvatarSortOpen, value);
+    }
+
+    public bool IsFavoriteSortOpen
+    {
+        get => _isFavoriteSortOpen;
+        set => SetProperty(ref _isFavoriteSortOpen, value);
+    }
 
     /// <summary>Avatars favourited on the VRChat account, resolved against your library.</summary>
     public ObservableCollection<Avatar> FavoriteAvatars { get; } = new();
@@ -239,7 +333,13 @@ public sealed class AvatarViewModel : ViewModelBase
     private int _globalPage;
     private bool _isGlobalBusy;
 
-    public ObservableCollection<Avatar> GlobalResults { get; } = new();
+    public RangeObservableCollection<Avatar> GlobalResults { get; } = new();
+
+    /// <summary>Raised after a search batch adds public avatar rows.</summary>
+    public event Action? GlobalResultsChanged;
+
+    /// <summary>Raised only after VRChat accepts a new avatar for this account.</summary>
+    public event Action<Avatar>? AvatarWorn;
 
     public string GlobalSearchTerm
     {
@@ -326,7 +426,15 @@ public sealed class AvatarViewModel : ViewModelBase
     private readonly Dictionary<string, CachedSearch> _searchCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromMinutes(4);
 
-    private string SearchCacheKey => $"{GlobalSearchTerm.Trim().ToLowerInvariant()}|{PublicOnly}";
+    private string ProviderFilterCacheKey => ProviderFilterOptions.All(option => option.IsSelected)
+        ? "all"
+        : string.Join(",", ProviderFilterOptions
+            .Where(option => option.IsSelected)
+            .Select(option => option.Name)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase));
+
+    private string SearchCacheKey =>
+        $"{GlobalSearchTerm.Trim().ToLowerInvariant()}|{PublicOnly}|{ProviderFilterCacheKey}";
 
     private async Task StartSearchAsync()
     {
@@ -548,10 +656,7 @@ public sealed class AvatarViewModel : ViewModelBase
     {
         _indexCounts.Clear();
         _failedIndexes.Clear();
-        if (_browsePage >= 1 && _browsePage <= _browsePageNewCounts.Count)
-        {
-            _indexCounts["avtr.icu"] = VisibleCountForBrowsePage(_browsePage);
-        }
+        SetBrowseStatusCounts(_browsePage);
 
         BumpResultsPageToken();
         OnPropertyChanged(nameof(CommunityStatusText));
@@ -566,14 +671,10 @@ public sealed class AvatarViewModel : ViewModelBase
     {
         // A stored page is always a page change, so start it at the top.
         BumpResultsPageToken();
-        GlobalResults.Clear();
-        if (_searchPage >= 1 && _searchPage <= _searchPages.Count)
-        {
-            foreach (var avatar in _searchPages[_searchPage - 1])
-            {
-                GlobalResults.Add(avatar);
-            }
-        }
+        GlobalResults.ReplaceAll(
+            _searchPage >= 1 && _searchPage <= _searchPages.Count
+                ? _searchPages[_searchPage - 1]
+                : Array.Empty<Avatar>());
 
         // Status counts unique avatars actually shown on this page, per index, so
         // an index can never claim rows that de-duplication removed.
@@ -757,7 +858,7 @@ public sealed class AvatarViewModel : ViewModelBase
 
             if (_lastGlobalQuery.Length == 0)
             {
-                return $"Browsing {count} public avatars (community index)";
+                return $"Page {_browsePage} · {count} public avatars (community index)";
             }
 
             // Never let a community-only result set read like a normal VRChat
@@ -874,6 +975,7 @@ public sealed class AvatarViewModel : ViewModelBase
         ErrorMessage = null;
         try
         {
+            var isVrchatFavorite = false;
             if (string.Equals(tag, "local", StringComparison.Ordinal))
             {
                 _localFavoriteIds.Add(avatarId);
@@ -894,10 +996,26 @@ public sealed class AvatarViewModel : ViewModelBase
                 }
 
                 var recordId = await _api.AddAvatarFavoriteAsync(avatarId, tag);
+                isVrchatFavorite = true;
                 if (!string.IsNullOrWhiteSpace(recordId))
                 {
                     _favoriteRecords[avatarId] = recordId;
                     _favoriteTags[avatarId] = new List<string> { tag };
+                }
+                else
+                {
+                    // Some successful responses omit the favourite record id.
+                    // Refresh so the remove action has the record it needs; a
+                    // refresh failure must not turn a successful save into an
+                    // error message.
+                    try
+                    {
+                        await RefreshFavoriteRecordsAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"favourite refresh after add: {ex.Message}");
+                    }
                 }
 
                 StatusMessage = $"Saved {PendingFavoriteAvatarName} to VRChat favourite {tag[^1]}.";
@@ -906,7 +1024,12 @@ public sealed class AvatarViewModel : ViewModelBase
             var avatar = FindAvatar(avatarId);
             if (avatar is not null)
             {
-                avatar.IsFavorite = _favoriteRecords.ContainsKey(avatarId);
+                // A profile avatar is not in the account library. Keep the
+                // selected record as a favourite detail so the Favourites tab
+                // and the Add/Remove button reflect the save immediately.
+                _favoriteAvatars[avatarId] = avatar;
+                avatar.IsFavorite = isVrchatFavorite || _favoriteRecords.ContainsKey(avatarId);
+                avatar.IsLocalFavorite = _localFavoriteIds.Contains(avatarId);
             }
 
             BuildFavorites();
@@ -929,6 +1052,86 @@ public sealed class AvatarViewModel : ViewModelBase
     public RelayCommand PreviousGlobalPageCommand { get; }
     public RelayCommand ClearGlobalSearchCommand { get; }
     public RelayCommand RefreshBrowseCommand { get; }
+    public RelayCommand ToggleProviderFilterCommand { get; }
+    public RelayCommand SelectAllProvidersCommand { get; }
+    public RelayCommand SelectNoProvidersCommand { get; }
+
+    /// <summary>The community indexes the user can include in a search.</summary>
+    public ObservableCollection<ProviderFilterOption> ProviderFilterOptions { get; } = new();
+
+    private bool _isProviderFilterOpen;
+
+    public bool IsProviderFilterOpen
+    {
+        get => _isProviderFilterOpen;
+        set => SetProperty(ref _isProviderFilterOpen, value);
+    }
+
+    public string ProviderFilterLabel
+    {
+        get
+        {
+            var selected = ProviderFilterOptions.Count(option => option.IsSelected);
+            if (selected == 0)
+            {
+                return "No providers";
+            }
+
+            if (selected == ProviderFilterOptions.Count)
+            {
+                return $"All providers ({selected})";
+            }
+
+            return selected == 1
+                ? ProviderFilterOptions.First(option => option.IsSelected).Name
+                : $"{selected} providers";
+        }
+    }
+
+    public string ProviderFilterSummary
+    {
+        get
+        {
+            var selected = ProviderFilterOptions.Count(option => option.IsSelected);
+            var total = ProviderFilterOptions.Count;
+            if (selected == 0)
+            {
+                return "No community indexes selected. Search will show only VRChat results.";
+            }
+
+            return selected == total
+                ? $"All {total} community indexes selected. VRChat is always searched too."
+                : $"{selected} of {total} community indexes selected. VRChat is always searched too.";
+        }
+    }
+
+    /// <summary>
+    /// Null means all providers, so an unchanged search keeps the fast path. An
+    /// empty set is a deliberate "no community indexes" selection.
+    /// </summary>
+    private IReadOnlyCollection<string>? SelectedProviderNames
+        => ProviderFilterOptions.All(option => option.IsSelected)
+            ? null
+            : ProviderFilterOptions
+                .Where(option => option.IsSelected)
+                .Select(option => option.Name)
+                .ToArray();
+
+    private void SetProviderSelection(bool selected)
+    {
+        foreach (var option in ProviderFilterOptions)
+        {
+            option.IsSelected = selected;
+        }
+
+        OnProviderFilterChanged();
+    }
+
+    private void OnProviderFilterChanged()
+    {
+        OnPropertyChanged(nameof(ProviderFilterLabel));
+        OnPropertyChanged(nameof(ProviderFilterSummary));
+    }
 
     private bool _publicOnly = true;
 
@@ -1083,22 +1286,51 @@ public sealed class AvatarViewModel : ViewModelBase
         _browsePage = 1;
         _communityCache.Clear();
         _communityOffset = 0;
+        _browseVrcndbPage = 1;
         _communityPageFull = false;
         // Refreshing the browse cache must not wipe an active search.
         _ = BrowseCommunityAsync(publish: string.IsNullOrWhiteSpace(GlobalSearchTerm));
     }
 
-    /// <summary>Single entry point so an avatar id can never appear twice.</summary>
-    private bool AddGlobalResult(Avatar avatar)
+        /// <summary>
+    /// Adds a source's rows as one collection update. Per-row adds made the
+    /// result grid re-layout for every avatar while several indexes streamed in.
+    /// </summary>
+    private int AddGlobalResults(IEnumerable<Avatar> avatars, bool atStart = false)
     {
-        if (GlobalResults.Any(existing => string.Equals(existing.Id, avatar.Id, StringComparison.Ordinal)))
+        var seen = GlobalResults
+            .Select(existing => existing.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var rows = new List<Avatar>();
+        foreach (var avatar in avatars)
         {
-            return false;
+            if (!seen.Add(avatar.Id))
+            {
+                continue;
+            }
+
+            ApplyState(avatar, _currentAvatarId);
+            rows.Add(avatar);
         }
 
-        ApplyState(avatar, _currentAvatarId);
-        GlobalResults.Add(avatar);
-        return true;
+        if (rows.Count == 0)
+        {
+            return 0;
+        }
+
+        AvatarLookupCache.Remember(rows);
+
+        if (atStart)
+        {
+            GlobalResults.InsertRange(0, rows);
+        }
+        else
+        {
+            GlobalResults.AddRange(rows);
+        }
+
+        GlobalResultsChanged?.Invoke();
+        return rows.Count;
     }
 
     private bool MatchesPrivacy(Avatar avatar)
@@ -1173,7 +1405,7 @@ public sealed class AvatarViewModel : ViewModelBase
         {
             if (_library.Count == 0)
             {
-                return HasLoaded ? "No avatars yet" : string.Empty;
+                return HasLoaded ? "No uploaded avatars yet" : string.Empty;
             }
 
             if (FavoritesOnly)
@@ -1183,10 +1415,10 @@ public sealed class AvatarViewModel : ViewModelBase
 
             if (string.IsNullOrWhiteSpace(_searchTerm))
             {
-                return _library.Count == 1 ? "1 avatar" : $"{_library.Count} avatars";
+                return _library.Count == 1 ? "1 uploaded avatar" : $"{_library.Count} uploaded avatars";
             }
 
-            return $"{Avatars.Count} of {_library.Count} avatars";
+            return $"{Avatars.Count} of {_library.Count} uploaded avatars";
         }
     }
 
@@ -1196,8 +1428,20 @@ public sealed class AvatarViewModel : ViewModelBase
         get => _selectedAvatar;
         set
         {
+            // Ownership affects CanUse, so it must be set before the detail
+            // bindings see the new avatar.
+            if (value is not null)
+            {
+                ApplyOwnership(value);
+            }
+
             if (SetProperty(ref _selectedAvatar, value))
             {
+                if (value is null)
+                {
+                    SetReturnToProfile(false);
+                }
+
                 OnPropertyChanged(nameof(IsAvatarDetailsOpen));
             }
         }
@@ -1205,12 +1449,59 @@ public sealed class AvatarViewModel : ViewModelBase
 
     public bool IsAvatarDetailsOpen => SelectedAvatar is not null;
 
-    /// <summary>Opens the shared avatar detail popup for a record loaded from activity.</summary>
-    public void ShowAvatarDetails(Avatar avatar)
+    private bool _canReturnToProfile;
+
+    /// <summary>True when this avatar was opened from a profile card.</summary>
+    public bool CanReturnToProfile
+    {
+        get => _canReturnToProfile;
+        private set
+        {
+            if (SetProperty(ref _canReturnToProfile, value))
+            {
+                OnPropertyChanged(nameof(AvatarDetailsBackLabel));
+            }
+        }
+    }
+
+    public string AvatarDetailsBackLabel => CanReturnToProfile
+        ? "← Back to profile"
+        : "← Back to all avatars";
+
+    /// <summary>
+    /// Opens the shared avatar detail popup. The profile flag is set only by the
+    /// profile callback, so the back button can return to the card behind it.
+    /// </summary>
+    public void ShowAvatarDetails(Avatar avatar, bool returnToProfile = false)
     {
         StatusMessage = null;
         ErrorMessage = null;
+        SetReturnToProfile(returnToProfile);
         SelectedAvatar = avatar;
+
+        // A profile card can be opened before the avatar tab has loaded. Fetch
+        // the favourite records so the button knows whether this avatar is
+        // already favourited and can remove it.
+        if (!_favoritesLoaded && !_favoritesLoading)
+        {
+            _ = EnsureFavoritesAsync();
+        }
+    }
+
+    private void CloseAvatarDetails()
+    {
+        SelectedAvatar = null;
+        SetReturnToProfile(false);
+    }
+
+    private void SetReturnToProfile(bool value)
+    {
+        if (CanReturnToProfile == value)
+        {
+            return;
+        }
+
+        CanReturnToProfile = value;
     }
 
     /// <summary>True once the library has loaded, so navigation does not refetch.</summary>
@@ -1228,6 +1519,8 @@ public sealed class AvatarViewModel : ViewModelBase
     public ICommand CloseAvatarDetailsCommand { get; }
     public ICommand ClearSearchCommand { get; }
     public ICommand ToggleFavoritesFilterCommand { get; }
+    public ICommand ToggleAvatarSortCommand { get; }
+    public ICommand ToggleFavoriteSortCommand { get; }
     public ICommand WearOriginalAvatarCommand { get; }
 
     /// <summary>Starts the library load unless it is already running or done.</summary>
@@ -1260,10 +1553,10 @@ public sealed class AvatarViewModel : ViewModelBase
             await EnsureFavoritesAsync();
 
             _currentAvatarId = _api.CurrentUser?.CurrentAvatar;
+            RememberCurrentAvatar();
             // Remember the avatar the session started with so it can be restored.
             _originalAvatarId ??= _currentAvatarId;
             _library = new List<Avatar>();
-            _publishedLibraryCount = 0;
             Avatars = new ObservableCollection<Avatar>();
             TotalCount = 0;
 
@@ -1277,6 +1570,11 @@ public sealed class AvatarViewModel : ViewModelBase
 
             // Any favourite that the library did not cover still needs details.
             _ = HydrateFavoriteAvatarsAsync();
+
+            // VRChat sometimes omits tags from private/own list rows. Fill them
+            // from a content-tag filtered query so every card shows the same
+            // readable content chips.
+            _ = HydrateMissingContentTagsAsync();
 
             // Keep the detail view bound to the refreshed instance.
             if (SelectedAvatar is not null)
@@ -1315,7 +1613,89 @@ public sealed class AvatarViewModel : ViewModelBase
         }
 
         StatusMessage = null;
-        SelectedAvatar = FindAvatar(avatarId);
+        SetReturnToProfile(false);
+        var avatar = FindAvatar(avatarId);
+        AvatarLookupCache.Remember(avatar);
+        SelectedAvatar = avatar;
+
+        // Community rows and own rows whose list response omitted tags still
+        // need VRChat's authoritative record. Fetch it when the popup opens so
+        // the detail panel always has the same tags as the cards.
+        if (avatar is not null &&
+            (!string.IsNullOrWhiteSpace(avatar.SourceName) || avatar.Tags.Count == 0))
+        {
+            _ = HydrateCommunityAvatarAsync(avatar);
+        }
+    }
+
+    private bool _contentTagsHydrating;
+
+    private async Task HydrateMissingContentTagsAsync()
+    {
+        if (_contentTagsHydrating || _library.Count == 0)
+        {
+            return;
+        }
+
+        _contentTagsHydrating = true;
+        try
+        {
+            var tagged = await _api.GetOwnContentTaggedAvatarsAsync();
+            if (tagged.Count == 0)
+            {
+                return;
+            }
+
+            var targets = _library.ToDictionary(avatar => avatar.Id, StringComparer.Ordinal);
+            var changed = false;
+            foreach (var source in tagged)
+            {
+                if (source.Tags.Count > 0 &&
+                    targets.TryGetValue(source.Id, out var target))
+                {
+                    changed |= target.MergeTags(source.Tags);
+                }
+            }
+
+            if (!changed)
+            {
+                return;
+            }
+
+            ApplyFilter();
+            BuildFavorites();
+        }
+        catch (Exception ex)
+        {
+            // Tags are supplementary visual metadata; keep the library usable if
+            // the filtered query is unavailable.
+            Debug.WriteLine($"avatar content tags: {ex.Message}");
+        }
+        finally
+        {
+            _contentTagsHydrating = false;
+        }
+    }
+
+    private async Task HydrateCommunityAvatarAsync(Avatar avatar)
+    {
+        try
+        {
+            var details = await _api.GetAvatarAsync(avatar.Id);
+            if (details is not null)
+            {
+                avatar.MergeDetailsFrom(details);
+                // The merged record may carry the author id that proves this is
+                // the signed-in user's own private avatar.
+                ApplyOwnership(avatar);
+            }
+        }
+        catch (Exception ex)
+        {
+            // The community row is still usable when VRChat briefly refuses or
+            // cannot find the public record; keep it instead of closing the popup.
+            Debug.WriteLine($"avatar search detail hydration {avatar.Id}: {ex.Message}");
+        }
     }
 
     private async Task WearAvatarAsync(string? avatarId)
@@ -1325,24 +1705,57 @@ public sealed class AvatarViewModel : ViewModelBase
             return;
         }
 
-        var name = FindAvatar(avatarId)?.DisplayName ?? "that avatar";
+        var avatar = FindAvatar(avatarId);
+        if (avatar?.HasSecurityCheckFailed == true)
+        {
+            ErrorMessage = "VRChat's security checks failed on that avatar, so it cannot be loaded, worn, or favourited.";
+            return;
+        }
 
-        IsBusy = true;
+        var name = avatar?.DisplayName ?? "that avatar";
+
+        IsWearingAvatar = true;
         ErrorMessage = null;
         StatusMessage = null;
         try
         {
             _previousAvatarId = _currentAvatarId;
-            await _api.SetCurrentAvatarAsync(avatarId);
+
+            // VRChat's REST select can take a long time (or never) to reach the
+            // running client. Send OSC directly to VRChat's local input port as
+            // well, then keep nudging it after the account update succeeds.
+            var settings = SettingsStore.Shared.Settings;
+            _avatarOscCancellation?.Cancel();
+            _avatarOscCancellation?.Dispose();
+            _avatarOscCancellation = new CancellationTokenSource();
+            var oscToken = _avatarOscCancellation.Token;
+
+            // Start the OSC retry loop before the REST response so VRChat can
+            // load the avatar as soon as its account update becomes visible,
+            // without waiting for our own HTTP round trip first.
+            _ = NudgeAvatarOverOscAsync(avatarId, settings, oscToken);
+            await _api.SetCurrentAvatarAsync(avatarId, oscToken);
             _currentAvatarId = avatarId;
+            RememberAvatarUse(avatarId);
+            ApplyCurrentAvatarLocally(avatarId);
+            AvatarWorn?.Invoke(avatar ?? new Avatar
+            {
+                Id = avatarId,
+                Name = name
+            });
+            if (string.Equals(SelectedAvatarSort.Key, "recently-used", StringComparison.Ordinal))
+            {
+                ApplyFilter();
+            }
+            if (string.Equals(SelectedFavoriteSort.Key, "recently-used", StringComparison.Ordinal))
+            {
+                BuildFavorites();
+            }
+            OscAvatarSwitch.TrySend(avatarId, settings.OscHost, settings.OscPort);
             StatusMessage = $"Now wearing {name}. It is your avatar in VRChat now.";
             OnPropertyChanged(nameof(CanRevertPrevious));
             OnPropertyChanged(nameof(PreviousAvatarName));
             OnPropertyChanged(nameof(CanRevertAvatar));
-
-            // Release the busy flag so the reload can run and mark the new avatar.
-            IsBusy = false;
-            await LoadAsync();
         }
                     catch (VrcApiException ex) when (ex.StatusCode == 403)
         {
@@ -1363,34 +1776,117 @@ public sealed class AvatarViewModel : ViewModelBase
         }
         finally
         {
-            IsBusy = false;
+            if (ErrorMessage is not null)
+            {
+                _avatarOscCancellation?.Cancel();
+            }
+
+            IsWearingAvatar = false;
         }
     }
 
-    /// <summary>Appends newly fetched avatars that match the current search.</summary>
+    /// <summary>Republishes the progressively fetched library in the selected order.</summary>
     private void PublishLibrary(IReadOnlyList<Avatar> library)
     {
         _library = library.ToList();
+        ApplyFilter();
+    }
 
-        for (var index = _publishedLibraryCount; index < _library.Count; index++)
+    /// <summary>Test seam: seeds the uploaded library without making an API request.</summary>
+    internal void SeedLibraryForTests(IEnumerable<Avatar> avatars)
+    {
+        _library = avatars.ToList();
+        ApplyFilter();
+    }
+
+    /// <summary>Test seam: seeds VRChat favourites without making an API request.</summary>
+    internal void SeedFavoritesForTests(IEnumerable<Avatar> avatars)
+    {
+        _favoriteRecords.Clear();
+        _favoriteTags.Clear();
+        _favoriteAvatars.Clear();
+        foreach (var avatar in avatars)
         {
-            var avatar = _library[index];
-            ApplyState(avatar, _currentAvatarId);
-            if (Matches(avatar))
-            {
-                Avatars.Add(avatar);
-            }
+            _favoriteRecords[avatar.Id] = $"fav_{avatar.Id}";
+            _favoriteTags[avatar.Id] = new List<string> { "avatars1" };
+            _favoriteAvatars[avatar.Id] = avatar;
         }
 
-        _publishedLibraryCount = _library.Count;
+        _favoritesLoaded = true;
+        BuildFavorites();
+    }
+
+    /// <summary>Rebuilds the visible grid from the library for the current query and sort.</summary>
+    private void ApplyFilter()
+    {
+        Avatars = new ObservableCollection<Avatar>(
+            SortAvatars(_library.Where(Matches), SelectedAvatarSort));
         UpdateSummary();
     }
 
-    /// <summary>Rebuilds the visible grid from the library for the current query.</summary>
-    private void ApplyFilter()
+    private FilterOption ResolveAvatarSort(string? key)
     {
-        Avatars = new ObservableCollection<Avatar>(_library.Where(Matches));
-        UpdateSummary();
+        return AvatarSortOptions.FirstOrDefault(option =>
+                   string.Equals(option.Key, key, StringComparison.OrdinalIgnoreCase))
+               ?? AvatarSortOptions[0];
+    }
+
+    private IEnumerable<Avatar> SortAvatars(IEnumerable<Avatar> avatars, FilterOption sort)
+    {
+        var rows = avatars.ToList();
+        foreach (var avatar in rows)
+        {
+            ApplyState(avatar, _currentAvatarId);
+        }
+
+        var recent = SettingsStore.Shared.Settings.RecentAvatarIds ?? new List<string>();
+        var recentRank = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var index = 0; index < recent.Count; index++)
+        {
+            recentRank.TryAdd(recent[index], index);
+        }
+
+        IOrderedEnumerable<Avatar> ordered = sort.Key switch
+        {
+            "last-updated" => rows
+                .OrderByDescending(avatar => avatar.UpdatedAt)
+                .ThenByDescending(avatar => avatar.CreatedAt),
+            "name" => rows
+                .OrderBy(avatar => avatar.DisplayName, StringComparer.CurrentCultureIgnoreCase),
+            "recently-used" => rows
+                .OrderBy(avatar => recentRank.TryGetValue(avatar.Id, out var index) ? index : int.MaxValue)
+                .ThenByDescending(avatar => avatar.CreatedAt),
+            "performance" => rows
+                .OrderBy(PerformanceSortRank)
+                .ThenByDescending(avatar => avatar.CreatedAt),
+            _ => rows.OrderByDescending(avatar => avatar.CreatedAt)
+        };
+
+        return ordered
+            .ThenBy(avatar => avatar.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(avatar => avatar.Id, StringComparer.Ordinal);
+    }
+
+    private static int PerformanceSortRank(Avatar avatar)
+    {
+        var ratings = avatar.UnityPackages
+            .Select(package => PerformanceRank(package.PerformanceRating))
+            .Where(rank => rank < 5)
+            .ToList();
+        return ratings.Count == 0 ? 5 : ratings.Min();
+    }
+
+    private static int PerformanceRank(string? rating)
+    {
+        return rating?.Trim().ToLowerInvariant() switch
+        {
+            "excellent" => 0,
+            "good" => 1,
+            "medium" => 2,
+            "poor" => 3,
+            "very poor" or "verypoor" => 4,
+            _ => 5
+        };
     }
 
     private bool Matches(Avatar avatar)
@@ -1421,9 +1917,111 @@ public sealed class AvatarViewModel : ViewModelBase
 
     private void ApplyState(Avatar avatar, string? currentAvatarId)
     {
+        ApplyOwnership(avatar);
         avatar.IsWearing = !string.IsNullOrWhiteSpace(currentAvatarId) &&
                            string.Equals(avatar.Id, currentAvatarId, StringComparison.Ordinal);
         avatar.IsFavorite = _favoriteRecords.ContainsKey(avatar.Id);
+        avatar.IsLocalFavorite = _localFavoriteIds.Contains(avatar.Id);
+    }
+
+    /// <summary>
+    /// VRChat allows private avatars to be worn only by their creator. Mark the
+    /// record when it belongs to the signed-in account so the UI can enable it
+    /// without opening up someone else's private avatar.
+    /// </summary>
+    private void ApplyOwnership(Avatar avatar)
+    {
+        var currentUserId = _api.CurrentUser?.Id;
+        avatar.IsOwnedByCurrentUser =
+            !string.IsNullOrWhiteSpace(currentUserId) &&
+            !string.IsNullOrWhiteSpace(avatar.AuthorId) &&
+            string.Equals(avatar.AuthorId, currentUserId, StringComparison.Ordinal);
+    }
+
+    private static async Task NudgeAvatarOverOscAsync(
+        string avatarId,
+        CompanionSettings settings,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Sparse retries across VRChat's propagation window. The later
+            // packets matter because VRChat can take several seconds to make
+            // the selected avatar eligible locally. Keep this sparse: flooding
+            // the same switch delays the avatar load instead of helping it.
+            foreach (var delay in new[] { 0, 100, 250, 500, 1000, 1800, 2800 })
+            {
+                await Task.Delay(delay, cancellationToken);
+                OscAvatarSwitch.TrySend(avatarId, settings.OscHost, settings.OscPort);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer Wear or Revert owns the avatar now.
+        }
+    }
+
+    /// <summary>
+    /// Reflects a completed avatar switch in every visible list immediately. A full
+    /// library reload is unnecessary here and would keep the user waiting on network
+    /// pages after VRChat has already accepted the change.
+    /// </summary>
+    private void ApplyCurrentAvatarLocally(string avatarId)
+    {
+        foreach (var avatar in _library)
+        {
+            ApplyState(avatar, avatarId);
+        }
+
+        foreach (var avatar in GlobalResults)
+        {
+            ApplyState(avatar, avatarId);
+        }
+
+        foreach (var avatar in FavoriteAvatars)
+        {
+            ApplyState(avatar, avatarId);
+        }
+
+        if (SelectedAvatar is { } selected)
+        {
+            ApplyState(selected, avatarId);
+        }
+    }
+
+    /// <summary>Marks a successfully worn avatar as the newest entry in Recently Used.</summary>
+    private void RememberAvatarUse(string avatarId)
+    {
+        if (string.IsNullOrWhiteSpace(avatarId))
+        {
+            return;
+        }
+
+        var recent = SettingsStore.Shared.Settings.RecentAvatarIds ??= new List<string>();
+        recent.RemoveAll(id => string.Equals(id, avatarId, StringComparison.Ordinal));
+        recent.Insert(0, avatarId);
+        if (recent.Count > 250)
+        {
+            recent.RemoveRange(250, recent.Count - 250);
+        }
+
+        SettingsStore.Shared.Save();
+    }
+
+    /// <summary>The avatar already selected in VRChat counts as used when the app starts.</summary>
+    private void RememberCurrentAvatar()
+    {
+        if (string.IsNullOrWhiteSpace(_currentAvatarId))
+        {
+            return;
+        }
+
+        var recent = SettingsStore.Shared.Settings.RecentAvatarIds ??= new List<string>();
+        if (!recent.Contains(_currentAvatarId, StringComparer.Ordinal))
+        {
+            recent.Insert(0, _currentAvatarId);
+            SettingsStore.Shared.Save();
+        }
     }
 
     /// <summary>Adds or removes the avatar favourite, depending on its current state.</summary>
@@ -1431,6 +2029,12 @@ public sealed class AvatarViewModel : ViewModelBase
     {
         if (string.IsNullOrWhiteSpace(avatarId))
         {
+            return;
+        }
+
+        if (FindAvatar(avatarId)?.HasSecurityCheckFailed == true)
+        {
+            ErrorMessage = "VRChat's security checks failed on that avatar, so it cannot be favourited.";
             return;
         }
 
@@ -1443,17 +2047,60 @@ public sealed class AvatarViewModel : ViewModelBase
         ErrorMessage = null;
         try
         {
-            if (_favoriteRecords.TryGetValue(avatarId, out var recordId))
+            if (!_favoritesLoaded && !_favoritesLoading)
             {
+                await EnsureFavoritesAsync();
+            }
+
+            var isFavorite = _favoriteRecords.ContainsKey(avatarId) ||
+                             (SelectedAvatar is { } current &&
+                              string.Equals(current.Id, avatarId, StringComparison.Ordinal) &&
+                              current.IsFavorite);
+            var isLocalFavorite = _localFavoriteIds.Contains(avatarId) ||
+                                  (SelectedAvatar is { } localCurrent &&
+                                   string.Equals(localCurrent.Id, avatarId, StringComparison.Ordinal) &&
+                                   localCurrent.IsLocalFavorite);
+            if (isFavorite)
+            {
+                if (!_favoriteRecords.TryGetValue(avatarId, out var recordId))
+                {
+                    await RefreshFavoriteRecordsAsync();
+                    _favoriteRecords.TryGetValue(avatarId, out recordId);
+                }
+
+                if (string.IsNullOrWhiteSpace(recordId))
+                {
+                    if (SelectedAvatar is { } stale &&
+                        string.Equals(stale.Id, avatarId, StringComparison.Ordinal))
+                    {
+                        stale.IsFavorite = false;
+                    }
+
+                    ErrorMessage = "VRChat did not return a favourite record to remove.";
+                    return;
+                }
+
                 await _api.RemoveFavoriteAsync(recordId);
                 _favoriteRecords.Remove(avatarId);
                 _favoriteTags.Remove(avatarId);
+                if (_localFavoriteIds.Remove(avatarId))
+                {
+                    SaveLocalFavorites();
+                }
                 StatusMessage = "Removed from favourites.";
 
                 var favorite = _favoriteRecords.ContainsKey(avatarId);
                 foreach (var item in _library.Where(item => string.Equals(item.Id, avatarId, StringComparison.Ordinal)))
                 {
                     item.IsFavorite = favorite;
+                    item.IsLocalFavorite = false;
+                }
+
+                if (SelectedAvatar is { } selected &&
+                    string.Equals(selected.Id, avatarId, StringComparison.Ordinal))
+                {
+                    selected.IsFavorite = favorite;
+                    selected.IsLocalFavorite = false;
                 }
 
                 UpdateSummary();
@@ -1463,6 +2110,22 @@ public sealed class AvatarViewModel : ViewModelBase
                     ApplyFilter();
                 }
 
+                return;
+            }
+
+            if (isLocalFavorite)
+            {
+                _localFavoriteIds.Remove(avatarId);
+                SaveLocalFavorites();
+                if (SelectedAvatar is { } selectedLocal &&
+                    string.Equals(selectedLocal.Id, avatarId, StringComparison.Ordinal))
+                {
+                    selectedLocal.IsLocalFavorite = false;
+                }
+
+                StatusMessage = "Removed from your Local favourites.";
+                BuildFavorites();
+                OnPropertyChanged(nameof(HasFavorites));
                 return;
             }
 
@@ -1523,7 +2186,7 @@ public sealed class AvatarViewModel : ViewModelBase
             shown.Add(avatar);
         }
 
-        foreach (var avatar in shown.OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+        foreach (var avatar in SortAvatars(shown, SelectedFavoriteSort))
         {
             FavoriteAvatars.Add(avatar);
         }
@@ -1646,6 +2309,11 @@ public sealed class AvatarViewModel : ViewModelBase
             }
 
             _favoritesLoaded = true;
+            if (SelectedAvatar is { } selected)
+            {
+                ApplyState(selected, _currentAvatarId);
+            }
+
             BuildFavorites();
             _ = HydrateFavoriteAvatarsAsync();
         }
@@ -1664,6 +2332,28 @@ public sealed class AvatarViewModel : ViewModelBase
             OnPropertyChanged(nameof(FavoritesLoadingText));
             OnPropertyChanged(nameof(HasFavorites));
         }
+    }
+
+    /// <summary>Re-reads VRChat favourites when a mutation response omitted its record id.</summary>
+    private async Task RefreshFavoriteRecordsAsync()
+    {
+        var favorites = await _api.GetAvatarFavoritesAsync();
+        _favoriteRecords.Clear();
+        _favoriteTags.Clear();
+        foreach (var favorite in favorites)
+        {
+            _favoriteRecords[favorite.FavoriteId] = favorite.Id;
+            _favoriteTags[favorite.FavoriteId] = favorite.Tags;
+        }
+
+        _favoritesLoaded = true;
+        if (SelectedAvatar is { } selected)
+        {
+            ApplyState(selected, _currentAvatarId);
+        }
+
+        BuildFavorites();
+        OnPropertyChanged(nameof(HasFavorites));
     }
 
     private string? _favoritesError;
@@ -1723,6 +2413,12 @@ public sealed class AvatarViewModel : ViewModelBase
     {
         if (string.IsNullOrWhiteSpace(avatarId))
         {
+            return;
+        }
+
+        if (FindAvatar(avatarId)?.HasSecurityCheckFailed == true)
+        {
+            ErrorMessage = "VRChat's security checks failed on that avatar, so it cannot be favourited.";
             return;
         }
 
@@ -1810,14 +2506,19 @@ public sealed class AvatarViewModel : ViewModelBase
             }
         }
 
-            // Stay inside VRChat's rate limit: never fire avatar searches back to
-            // back, and do not call it at all while it is cooling down after a 429.
-            if (DateTime.UtcNow < _vrchatCooldownUntil)
+            // Run both sides together. VRChat can spend 2.5 seconds waiting for
+            // its own search spacing; the community indexes must not wait behind
+            // that, or the grid stays empty for no reason.
+            async Task SearchVrchatApiAsync()
             {
-                VrchatThrottled = true;
-            }
-            else
-            {
+                // Stay inside VRChat's rate limit: never fire avatar searches back
+                // to back, and do not call it at all while it is cooling down.
+                if (DateTime.UtcNow < _vrchatCooldownUntil)
+                {
+                    VrchatThrottled = true;
+                    return;
+                }
+
                 var gap = _lastVrchatSearchAt + VrchatSearchSpacing - DateTime.UtcNow;
                 if (gap > TimeSpan.Zero)
                 {
@@ -1839,13 +2540,7 @@ public sealed class AvatarViewModel : ViewModelBase
                         ReleaseStatus = "all"
                     });
 
-                    foreach (var avatar in result.Avatars.Where(MatchesPrivacy))
-                    {
-                        if (AddGlobalResult(avatar))
-                        {
-                            _vrchatRowsInResults++;
-                        }
-                    }
+                    _vrchatRowsInResults += AddGlobalResults(result.Avatars.Where(MatchesPrivacy));
 
                     _lastVrchatPageFull = result.Avatars.Count >= 50;
                     if (result.Avatars.Count == 0 && append)
@@ -1857,6 +2552,8 @@ public sealed class AvatarViewModel : ViewModelBase
                     {
                         VrchatThrottled = false;
                     }
+
+                    OnPropertyChanged(nameof(GlobalSummaryText));
                 }
                 catch (VrcApiException ex) when (ex.StatusCode == 429)
                 {
@@ -1864,10 +2561,15 @@ public sealed class AvatarViewModel : ViewModelBase
                 }
             }
 
-            // One combined search: VRChat's own results plus the community public
-            // index, which covers far more avatars than the API exposes.
-            if (_lastGlobalQuery.Length > 0)
+            async Task SearchCommunityIndexesAsync()
             {
+                // One combined search: VRChat's own results plus the community
+                // public indexes, which cover far more avatars than the API.
+                if (_lastGlobalQuery.Length == 0)
+                {
+                    return;
+                }
+
                 if (!append)
                 {
                     _communitySearchOffset = 0;
@@ -1881,7 +2583,8 @@ public sealed class AvatarViewModel : ViewModelBase
                 {
                     var byAuthor = await _api.SearchCommunityByAuthorAsync(
                         authorId,
-                        indexResults: _currentProbe);
+                        indexResults: _currentProbe,
+                        providers: SelectedProviderNames);
                     _indexCounts.Clear();
                     foreach (var group in byAuthor.GroupBy(a => a.SourceName, StringComparer.OrdinalIgnoreCase))
                     {
@@ -1889,11 +2592,7 @@ public sealed class AvatarViewModel : ViewModelBase
                     }
 
                     OnPropertyChanged(nameof(CommunityStatusText));
-                    foreach (var avatar in byAuthor.Where(MatchesPrivacy))
-                    {
-                        AddGlobalResult(avatar);
-                    }
-
+                    AddGlobalResults(byAuthor.Where(MatchesPrivacy));
                     return;
                 }
 
@@ -1907,7 +2606,8 @@ public sealed class AvatarViewModel : ViewModelBase
                         _lastGlobalQuery,
                         _vrcndbPage,
                         _communitySearchOffset,
-                        indexResults: _currentProbe);
+                        indexResults: _currentProbe,
+                        providers: SelectedProviderNames);
                     _communitySearchOffset += 25;
                 }
                 else
@@ -1919,18 +2619,28 @@ public sealed class AvatarViewModel : ViewModelBase
                     community = await _api.SearchAllCommunityAvatarsAsync(
                         _lastGlobalQuery,
                         providerLimit: 80,
-                        indexResults: _currentProbe);
+                        indexResults: _currentProbe,
+                        providers: SelectedProviderNames,
+                        onPartial: (source, partial) =>
+                        {
+                            var rows = partial.Where(MatchesPrivacy).ToList();
+                            // One collection update per source keeps the UI
+                            // responsive while several indexes stream in.
+                            AddGlobalResults(
+                                rows,
+                                atStart: source.Equals("VRCNDb", StringComparison.OrdinalIgnoreCase));
+
+                            OnPropertyChanged(nameof(GlobalSummaryText));
+                        });
                     _communitySearchOffset = 25;
                 }
 
                 OnPropertyChanged(nameof(CommunityStatusText));
                 _communitySearchPageFull = community.Count >= 25;
-                foreach (var avatar in community.Where(MatchesPrivacy))
-                {
-                    AddGlobalResult(avatar);
-                }
-
+                AddGlobalResults(community.Where(MatchesPrivacy));
             }
+
+            await Task.WhenAll(SearchVrchatApiAsync(), SearchCommunityIndexesAsync());
         }
         catch (VrcApiException ex)
         {
@@ -1962,6 +2672,7 @@ public sealed class AvatarViewModel : ViewModelBase
     private bool _communityLoaded;
     private bool _communityPageFull;
     private int _communityOffset;
+    private int _browseVrcndbPage = 1;
     // A failing browse index is not retried on every tab activation: each failure
     // doubles the wait (30 s, then 60 s, up to 5 min) until a fetch succeeds.
     private int _browseFailureStreak;
@@ -2069,10 +2780,46 @@ public sealed class AvatarViewModel : ViewModelBase
         try
         {
             var probe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var page = BrowseFetch is { } fetchForTests
-                ? await fetchForTests(0, CancellationToken.None)
-                : await _api.GetCommunityLatestAsync(50, 0, probe);
-            var fetched = BrowseFetchSucceeded(probe);
+            var vrcndbProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            List<Avatar> page;
+            var avtrRows = 0;
+            var vrcndbRows = 0;
+            if (BrowseFetch is { } fetchForTests)
+            {
+                page = await fetchForTests(0, CancellationToken.None);
+                foreach (var avatar in page)
+                {
+                    avatar.SourceName ??= "avtr.icu";
+                }
+
+                avtrRows = page.Count;
+            }
+            else
+            {
+                // Both browse indexes share one deadline: a dead index must not
+                // hold the latest-avatar page for its full HTTP timeout.
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var token = deadline.Token;
+                var avtrTask = _api.GetCommunityLatestAsync(
+                    50, 0, probe, token, SelectedProviderNames);
+                var vrcndbTask = _api.GetVrcndbLatestAsync(
+                    40, 1, vrcndbProbe, token, SelectedProviderNames);
+                await Task.WhenAll(avtrTask, vrcndbTask);
+
+                var avtr = await avtrTask;
+                var vrcndb = await vrcndbTask;
+                avtrRows = avtr.Count;
+                vrcndbRows = vrcndb.Count;
+                page = VrcApiClient.MergeCommunityResults(new[]
+                {
+                    ("avtr.icu", (IReadOnlyList<Avatar>)avtr),
+                    ("VRCNDb", (IReadOnlyList<Avatar>)vrcndb)
+                });
+            }
+
+            var avtrOk = !probe.TryGetValue("avtr.icu", out var avtrOutcome) || avtrOutcome >= 0;
+            var vrcndbOk = !vrcndbProbe.TryGetValue("VRCNDb", out var vrcndbOutcome) || vrcndbOutcome >= 0;
+            var fetched = avtrOk || vrcndbOk;
             if (fetched)
             {
                 ClearBrowseBackoff();
@@ -2084,8 +2831,9 @@ public sealed class AvatarViewModel : ViewModelBase
 
             _communityCache.Clear();
             _communityCache.AddRange(page);
-            _communityOffset = page.Count;
-            _communityPageFull = page.Count >= 50;
+            _communityOffset = avtrRows;
+            _browseVrcndbPage = 2;
+            _communityPageFull = avtrRows >= 50 || vrcndbRows >= 40;
             // A failed fetch must not count as "loaded": the next tab switch or
             // refresh then retries, and a success clears the failure line.
             _communityLoaded = fetched;
@@ -2100,14 +2848,16 @@ public sealed class AvatarViewModel : ViewModelBase
             // status line still describes the search results on screen.
             if (ShouldReportBrowseIndexStatus(GlobalSearchTerm, publish))
             {
-                _indexCounts.Clear();
                 _failedIndexes.Clear();
-                // Count only rows the grid will actually show (privacy filter applied).
-                _indexCounts["avtr.icu"] = VisibleCountForBrowsePage(1);
-                if (!fetched)
+                SetBrowseStatusCounts(1);
+                if (!avtrOk)
                 {
-                    _indexCounts.Remove("avtr.icu");
                     _failedIndexes.Add("avtr.icu");
+                }
+
+                if (!vrcndbOk)
+                {
+                    _failedIndexes.Add("VRCNDb");
                 }
 
                 OnPropertyChanged(nameof(CommunityStatusText));
@@ -2155,12 +2905,45 @@ public sealed class AvatarViewModel : ViewModelBase
         try
         {
             var probe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var page = BrowseFetch is { } fetchForTests
-                ? await fetchForTests(_communityOffset, CancellationToken.None)
-                : await _api.GetCommunityLatestAsync(50, _communityOffset, probe);
-            _communityOffset += page.Count;
+            var vrcndbProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            List<Avatar> page;
+            var avtrRows = 0;
+            var vrcndbRows = 0;
+            var testFetch = BrowseFetch is not null;
+            if (BrowseFetch is { } fetchForTests)
+            {
+                page = await fetchForTests(_communityOffset, CancellationToken.None);
+                foreach (var avatar in page)
+                {
+                    avatar.SourceName ??= "avtr.icu";
+                }
 
-            var failed = !BrowseFetchSucceeded(probe);
+                avtrRows = page.Count;
+            }
+            else
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var token = deadline.Token;
+                var avtrTask = _api.GetCommunityLatestAsync(
+                    50, _communityOffset, probe, token, SelectedProviderNames);
+                var vrcndbTask = _api.GetVrcndbLatestAsync(
+                    40, _browseVrcndbPage, vrcndbProbe, token, SelectedProviderNames);
+                await Task.WhenAll(avtrTask, vrcndbTask);
+
+                var avtr = await avtrTask;
+                var vrcndb = await vrcndbTask;
+                avtrRows = avtr.Count;
+                vrcndbRows = vrcndb.Count;
+                page = VrcApiClient.MergeCommunityResults(new[]
+                {
+                    ("avtr.icu", (IReadOnlyList<Avatar>)avtr),
+                    ("VRCNDb", (IReadOnlyList<Avatar>)vrcndb)
+                });
+            }
+
+            var avtrOk = !probe.TryGetValue("avtr.icu", out var avtrOutcome) || avtrOutcome >= 0;
+            var vrcndbOk = !vrcndbProbe.TryGetValue("VRCNDb", out var vrcndbOutcome) || vrcndbOutcome >= 0;
+            var failed = !avtrOk && !vrcndbOk;
             if (failed)
             {
                 RecordBrowseFailure(loadMore: true);
@@ -2174,16 +2957,23 @@ public sealed class AvatarViewModel : ViewModelBase
             // and it must not advance the page counter.
             if (failed)
             {
-                _indexCounts.Remove("avtr.icu");
+                _indexCounts.Clear();
                 _failedIndexes.Clear();
                 _failedIndexes.Add("avtr.icu");
+                _failedIndexes.Add("VRCNDb");
                 GlobalError = "Could not load more community avatars.";
                 OnPropertyChanged(nameof(CommunityStatusText));
                 return;
             }
 
+            _communityOffset += avtrRows;
+            if (!testFetch)
+            {
+                _browseVrcndbPage++;
+            }
+
             _failedIndexes.Clear();
-            _communityPageFull = page.Count >= 50;
+            _communityPageFull = avtrRows >= 50 || vrcndbRows >= 40;
             var added = 0;
             foreach (var avatar in page)
             {
@@ -2213,8 +3003,7 @@ public sealed class AvatarViewModel : ViewModelBase
             _browsePage++;
             _browsePageNewCounts.Add(added);
             BumpResultsPageToken();
-            _indexCounts.Clear();
-            _indexCounts["avtr.icu"] = VisibleCountForBrowsePage(_browsePage);
+            SetBrowseStatusCounts(_browsePage);
             OnPropertyChanged(nameof(CommunityStatusText));
             PublishCommunityBrowse();
         }
@@ -2253,6 +3042,25 @@ public sealed class AvatarViewModel : ViewModelBase
     /// Rows the grid shows for one loaded browse page: the cache slice is counted
     /// after the privacy filter, so the status can never exceed the visible cards.
     /// </summary>
+    private void SetBrowseStatusCounts(int page)
+    {
+        _indexCounts.Clear();
+        IEnumerable<Avatar> rows = _communityCache;
+        if (_browsePageNewCounts.Count > 0)
+        {
+            var clamped = Math.Clamp(page, 1, _browsePageNewCounts.Count);
+            var start = _browsePageNewCounts.Take(clamped - 1).Sum();
+            rows = _communityCache
+                .Skip(start)
+                .Take(_browsePageNewCounts[clamped - 1]);
+        }
+
+        foreach (var entry in CountBySource(rows.Where(MatchesPrivacy)))
+        {
+            _indexCounts[entry.Key] = entry.Value;
+        }
+    }
+
     private int VisibleCountForBrowsePage(int page)
     {
         if (_browsePageNewCounts.Count == 0)
@@ -2270,21 +3078,25 @@ public sealed class AvatarViewModel : ViewModelBase
 
     private void PublishCommunityBrowse()
     {
-        // Browse shows only the pages stepped through so far, never the whole
-        // prefetched cache, so Previous can genuinely go back.
-        var visible = _communityCache.Count;
+        // Browse is paged, not cumulative: Next replaces the grid with the newly
+        // fetched cards so the user does not have to pass every earlier page again.
+        IEnumerable<Avatar> visible = _communityCache;
         if (_browsePageNewCounts.Count > 0)
         {
-            visible = _browsePageNewCounts
-                .Take(Math.Clamp(_browsePage, 1, _browsePageNewCounts.Count))
-                .Sum();
+            var page = Math.Clamp(_browsePage, 1, _browsePageNewCounts.Count);
+            var start = _browsePageNewCounts.Take(page - 1).Sum();
+            visible = _communityCache
+                .Skip(start)
+                .Take(_browsePageNewCounts[page - 1]);
         }
 
-        GlobalResults.Clear();
-        foreach (var avatar in _communityCache.Take(visible).Where(MatchesPrivacy))
+        var rows = visible.Where(MatchesPrivacy).ToList();
+        foreach (var avatar in rows)
         {
-            AddGlobalResult(avatar);
+            ApplyState(avatar, _currentAvatarId);
         }
+
+        GlobalResults.ReplaceAll(rows);
 
         _lastGlobalQuery = string.Empty;
         _authorFilterName = string.Empty;
@@ -2313,6 +3125,10 @@ public sealed class AvatarViewModel : ViewModelBase
         => _library.FirstOrDefault(avatar => string.Equals(avatar.Id, avatarId, StringComparison.Ordinal))
            ?? FavoriteAvatars.FirstOrDefault(avatar => string.Equals(avatar.Id, avatarId, StringComparison.Ordinal))
            ?? GlobalResults.FirstOrDefault(avatar => string.Equals(avatar.Id, avatarId, StringComparison.Ordinal))
+           ?? (SelectedAvatar is { } selected &&
+               string.Equals(selected.Id, avatarId, StringComparison.Ordinal)
+                   ? selected
+                   : null)
            ?? (_favoriteAvatars.TryGetValue(avatarId, out var fetched) ? fetched : null);
 
     private IReadOnlyList<string> SlotTags(string avatarId)
@@ -2370,7 +3186,6 @@ public sealed class AvatarViewModel : ViewModelBase
         FavoriteSlots.Clear();
         UnresolvedFavoriteIds.Clear();
         _library = new List<Avatar>();
-        _publishedLibraryCount = 0;
         _currentAvatarId = null;
         _searchTerm = string.Empty;
         OnPropertyChanged(nameof(SearchTerm));
@@ -2386,6 +3201,35 @@ public sealed class AvatarViewModel : ViewModelBase
         StatusMessage = null;
         NotifySummaryChanged();
         BuildFavorites();
+    }
+}
+
+/// <summary>One selectable community index in the Avatar Search provider menu.</summary>
+public sealed class ProviderFilterOption : ViewModelBase
+{
+    private readonly Action? _changed;
+    private bool _isSelected;
+
+    public ProviderFilterOption(string name, Action? changed = null)
+    {
+        Name = name;
+        _changed = changed;
+    }
+
+    public string Name { get; }
+
+    public string DisplayName => Name;
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (SetProperty(ref _isSelected, value))
+            {
+                _changed?.Invoke();
+            }
+        }
     }
 }
 

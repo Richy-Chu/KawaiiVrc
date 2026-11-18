@@ -18,11 +18,17 @@ public sealed class AccountEntry
         Id = id;
         DisplayName = displayName;
         IsActive = isActive;
+        Initial = string.IsNullOrWhiteSpace(displayName)
+            ? "?"
+            : char.ToUpperInvariant(displayName.Trim()[0]).ToString();
     }
 
     public string Id { get; }
     public string DisplayName { get; }
     public bool IsActive { get; }
+
+    /// <summary>A friendly avatar initial; the raw account id stays internal.</summary>
+    public string Initial { get; }
 }
 
 /// <summary>
@@ -70,13 +76,32 @@ public sealed class MultiAccountViewModel : ViewModelBase
     {
         get
         {
+            // The header and the API session are the source of truth. A stale
+            // active.json must not make the Accounts page claim a different
+            // user is signed in than the rest of the app.
+            if (_api.CurrentUser is { } signedIn && !string.IsNullOrWhiteSpace(signedIn.DisplayName))
+            {
+                return signedIn.DisplayName;
+            }
+
             var active = _accountService.ActiveAccountId;
             if (string.IsNullOrWhiteSpace(active))
             {
-                return _api.CurrentUser is { } user ? user.DisplayName : "(none)";
+                return "(none)";
             }
 
             return _accountService.GetAccountDisplayName(active);
+        }
+    }
+
+    public string ActiveAccountInitial
+    {
+        get
+        {
+            var name = ActiveAccountLabel.Trim();
+            return name.Length == 0 || name == "(none)"
+                ? "?"
+                : char.ToUpperInvariant(name[0]).ToString();
         }
     }
 
@@ -125,6 +150,12 @@ public sealed class MultiAccountViewModel : ViewModelBase
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(_api.CurrentAuthCookie))
+        {
+            ErrorMessage = "Could not read the current VRChat session token. Sign in again before saving this account.";
+            return;
+        }
+
         RememberCurrentAccount(user);
     }
 
@@ -137,13 +168,6 @@ public sealed class MultiAccountViewModel : ViewModelBase
 
         ErrorMessage = null;
 
-        if (string.Equals(_api.CurrentUser?.Id, accountId, StringComparison.Ordinal))
-        {
-            _accountService.SwitchToAccount(accountId);
-            RefreshAccounts();
-            return;
-        }
-
         IsBusy = true;
         try
         {
@@ -154,6 +178,18 @@ public sealed class MultiAccountViewModel : ViewModelBase
                 return;
             }
 
+            // Only skip the network round-trip when the signed-in user and the
+            // live auth cookie both already belong to this account. Matching
+            // only the user ID can leave a stale cookie from another account in
+            // place and make Switch appear to do nothing.
+            if (string.Equals(_api.CurrentUser?.Id, accountId, StringComparison.Ordinal) &&
+                string.Equals(_api.CurrentAuthCookie, cookie, StringComparison.Ordinal))
+            {
+                _accountService.SwitchToAccount(accountId);
+                RefreshAccounts();
+                return;
+            }
+
             var user = await _api.SwitchSessionAsync(cookie);
             if (user is null)
             {
@@ -161,7 +197,14 @@ public sealed class MultiAccountViewModel : ViewModelBase
                 return;
             }
 
-            _accountService.SwitchToAccount(accountId);
+            // VRChat may rotate the cookie during the switch. Store the fresh
+            // one against the account VRChat actually returned, not merely the
+            // row that was clicked.
+            _accountService.RegisterAccount(
+                user.Id,
+                _api.CurrentAuthCookie ?? cookie,
+                user.DisplayName);
+            _accountService.SwitchToAccount(user.Id);
             RefreshAccounts();
             SessionSwitched?.Invoke(user);
         }
@@ -217,5 +260,6 @@ public sealed class MultiAccountViewModel : ViewModelBase
                 _accountService.GetAccountDisplayName(id),
                 string.Equals(id, active, StringComparison.Ordinal))));
         OnPropertyChanged(nameof(ActiveAccountLabel));
+        OnPropertyChanged(nameof(ActiveAccountInitial));
     }
 }

@@ -23,6 +23,9 @@ public sealed class VrcUser
     [JsonPropertyName("currentAvatar")]
     public string? CurrentAvatar { get; set; }
 
+    [JsonPropertyName("currentAvatarName")]
+    public string? CurrentAvatarName { get; set; }
+
     [JsonPropertyName("currentAvatarImageUrl")]
     public string? CurrentAvatarImageUrl { get; set; }
 
@@ -44,8 +47,34 @@ public sealed class VrcUser
     [JsonPropertyName("bannerUrl")]
     public string? BannerUrl { get; set; }
 
+    [JsonPropertyName("bannerType")]
+    public string? BannerType { get; set; }
+
     [JsonPropertyName("bannerColor")]
     public string? BannerColor { get; set; }
+
+    // Profile decorations are cosmetic ids. Their artwork is published by the
+    // /cosmetics/index/{type} endpoints, not embedded in the user record.
+    [JsonPropertyName("iconFrame")]
+    public string? IconFrame { get; set; }
+
+    [JsonPropertyName("profileEffect")]
+    public string? ProfileEffect { get; set; }
+
+    [JsonPropertyName("nameplateEffect")]
+    public string? NameplateEffect { get; set; }
+
+    [JsonPropertyName("themeId")]
+    public string? ThemeId { get; set; }
+
+    [JsonPropertyName("themeIconColor")]
+    public string? ThemeIconColor { get; set; }
+
+    [JsonPropertyName("themeButtonColor")]
+    public string? ThemeButtonColor { get; set; }
+
+    [JsonPropertyName("themeSubtextColor")]
+    public string? ThemeSubtextColor { get; set; }
 
     [JsonPropertyName("status")]
     public string? Status { get; set; }
@@ -59,6 +88,21 @@ public sealed class VrcUser
     [JsonPropertyName("state")]
     public string? State { get; set; }
 
+    // Only current-user responses populate these friend-id buckets. VRCX uses
+    // them to resolve friends whose location is the stale "private" sentinel
+    // and to repair friends that the paginated friend endpoint missed.
+    [JsonPropertyName("friends")]
+    public List<string> Friends { get; set; } = new();
+
+    [JsonPropertyName("onlineFriends")]
+    public List<string> OnlineFriends { get; set; } = new();
+
+    [JsonPropertyName("activeFriends")]
+    public List<string> ActiveFriends { get; set; } = new();
+
+    [JsonPropertyName("offlineFriends")]
+    public List<string> OfflineFriends { get; set; } = new();
+
     [JsonPropertyName("last_platform")]
     public string? LastPlatform { get; set; }
 
@@ -66,9 +110,11 @@ public sealed class VrcUser
     public string? Platform { get; set; }
 
     [JsonPropertyName("last_activity")]
+    [JsonConverter(typeof(NullableDateTimeOffsetConverter))]
     public DateTimeOffset? LastActivity { get; set; }
 
     [JsonPropertyName("last_login")]
+    [JsonConverter(typeof(NullableDateTimeOffsetConverter))]
     public DateTimeOffset? LastLogin { get; set; }
 
     [JsonPropertyName("date_joined")]
@@ -95,6 +141,15 @@ public sealed class VrcUser
     [JsonPropertyName("pronouns")]
     public string? Pronouns { get; set; }
 
+    [JsonPropertyName("bioLinks")]
+    public List<string> BioLinks { get; set; } = new();
+
+    [JsonPropertyName("currentAvatarTags")]
+    public List<string> CurrentAvatarTags { get; set; } = new();
+
+    [JsonPropertyName("lastSeen")]
+    public string? LastSeen { get; set; }
+
     [JsonPropertyName("developerType")]
     public string? DeveloperType { get; set; }
 
@@ -103,4 +158,13 @@ public sealed class VrcUser
 
     [JsonPropertyName("isFriend")]
     public bool IsFriend { get; set; }
+
+    /// <summary>True when the signed-in account has blocked this user.</summary>
+    [JsonPropertyName("isBlocked")]
+    public bool IsBlocked { get; set; }
+
+    // VRChat exposes this on the signed-in user. A missing field means the
+    // account has not disabled boops, matching VRCX-0's `!== false` check.
+    [JsonPropertyName("isBoopingEnabled")]
+    public bool IsBoopingEnabled { get; set; } = true;
 }

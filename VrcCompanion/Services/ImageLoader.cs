@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Media;
@@ -33,9 +34,18 @@ public sealed class ImageLoader : IDisposable
     private readonly HttpClient _http;
     private readonly ConcurrentDictionary<string, MemoryEntry> _memory = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Task<ImageSource?>> _inflight = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, AnimationEntry> _animations = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Task<AnimatedImageData?>> _animationInflight = new(StringComparer.Ordinal);
     private readonly object _memoryGate = new();
-    private const long MaxMemoryBytes = 64L * 1024 * 1024;
-    private const int MaxMemoryEntries = 96;
+    private readonly object _animationGate = new();
+    // Keep enough visible artwork cached for smooth scrolling without letting
+    // a long browsing session grow the WPF and GPU memory footprint forever.
+    private const long MaxMemoryBytes = 24L * 1024 * 1024;
+    private const int MaxMemoryEntries = 48;
+    private const long MaxAnimationBytes = 12L * 1024 * 1024;
+    private const int MaxAnimationEntries = 8;
+    private const int MaxAnimationFrames = 32;
+    private const int MaxAnimationDimension = 512;
 
     internal static long MemoryCacheLimitBytes => MaxMemoryBytes;
 
@@ -50,6 +60,7 @@ public sealed class ImageLoader : IDisposable
         }
     }
     private long _memoryBytes;
+    private long _animationBytes;
     private readonly SemaphoreSlim _gate = new(4, 4);
     private readonly SemaphoreSlim _fileGate = new(3, 3);
     private readonly SemaphoreSlim _decodeGate = new(3, 3);
@@ -57,13 +68,17 @@ public sealed class ImageLoader : IDisposable
 
     public ImageLoader()
     {
-        var handler = new HttpClientHandler
+        var handler = new SocketsHttpHandler
         {
             UseCookies = true,
             CookieContainer = _cookies,
             AutomaticDecompression = System.Net.DecompressionMethods.GZip |
                                      System.Net.DecompressionMethods.Deflate |
-                                     System.Net.DecompressionMethods.Brotli
+                                     System.Net.DecompressionMethods.Brotli,
+            // avtr.zip serves valid thumbnails over IPv4, but its IPv6 route
+            // stalls after a few KB. Prefer IPv4 and fall back to IPv6 only
+            // when no IPv4 address can be reached.
+            ConnectCallback = ConnectImageAsync
         };
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("VrcCompanion/1.1.0 (unofficial Windows companion)");
@@ -78,6 +93,47 @@ public sealed class ImageLoader : IDisposable
         {
             // A read-only profile should not stop the app from working.
         }
+    }
+
+    private static async ValueTask<Stream> ConnectImageAsync(
+        SocketsHttpConnectionContext context,
+        CancellationToken cancellationToken)
+    {
+        var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken);
+        var ordered = addresses
+            .OrderBy(address => address.AddressFamily == AddressFamily.InterNetwork ? 0 : 1)
+            .ToArray();
+
+        Exception? lastError = null;
+        foreach (var address in ordered)
+        {
+            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+            {
+                NoDelay = true
+            };
+            try
+            {
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                attempt.CancelAfter(TimeSpan.FromSeconds(5));
+                await socket.ConnectAsync(
+                    new IPEndPoint(address, context.DnsEndPoint.Port),
+                    attempt.Token);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                socket.Dispose();
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+        }
+
+        throw new HttpRequestException(
+            $"Could not connect to {context.DnsEndPoint.Host}.",
+            lastError);
     }
 
     /// <summary>
@@ -138,6 +194,81 @@ public sealed class ImageLoader : IDisposable
         }
     }
 
+    /// <summary>
+    /// Decodes every frame of a decoration animation. WPF's image pipeline only
+    /// gives us the first frame of animated WebP/GIF files, so Skia produces the
+    /// composited frames and their durations for the cosmetic controls to play.
+    /// </summary>
+    public async Task<AnimatedImageData?> LoadAnimationAsync(
+        string? url,
+        int decodeWidth,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        var normalized = url.Trim();
+        var key = $"anim|{Math.Max(32, decodeWidth)}|{normalized}";
+        if (_animations.TryGetValue(key, out var cached))
+        {
+            cached.UsedAt = DateTimeOffset.UtcNow;
+            return cached.Data;
+        }
+
+        var task = _animationInflight.GetOrAdd(
+            key,
+            _ => LoadAnimationCoreAsync(normalized, Math.Max(32, decodeWidth), key));
+
+        try
+        {
+            return await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<AnimatedImageData?> LoadAnimationCoreAsync(string url, int decodeWidth, string key)
+    {
+        try
+        {
+            var bytes = await ReadBytesAsync(url).ConfigureAwait(false);
+            if (bytes is null || bytes.Length == 0 || !IsImageBytes(bytes))
+            {
+                return null;
+            }
+
+            await _decodeGate.WaitAsync().ConfigureAwait(false);
+            AnimatedImageData? data;
+            try
+            {
+                data = DecodeAnimationSkia(bytes, decodeWidth);
+            }
+            finally
+            {
+                _decodeGate.Release();
+            }
+
+            if (data is not null)
+            {
+                AddAnimationToMemory(key, data);
+            }
+
+            return data;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            _animationInflight.TryRemove(key, out _);
+        }
+    }
+
     private async Task<ImageSource?> LoadCoreAsync(string url, int decodeWidth, string key)
     {
         try
@@ -152,7 +283,7 @@ public sealed class ImageLoader : IDisposable
             // so save the raw bytes to disk and point a BitmapImage at the cached file.
             if (IsGif(bytes))
             {
-                return LoadGifFromCache(url, bytes);
+                return LoadGifFromCache(url, bytes, decodeWidth);
             }
 
             // Local libraries can queue hundreds of pictures at once; decode a few
@@ -236,7 +367,7 @@ public sealed class ImageLoader : IDisposable
         return IsGifBytes(bytes);
     }
 
-    private ImageSource? LoadGifFromCache(string url, byte[] bytes)
+    private ImageSource? LoadGifFromCache(string url, byte[] bytes, int decodeWidth)
     {
         try
         {
@@ -256,6 +387,9 @@ public sealed class ImageLoader : IDisposable
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
             image.UriSource = new Uri(cachePath, UriKind.Absolute);
+            // Small animated avatars do not need their 1024px source decoded at
+            // full resolution. This mirrors the still-image decode cap.
+            image.DecodePixelWidth = decodeWidth;
             image.EndInit();
             image.Freeze();
             return image;
@@ -445,6 +579,137 @@ public sealed class ImageLoader : IDisposable
         }
     }
 
+    private static AnimatedImageData? DecodeAnimationSkia(byte[] bytes, int decodeWidth)
+    {
+        try
+        {
+            using var codec = SKCodec.Create(new SKMemoryStream(bytes));
+            if (codec is null || codec.Info.Width <= 0 || codec.Info.Height <= 0)
+            {
+                return null;
+            }
+
+            var sourceWidth = codec.Info.Width;
+            var sourceHeight = codec.Info.Height;
+            var targetWidth = Math.Max(
+                1,
+                Math.Min(
+                    Math.Max(32, decodeWidth),
+                    Math.Min(sourceWidth, MaxAnimationDimension)));
+            var targetHeight = Math.Max(
+                1,
+                (int)Math.Round(sourceHeight * (targetWidth / (double)sourceWidth)));
+            if (targetHeight > MaxAnimationDimension)
+            {
+                targetWidth = Math.Max(
+                    1,
+                    (int)Math.Round(targetWidth * (MaxAnimationDimension / (double)targetHeight)));
+                targetHeight = MaxAnimationDimension;
+            }
+
+            var frameInfo = codec.FrameInfo;
+            var frameCount = Math.Clamp(codec.FrameCount, 1, MaxAnimationFrames);
+            var sourceInfo = new SKImageInfo(
+                sourceWidth,
+                sourceHeight,
+                SKColorType.Bgra8888,
+                SKAlphaType.Premul);
+            var targetInfo = new SKImageInfo(
+                targetWidth,
+                targetHeight,
+                SKColorType.Bgra8888,
+                SKAlphaType.Premul);
+
+            using var framePixels = new SKBitmap(sourceInfo);
+            framePixels.Erase(SKColors.Transparent);
+            var frames = new List<BitmapSource>(frameCount);
+            var durations = new List<int>(frameCount);
+
+            for (var index = 0; index < frameCount; index++)
+            {
+                // Passing the previous frame lets the codec composite disposal and
+                // partial-frame updates instead of returning isolated rectangles.
+                var options = new SKCodecOptions(index, index > 0 ? index - 1 : -1);
+                var result = codec.GetPixels(sourceInfo, framePixels.GetPixels(), options);
+                if (result != SKCodecResult.Success)
+                {
+                    continue;
+                }
+
+                BitmapSource? frame;
+                if (targetWidth == sourceWidth && targetHeight == sourceHeight)
+                {
+                    frame = ToBitmapSource(framePixels);
+                }
+                else
+                {
+                    using var scaled = framePixels.Resize(
+                        targetInfo,
+                        new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
+                    frame = scaled is null ? null : ToBitmapSource(scaled);
+                }
+
+                if (frame is null)
+                {
+                    continue;
+                }
+
+                frames.Add(frame);
+                var duration = frameInfo is not null && index < frameInfo.Length
+                    ? frameInfo[index].Duration
+                    : 100;
+                durations.Add(Math.Clamp(duration, 20, 10_000));
+            }
+
+            return frames.Count == 0 ? null : new AnimatedImageData(frames, durations);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static BitmapSource ToBitmapSource(SKBitmap bitmap)
+    {
+        var pixels = bitmap.GetPixelSpan().ToArray();
+        var image = BitmapSource.Create(
+            bitmap.Width,
+            bitmap.Height,
+            96,
+            96,
+            PixelFormats.Pbgra32,
+            null,
+            pixels,
+            bitmap.RowBytes);
+        image.Freeze();
+        return image;
+    }
+
+    private void AddAnimationToMemory(string key, AnimatedImageData data)
+    {
+        lock (_animationGate)
+        {
+            if (_animations.TryRemove(key, out var previous))
+            {
+                _animationBytes -= previous.Data.EstimatedBytes;
+            }
+
+            _animations[key] = new AnimationEntry(data);
+            _animationBytes += data.EstimatedBytes;
+
+            while (_animations.Count > MaxAnimationEntries || _animationBytes > MaxAnimationBytes)
+            {
+                var oldest = _animations.OrderBy(pair => pair.Value.UsedAt).FirstOrDefault();
+                if (oldest.Key is null || !_animations.TryRemove(oldest.Key, out var removed))
+                {
+                    break;
+                }
+
+                _animationBytes -= removed.Data.EstimatedBytes;
+            }
+        }
+    }
+
     private static long EstimateBytes(ImageSource image)
         => image is BitmapSource bitmap
             ? (long)bitmap.PixelWidth * bitmap.PixelHeight * 4
@@ -467,7 +732,7 @@ public sealed class ImageLoader : IDisposable
     {
         try
         {
-            const long maxBytes = 96L * 1024 * 1024;
+            const long maxBytes = 64L * 1024 * 1024;
             var files = new DirectoryInfo(_cacheDirectory)
                 .EnumerateFiles("*.img")
                 .OrderByDescending(file => file.LastWriteTimeUtc)
@@ -493,6 +758,25 @@ public sealed class ImageLoader : IDisposable
         }
     }
 
+    /// <summary>
+    /// Drops decoded artwork while the app is in the background. The disk cache
+    /// keeps the next visit fast without holding native WPF surfaces resident.
+    /// </summary>
+    public void TrimMemory()
+    {
+        lock (_memoryGate)
+        {
+            _memory.Clear();
+            _memoryBytes = 0;
+        }
+
+        lock (_animationGate)
+        {
+            _animations.Clear();
+            _animationBytes = 0;
+        }
+    }
+
     public void Dispose()
     {
         _http.Dispose();
@@ -512,5 +796,16 @@ public sealed class ImageLoader : IDisposable
         public ImageSource Image { get; }
         public DateTimeOffset UsedAt { get; set; }
         public long Bytes { get; }
+    }
+
+    private sealed class AnimationEntry
+    {
+        public AnimationEntry(AnimatedImageData data)
+        {
+            Data = data;
+        }
+
+        public AnimatedImageData Data { get; }
+        public DateTimeOffset UsedAt { get; set; } = DateTimeOffset.UtcNow;
     }
 }

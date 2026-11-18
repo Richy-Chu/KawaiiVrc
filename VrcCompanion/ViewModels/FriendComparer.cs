@@ -26,7 +26,7 @@ public sealed class FriendComparer : IComparer
             return favorite;
         }
 
-        var online = right.IsOnline.CompareTo(left.IsOnline);
+        var online = right.PresenceSortRank.CompareTo(left.PresenceSortRank);
         if (online != 0)
         {
             return online;

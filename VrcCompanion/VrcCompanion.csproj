@@ -7,21 +7,48 @@
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>VrcCompanion</AssemblyName>
+    <AssemblyName>KawaiiVrc</AssemblyName>
     <RootNamespace>VrcCompanion</RootNamespace>
+    <!-- Velopack needs to run before WPF starts, so Main lives in Program.cs. -->
+    <StartupObject>VrcCompanion.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <Version>1.0.0</Version>
-    <Authors>VrcCompanion</Authors>
-    <Description>An unofficial desktop companion for VRChat.</Description>
+    <AssemblyTitle>KawaiiVrc</AssemblyTitle>
+    <Product>KawaiiVrc</Product>
+    <Company>KawaiiVrc</Company>
+    <Authors>KawaiiVrc</Authors>
+    <Description>A kawaii unofficial desktop companion for VRChat.</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The update feed. The release script reads this same value, so changing the
+         repository here is all the updater and the packaging step need. -->
+    <AssemblyMetadata Include="UpdateRepository" Value="https://github.com/Richy-Chu/KawaiiVrc" />
+  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="VrcCompanion.Tests" />
     <Resource Include="Assets\app-icon.png" />
+    <Resource Include="Assets\security-check-failed.png" />
+    <Content Include="Native\vrc_companion_adblock.dll">
+      <Link>vrc_companion_adblock.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\adblock\brave-engine.bin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\adblock\brave-resources.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Google.FlatBuffers" Version="23.5.26" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+    <PackageReference Include="JeppDev.OpenVR" Version="2.15.6" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="8.0.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
     <PackageReference Include="SkiaSharp" Version="4.155.0" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.155.0" />

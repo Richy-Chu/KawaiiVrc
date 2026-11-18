@@ -1,0 +1,13 @@
+[package]
+name = "vrc_companion_adblock"
+version = "1.0.0"
+edition = "2021"
+license = "MPL-2.0"
+description = "FFI bridge to Brave's adblock-rust engine for KawaiiVrc."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+adblock = "0.13.5"
+serde_json = "1"

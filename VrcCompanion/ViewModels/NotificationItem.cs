@@ -28,9 +28,9 @@ public sealed class NotificationItem : ViewModelBase
 
     public string SenderUserId => _notification.SenderUserId ?? string.Empty;
 
-    public string SenderName => string.IsNullOrWhiteSpace(_notification.SenderUsername)
+    public string SenderName => string.IsNullOrWhiteSpace(_notification.SenderName)
         ? "VRChat"
-        : _notification.SenderUsername!;
+        : _notification.SenderName!;
 
     public string SenderUsername => _notification.SenderUsername ?? string.Empty;
 
@@ -52,18 +52,22 @@ public sealed class NotificationItem : ViewModelBase
         }
     }
 
-    public DateTimeOffset? CreatedAt => _notification.CreatedAt;
+    public DateTimeOffset? CreatedAt => _notification.Timestamp;
 
-    public string ReceivedText => _notification.CreatedAt is null
+    public bool IsV2 => _notification.IsV2;
+
+    public string ReceivedText => _notification.Timestamp is null
         ? string.Empty
-        : _notification.CreatedAt.Value.ToLocalTime().ToString("MMM d, h:mm tt");
+        : _notification.Timestamp.Value.ToLocalTime().ToString("MMM d, h:mm tt");
 
-    public string Category => _notification.Type.ToLowerInvariant() switch
-    {
-        "friendrequest" => "request",
-        "invite" => "invite",
-        _ => "other"
-    };
+    public string Category => IsGroup
+        ? "group"
+        : _notification.Type.ToLowerInvariant() switch
+        {
+            "friendrequest" => "request",
+            "invite" => "invite",
+            _ => "other"
+        };
 
     public string TypeGlyph => _notification.Type.ToLowerInvariant() switch
     {
@@ -80,7 +84,82 @@ public sealed class NotificationItem : ViewModelBase
 
     public bool IsFriendRequest => string.Equals(Type, "friendRequest", StringComparison.OrdinalIgnoreCase);
 
+    public bool IsBoop => string.Equals(Type, "boop", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsGroup => _notification.IsGroupNotification;
+
+    /// <summary>A pending invitation to join a VRChat group.</summary>
+    public bool IsGroupInvite => string.Equals(Type, "group.invite", StringComparison.OrdinalIgnoreCase);
+
+    public string GroupId => _notification.GroupId ?? string.Empty;
+
+    public bool HasGroupId => !string.IsNullOrWhiteSpace(GroupId);
+
+    public string GroupName => string.IsNullOrWhiteSpace(_notification.GroupName)
+        ? "Group"
+        : _notification.GroupName!;
+
+    public string GroupTitle => _notification.GroupTitle ?? string.Empty;
+
+    public bool HasGroupTitle => IsGroup &&
+        !string.IsNullOrWhiteSpace(GroupTitle) &&
+        !string.Equals(GroupTitle, MessageText, StringComparison.CurrentCultureIgnoreCase);
+
+    public string GroupImageUrl => _notification.GroupImageUrl ?? string.Empty;
+
+    public bool HasGroupImage => IsGroup && !string.IsNullOrWhiteSpace(GroupImageUrl);
+
     public bool IsInvite => string.Equals(Type, "invite", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Someone is asking you to invite them to your current instance.</summary>
+    public bool IsInviteRequest => string.Equals(Type, "requestInvite", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Invites, invite requests, group invites, and boops stay in the feed after they are read.</summary>
+    public bool IsPersistent => IsInvite || IsInviteRequest || IsGroupInvite || IsBoop;
+
+    /// <summary>Only a group invitation with a canonical group id can be joined or declined.</summary>
+    public bool CanAcceptGroupInvite => IsGroupInvite && HasGroupId;
+
+    public bool CanDeclineGroupInvite => IsGroupInvite && HasGroupId;
+
+    public bool HasBoopAttachment => IsBoop &&
+        (_notification.HasBoopAttachment ||
+         !string.IsNullOrWhiteSpace(_notification.BoopName) ||
+         !string.IsNullOrWhiteSpace(_notification.BoopImageUrl));
+
+    public bool HasBoopImage => IsBoop && !string.IsNullOrWhiteSpace(BoopImageUrl);
+
+    public string BoopImageUrl => IsBoop
+        ? _notification.BoopImageUrl ?? _notification.ImageUrl ?? string.Empty
+        : string.Empty;
+
+    public string BoopAttachmentTitle => string.IsNullOrWhiteSpace(_notification.BoopName)
+        ? "Boop emoji"
+        : _notification.BoopName!;
+
+    public string BoopKindText
+    {
+        get
+        {
+            if (!IsBoop || !HasBoopAttachment)
+            {
+                return string.Empty;
+            }
+
+            var kind = (_notification.BoopKind ?? string.Empty).ToLowerInvariant() switch
+            {
+                "custom" => "Custom emoji",
+                "inventory" => "Inventory emoji",
+                "emoji" => "Default emoji",
+                _ => "Emoji"
+            };
+
+            return string.IsNullOrWhiteSpace(_notification.BoopName) ||
+                   IsGenericBoopName(_notification.BoopName)
+                ? kind
+                : $"{kind} · {_notification.BoopName}";
+        }
+    }
 
     public string? InviteLocation
     {
@@ -102,10 +181,20 @@ public sealed class NotificationItem : ViewModelBase
             var worldId = GetDetailString("worldId");
             var instanceId = GetDetailString("instanceId");
             if (!string.IsNullOrWhiteSpace(worldId) &&
-                worldId.StartsWith("wrld_", StringComparison.Ordinal) &&
-                !string.IsNullOrWhiteSpace(instanceId))
+                worldId.StartsWith("wrld_", StringComparison.Ordinal))
             {
-                return $"{worldId}:{instanceId}";
+                // The REST notification API returns worldId as a complete
+                // location: "wrld_...:instanceId". Some websocket payloads
+                // split it into worldId + instanceId instead.
+                if (worldId.Contains(':'))
+                {
+                    return worldId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(instanceId))
+                {
+                    return $"{worldId}:{instanceId}";
+                }
             }
 
             return null;
@@ -114,19 +203,38 @@ public sealed class NotificationItem : ViewModelBase
 
     public bool CanAcceptFriendRequest => IsFriendRequest && !string.IsNullOrWhiteSpace(SenderUserId);
 
+    /// <summary>Someone asked you to invite them to your current instance.</summary>
+    public bool CanAcceptInviteRequest => IsInviteRequest && !string.IsNullOrWhiteSpace(SenderUserId);
+
+    /// <summary>World invites and invite requests can be declined or cleared.</summary>
+    public bool CanDecline => IsInvite || IsInviteRequest;
+
+    /// <summary>The raw notification is what gets persisted between launches.</summary>
+    public VrcNotification Snapshot => _notification;
+
+    public string InviteWorldName => IsInvite
+        ? GetDetailString("worldName") ?? string.Empty
+        : string.Empty;
+
     public bool CanJoinInvite => InviteLocation is not null;
 
     public string ActionHint => IsFriendRequest
         ? "Friend request"
         : IsInvite
             ? "World invite"
-            : string.Empty;
+            : IsGroupInvite
+                ? "Group invite"
+                : string.Empty;
 
     public bool Seen => _notification.Seen;
 
     public bool IsUnseen => !Seen;
 
-    public string TypeLabel => _notification.Type.ToLowerInvariant() switch
+    public string TypeLabel => IsGroupInvite
+        ? "INVITE"
+        : IsGroup
+            ? "GROUP"
+            : _notification.Type.ToLowerInvariant() switch
     {
         "friendrequest" => "FRIEND",
         "invite" => "INVITE",
@@ -141,7 +249,9 @@ public sealed class NotificationItem : ViewModelBase
         var type => type.ToUpperInvariant()
     };
 
-    public Brush TypeBrush => _notification.Type.ToLowerInvariant() switch
+    public Brush TypeBrush => IsGroup
+        ? GroupBrush
+        : _notification.Type.ToLowerInvariant() switch
     {
         "friendrequest" => FriendBrush,
         "invite" or "inviteresponse" or "requestinvite" or "requestinviteresponse" => InviteBrush,
@@ -154,6 +264,27 @@ public sealed class NotificationItem : ViewModelBase
     {
         get
         {
+            if (IsBoop)
+            {
+                if (!HasBoopAttachment)
+                {
+                    return "Booped you.";
+                }
+
+                if (!string.IsNullOrWhiteSpace(_notification.BoopName) &&
+                    !IsGenericBoopName(_notification.BoopName))
+                {
+                    return $"Booped you with {_notification.BoopName}.";
+                }
+
+                return (_notification.BoopKind ?? string.Empty).ToLowerInvariant() switch
+                {
+                    "custom" => "Booped you with a custom emoji.",
+                    "inventory" => "Booped you with an inventory emoji.",
+                    _ => "Booped you with an emoji."
+                };
+            }
+
             if (!string.IsNullOrWhiteSpace(_notification.Message))
             {
                 return _notification.Message.Trim();
@@ -166,6 +297,7 @@ public sealed class NotificationItem : ViewModelBase
                 "requestinvite" => "Asked you for an invite.",
                 "inviteresponse" => "Responded to your invite.",
                 "requestinviteresponse" => "Responded to your invite request.",
+                "group.invite" => "Invited you to a group.",
                 "boop" => "Booped you.",
                 "votetokick" => "Started a vote to kick someone.",
                 _ => "New VRChat notification."
@@ -177,19 +309,21 @@ public sealed class NotificationItem : ViewModelBase
     {
         get
         {
-            var time = TimeText.Relative(_notification.CreatedAt);
-            if (!string.IsNullOrWhiteSpace(_notification.SenderUsername))
+            var time = TimeText.Relative(_notification.Timestamp);
+            if (!string.IsNullOrWhiteSpace(_notification.SenderName))
             {
                 return string.IsNullOrWhiteSpace(time)
-                    ? $"From {_notification.SenderUsername}"
-                    : $"From {_notification.SenderUsername} · {time}";
+                    ? $"From {_notification.SenderName}"
+                    : $"From {_notification.SenderName} · {time}";
             }
 
             return time;
         }
     }
 
-    public string DetailsText => ExtractDetails(_notification.Details);
+    public string DetailsText => IsBoop
+        ? BoopKindText
+        : ExtractDetails(_notification.Details);
 
     public Brush RowBackground => Seen ? ReadRowBrush : UnreadRowBrush;
 
@@ -197,6 +331,50 @@ public sealed class NotificationItem : ViewModelBase
     {
         _notification = notification;
         OnAllPropertiesChanged();
+    }
+
+    /// <summary>Stores the canonical group name and icon resolved by group id.</summary>
+    public void ApplyGroupMetadata(string? name, string? iconUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            _notification.ResolvedGroupName = name;
+        }
+
+        if (!string.IsNullOrWhiteSpace(iconUrl))
+        {
+            _notification.ResolvedGroupIconUrl = iconUrl;
+        }
+
+        RefreshGroupMetadata();
+    }
+
+    public void RefreshGroupMetadata()
+    {
+        OnPropertyChanged(nameof(GroupName));
+        OnPropertyChanged(nameof(GroupImageUrl));
+        OnPropertyChanged(nameof(HasGroupImage));
+    }
+
+    /// <summary>Stores resolved boop artwork on the current snapshot.</summary>
+    public void ApplyBoopAttachment(string? name, string? imageUrl, string? kind)
+    {
+        _notification.BoopName = name;
+        _notification.BoopImageUrl = imageUrl;
+        _notification.BoopKind = kind;
+        RefreshBoopAttachment();
+    }
+
+    /// <summary>Called after the boop's emoji or inventory item has been resolved.</summary>
+    public void RefreshBoopAttachment()
+    {
+        OnPropertyChanged(nameof(HasBoopAttachment));
+        OnPropertyChanged(nameof(HasBoopImage));
+        OnPropertyChanged(nameof(BoopImageUrl));
+        OnPropertyChanged(nameof(BoopAttachmentTitle));
+        OnPropertyChanged(nameof(BoopKindText));
+        OnPropertyChanged(nameof(MessageText));
+        OnPropertyChanged(nameof(DetailsText));
     }
 
     public void MarkSeen()
@@ -211,6 +389,12 @@ public sealed class NotificationItem : ViewModelBase
         OnPropertyChanged(nameof(IsUnseen));
         OnPropertyChanged(nameof(RowBackground));
     }
+
+    private static bool IsGenericBoopName(string? name)
+        => string.Equals(name, "Emoji", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(name, "Boop emoji", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(name, "Custom emoji", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(name, "Inventory emoji", StringComparison.OrdinalIgnoreCase);
 
     private string? GetDetailString(string key)
     {

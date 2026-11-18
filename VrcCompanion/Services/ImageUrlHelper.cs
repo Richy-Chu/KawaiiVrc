@@ -18,6 +18,37 @@ public static class ImageUrlHelper
         @"^/api/1/file/(?<fileId>[^/]+)/(?<version>[^/]+)/file/?$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    // avtr.icu (and providers that reuse it) serve VRChat files through a
+    // proxy. That proxy's backing R2 bucket has expired many older files, so
+    // the same file is fetched from VRChat's own image/file endpoint instead.
+    private static readonly Regex AvtrIcuProxyRegex = new(
+        @"^https?://(?:www\.)?avtr\.icu/proxy/(?<fileId>file_[^/]+)/(?<version>[^/]+)/(?<size>[^/?#]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>Extracts the VRChat file_… id from a full or thumbnail image URL.</summary>
+    public static string? ExtractFileId(string? imageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl))
+        {
+            return null;
+        }
+
+        var start = imageUrl.IndexOf("file_", StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+        {
+            return null;
+        }
+
+        var end = start;
+        while (end < imageUrl.Length &&
+               (char.IsLetterOrDigit(imageUrl[end]) || imageUrl[end] == '_' || imageUrl[end] == '-'))
+        {
+            end++;
+        }
+
+        return end > start ? imageUrl[start..end] : null;
+    }
+
     /// <summary>
     /// Picks the best avatar URL following VRCX's preference order:
     /// userIcon → profilePicOverrideThumbnail → currentAvatarThumbnailImageUrl → currentAvatarImageUrl.
@@ -44,6 +75,61 @@ public static class ImageUrlHelper
         }
 
         return currentAvatarImageUrl;
+    }
+
+    /// <summary>
+    /// Rewrites an avtr.icu proxy image URL to VRChat's own file/image endpoint.
+    /// All other URLs are returned unchanged.
+    /// </summary>
+    public static string? NormalizeCommunityImageUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        var match = AvtrIcuProxyRegex.Match(url);
+        if (match.Success)
+        {
+            var size = match.Groups["size"].Value;
+            var kind = string.Equals(size, "file", StringComparison.OrdinalIgnoreCase)
+                ? "file"
+                : "image";
+            return $"https://api.vrchat.cloud/api/1/{kind}/{match.Groups["fileId"].Value}/{match.Groups["version"].Value}/{size}";
+        }
+
+        // Some indexes wrap VRChat's image in a proxy query, e.g.
+        // https://paw-api.amelia.fun/proxy?url=https://api.vrchat.cloud/...
+        // Fetch the VRChat URL directly so a stale third-party proxy cannot
+        // leave the card blank.
+        if (Uri.TryCreate(url, UriKind.Absolute, out var parsed) &&
+            parsed.Query.Length > 0)
+        {
+            foreach (var part in parsed.Query.TrimStart('?').Split('&'))
+            {
+                if (!part.StartsWith("url=", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string inner;
+                try
+                {
+                    inner = Uri.UnescapeDataString(part[4..].Replace("+", " "));
+                }
+                catch (UriFormatException)
+                {
+                    continue;
+                }
+
+                if (inner.StartsWith("https://api.vrchat.cloud/", StringComparison.OrdinalIgnoreCase))
+                {
+                    return inner;
+                }
+            }
+        }
+
+        return url;
     }
 
     /// <summary>

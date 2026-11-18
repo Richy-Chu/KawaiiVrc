@@ -1,11 +1,14 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
+using VrcCompanion.Services;
 
 namespace VrcCompanion;
 
 public partial class App : Application
 {
+    private bool _errorDialogShown;
+
     private static readonly string CrashLogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "VrcCompanion",
@@ -15,19 +18,37 @@ public partial class App : Application
     {
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+        SessionEnding += (_, args) => LifecycleLog.Write($"session ending reason={args.ReasonSessionEnding}");
+        LifecycleLog.Write("startup");
         base.OnStartup(e);
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        LifecycleLog.Write($"exit code={e.ApplicationExitCode}");
+        base.OnExit(e);
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         LogCrash(e.Exception);
+        e.Handled = true;
+
+        // A layout/render error can fire on every measure pass. Showing one
+        // dialog per retry buries the app in duplicate windows, so report the
+        // first failure and keep subsequent details in the crash log.
+        if (_errorDialogShown)
+        {
+            return;
+        }
+
+        _errorDialogShown = true;
         MessageBox.Show(
-            "VRChat Companion hit an unexpected error and may not work correctly.\n\n" +
+            "KawaiiVrc hit an unexpected error and may not work correctly.\n\n" +
             $"Details were written to:\n{CrashLogPath}",
-            "VRChat Companion",
+            "KawaiiVrc",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
-        e.Handled = true;
     }
 
     private void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)

@@ -44,6 +44,20 @@ public sealed class ProviderDegradationTests
     }
 
     [Fact]
+    public void VrcdbAvatarNameFieldIsUsed()
+    {
+        const string body =
+            "[{\"id\":\"avtr_fb13f3f0-eb9e-469f-9701-659f6a9b78e0\",\"avatarName\":\"test 1\"," +
+            "\"authorId\":\"usr_5f00a689-3016-445c-b8f0-069e82ebcdc1\",\"releaseStatus\":\"public\"}]";
+
+        var rows = VrcApiClient.ParseVrcxProviderBody(body, "VRCDB", 80);
+
+        var avatar = Assert.Single(rows);
+        Assert.Equal("test 1", avatar.Name);
+        Assert.Equal("avtr_fb13f3f0-eb9e-469f-9701-659f6a9b78e0", avatar.Id);
+    }
+
+    [Fact]
     public void RealHtmlProviderResponse_ParsesToEmptyList()
     {
         // Captured live from avtrdb.com's API path: HTTP 200 with text/html and an

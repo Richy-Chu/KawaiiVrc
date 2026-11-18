@@ -48,6 +48,419 @@ public class MainViewModelSectionTests
     }
 
     [Fact]
+    public void AvatarChangedActivityOpensTheSharedAvatarPopup()
+    {
+        RunOnSta(() =>
+        {
+            var handler = new ActivityAvatarHandler(isPrivate: false);
+            using var api = new VrcApiClient(null, handler);
+            var shell = new MainViewModel(api);
+            TestHooks.SetLoggedIn(shell);
+            var avatars = new AvatarViewModel(api);
+            TestHooks.AttachAvatarViewModel(shell, avatars);
+            var entry = new ActivityEntry
+            {
+                Type = ActivityType.AvatarChanged,
+                UserId = "usr_activity",
+                DisplayName = "Activity Person",
+                AvatarId = "avtr_public_change",
+                Details = "changed avatar"
+            };
+
+            shell.OpenActivityAvatarCommand.Execute(entry);
+            WaitUntil(() => avatars.SelectedAvatar?.Id == entry.AvatarId &&
+                            avatars.SelectedAvatar.CanUse);
+
+            Assert.False(avatars.SelectedAvatar!.IsPrivate);
+            Assert.True(avatars.SelectedAvatar.CanUse);
+            Assert.Equal("Public Avatar", avatars.SelectedAvatar.Name);
+        });
+    }
+
+    [Fact]
+    public void OldAvatarChangedActivityCannotOpenTheAvatarPopup()
+    {
+        RunOnSta(() =>
+        {
+            using var api = new VrcApiClient();
+            var shell = new MainViewModel(api);
+            TestHooks.SetLoggedIn(shell);
+            var avatars = new AvatarViewModel(api);
+            TestHooks.AttachAvatarViewModel(shell, avatars);
+            var entry = new ActivityEntry
+            {
+                Type = ActivityType.AvatarChanged,
+                UserId = "usr_activity",
+                DisplayName = "Activity Person",
+                AvatarId = string.Empty,
+                Details = "changed avatar"
+            };
+
+            Assert.False(shell.OpenActivityAvatarCommand.CanExecute(entry));
+            shell.OpenActivityAvatarCommand.Execute(entry);
+
+            Assert.Null(avatars.SelectedAvatar);
+            Assert.Null(shell.SelectedFriendDetail);
+        });
+    }
+
+    [Fact]
+    public void LogAvatarChangeResolvesThePublicAvatarFromItsName()
+    {
+        RunOnSta(() =>
+        {
+            var directory = Path.Combine(
+                Path.GetTempPath(),
+                "VrcCompanionTests",
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                TestHooks.UseCommunityHandler(new ActivityAvatarCommunityHandler());
+                using var api = new VrcApiClient(null, new ActivityAvatarHandler(isPrivate: false));
+                var feed = new ActivityFeedViewModel(
+                    api,
+                    new ActivityStore(Path.Combine(directory, "activity.json")),
+                    new FriendAvatarStore(Path.Combine(directory, "avatars.json")));
+                feed.SetAccount("acct_log_avatar");
+                var friend = new VrcUser
+                {
+                    Id = "usr_activity",
+                    DisplayName = "Activity Person",
+                    Location = "wrld_test:1"
+                };
+
+                feed.ApplyLoggedAvatarChange(friend, "Mellzie", "Avatar Maker");
+
+                var entry = Assert.Single(feed.Entries);
+                Assert.True(entry.CanOpenAvatar);
+                Assert.Equal("Mellzie", entry.EffectiveAvatarName);
+                WaitUntil(() => entry.AvatarId == "avtr_public_change" &&
+                                !string.IsNullOrWhiteSpace(entry.AvatarUrl));
+                Assert.True(entry.HasAvatarImage);
+                Assert.Contains("file_log_avatar", entry.AvatarUrl);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+                Directory.Delete(directory, recursive: true);
+            }
+        });
+    }
+
+    [Fact]
+    public void AvatarChangedNameOnlyOpensAndResolvesThePublicAvatar()
+    {
+        RunOnSta(() =>
+        {
+            TestHooks.UseCommunityHandler(new ActivityAvatarCommunityHandler());
+            try
+            {
+                var handler = new ActivityAvatarHandler(isPrivate: false);
+                using var api = new VrcApiClient(null, handler);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "Activity Person",
+                    AvatarName = "Mellzie",
+                    Details = "changed avatar · Mellzie"
+                };
+
+                Assert.True(shell.OpenActivityAvatarCommand.CanExecute(entry));
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                // The name-only row opens immediately as a placeholder, then the
+                // public record fills in the id and picture.
+                Assert.NotNull(avatars.SelectedAvatar);
+                WaitUntil(() => avatars.SelectedAvatar?.Id == "avtr_public_change");
+                Assert.True(avatars.SelectedAvatar!.CanUse);
+                Assert.Equal("Public Avatar", avatars.SelectedAvatar.Name);
+                Assert.Equal("avtr_public_change", entry.AvatarId);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
+    public void WearingAnAvatarRecordsTheSignedInUserImmediately()
+    {
+        RunOnSta(() =>
+        {
+            var directory = Path.Combine(
+                Path.GetTempPath(),
+                "VrcCompanionTests",
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                using var api = new VrcApiClient(null, new SelfAvatarHandler());
+                var me = new VrcUser
+                {
+                    Id = "usr_self",
+                    DisplayName = "Me",
+                    Username = "me",
+                    CurrentAvatar = "avtr_old",
+                    CurrentAvatarName = "Old Look",
+                    Location = "wrld_test:1"
+                };
+                TestHooks.SetCurrentUser(api, me);
+
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                TestHooks.SetCurrentUser(shell, me);
+                var feed = new ActivityFeedViewModel(
+                    api,
+                    new ActivityStore(Path.Combine(directory, "activity.json")),
+                    new FriendAvatarStore(Path.Combine(directory, "avatars.json")));
+                feed.SetAccount(me.Id);
+                feed.ApplyCurrentUser(me);
+                TestHooks.AttachActivityFeed(shell, feed);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                TestHooks.PublishAvatarWorn(avatars, new Avatar
+                {
+                    Id = "avtr_new",
+                    Name = "New Look",
+                    ThumbnailImageUrl = "https://example.test/new-look.png"
+                });
+
+                Assert.Equal("avtr_new", me.CurrentAvatar);
+                Assert.Equal("New Look", me.CurrentAvatarName);
+                WaitUntil(() => feed.Entries.Any(entry =>
+                    entry.Type == ActivityType.AvatarChanged &&
+                    entry.UserId == me.Id &&
+                    entry.AvatarId == "avtr_new"));
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        });
+    }
+
+    [Fact]
+    public void SelfAvatarSwitchFromTheVrchatLogBecomesOneActivityRow()
+    {
+        RunOnSta(() =>
+        {
+            var directory = Path.Combine(
+                Path.GetTempPath(),
+                "VrcCompanionTests",
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                using var api = new VrcApiClient();
+                var me = new VrcUser
+                {
+                    Id = "usr_self",
+                    DisplayName = "Me",
+                    Username = "me",
+                    CurrentAvatar = "avtr_old",
+                    CurrentAvatarName = "Old Look",
+                    CurrentAvatarThumbnailImageUrl = "https://example.test/old.png",
+                    Location = "wrld_test:1"
+                };
+                TestHooks.SetCurrentUser(api, me);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                TestHooks.SetCurrentUser(shell, me);
+                var feed = new ActivityFeedViewModel(
+                    api,
+                    new ActivityStore(Path.Combine(directory, "activity.json")),
+                    new FriendAvatarStore(Path.Combine(directory, "avatars.json")));
+                feed.SetAccount(me.Id);
+                feed.ApplyCurrentUser(me);
+                TestHooks.AttachActivityFeed(shell, feed);
+                TestHooks.SeedLoggedAvatarBaseline(shell, me.Id, "Old Look");
+
+                var switches = new Dictionary<string, LoggedAvatar>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Me"] = new("New Log Look", "Avatar Maker")
+                };
+                TestHooks.ApplyLoggedAvatarChanges(
+                    shell,
+                    new VrChatLogSnapshot(
+                        "wrld_test:1",
+                        Array.Empty<VrChatLogPlayer>(),
+                        AvatarSwitches: switches));
+
+                Assert.Equal("New Log Look", me.CurrentAvatarName);
+                WaitUntil(() => feed.Entries.Any(entry =>
+                    entry.Type == ActivityType.AvatarChanged &&
+                    entry.UserId == me.Id &&
+                    entry.EffectiveAvatarName == "New Log Look"));
+
+                // The account endpoint catching up must resolve the same row,
+                // not create a second switch event.
+                me.CurrentAvatar = "avtr_log_new";
+                me.CurrentAvatarName = "New Log Look";
+                me.CurrentAvatarThumbnailImageUrl = "https://example.test/new-log.png";
+                feed.ApplyCurrentUser(me);
+
+                Assert.Single(feed.Entries, entry =>
+                    entry.Type == ActivityType.AvatarChanged &&
+                    entry.UserId == me.Id);
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        });
+    }
+
+    [Fact]
+    public void AvatarChangedActivityProfileActionOpensTheProfilePopup()
+    {
+        RunOnSta(() =>
+        {
+            var handler = new ActivityProfileHandler();
+            using var api = new VrcApiClient(null, handler);
+            var shell = new MainViewModel(api);
+            TestHooks.SetLoggedIn(shell);
+            var entry = new ActivityEntry
+            {
+                Type = ActivityType.AvatarChanged,
+                UserId = "usr_activity",
+                DisplayName = "Activity Person",
+                AvatarId = "avtr_public_change",
+                Details = "changed avatar"
+            };
+
+            shell.OpenActivityUserCommand.Execute(entry);
+            WaitUntil(() => shell.SelectedFriendDetail?.Profile is not null);
+
+            Assert.Equal("Live Activity", shell.SelectedFriendDetail!.DisplayName);
+        });
+    }
+
+    [Fact]
+    public void AvatarChangedPictureWithoutAnIdOpensAViewOnlyPopup()
+    {
+        RunOnSta(() =>
+        {
+            using var api = new VrcApiClient(null, new ActivityAvatarHandler(isPrivate: true));
+            var shell = new MainViewModel(api);
+            TestHooks.SetLoggedIn(shell);
+            var avatars = new AvatarViewModel(api);
+            TestHooks.AttachAvatarViewModel(shell, avatars);
+            var entry = new ActivityEntry
+            {
+                Type = ActivityType.AvatarChanged,
+                UserId = "usr_activity",
+                DisplayName = "Activity Person",
+                AvatarUrl = "https://example.test/profile-picture",
+                Details = "changed avatar"
+            };
+
+            shell.OpenActivityAvatarCommand.Execute(entry);
+
+            // The picture-only popup opens synchronously, before any lookup.
+            Assert.NotNull(avatars.SelectedAvatar);
+            Assert.Equal(entry.AvatarUrl, avatars.SelectedAvatar!.ImageUrl);
+            Assert.True(avatars.SelectedAvatar.IsUnavailable);
+            Assert.False(avatars.SelectedAvatar.CanUse);
+            Assert.Contains("unavailable", avatars.SelectedAvatar.UseHint);
+            Assert.Equal("Private or unlisted avatar", avatars.SelectedAvatar.Name);
+        });
+    }
+
+    [Fact]
+    public void AvatarChangeHistoryBackfillsAnIdFromTheRememberedPicture()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "VrcCompanionTests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var avatarUrl = "https://api.vrchat.cloud/api/1/image/file_remembered/1/128";
+            var avatarStore = new FriendAvatarStore(Path.Combine(directory, "avatars.json"));
+            avatarStore.RememberImageResolution(
+                "acct_activity",
+                avatarUrl,
+                "avtr_remembered",
+                "public");
+            var activityStore = new ActivityStore(Path.Combine(directory, "activity.json"));
+            activityStore.Save("acct_activity", new[]
+            {
+                new ActivityEntry
+                {
+                    Id = "avatar-usr_remembered-file_remembered",
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_remembered",
+                    DisplayName = "Remembered Person",
+                    AvatarUrl = avatarUrl,
+                    Details = "changed avatar",
+                    Timestamp = DateTimeOffset.UtcNow
+                }
+            });
+
+            using var api = new VrcApiClient(null, new ActivityAvatarHandler(isPrivate: false));
+            var feed = new ActivityFeedViewModel(api, activityStore, avatarStore);
+            feed.SetAccount("acct_activity");
+            WaitUntil(() => feed.Entries.FirstOrDefault()?.AvatarId == "avtr_remembered");
+            WaitUntil(() => feed.Entries.First().Details.Contains("Public Avatar"));
+
+            var entry = Assert.Single(feed.Entries);
+            Assert.True(entry.CanOpenAvatar);
+            Assert.True(entry.HasAvatar);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PrivateAvatarChangedActivityOpensAViewOnlyPopup()
+    {
+        RunOnSta(() =>
+        {
+            TestHooks.UseCommunityHandler(new ActivityAvatarCommunityHandler());
+            try
+            {
+                var handler = new ActivityAvatarHandler(isPrivate: true);
+                using var api = new VrcApiClient(null, handler);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "Activity Person",
+                    AvatarId = "avtr_private_change",
+                    Details = "changed avatar · Secret Kitten"
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+                WaitUntil(() => avatars.SelectedAvatar?.IsPrivate == true);
+
+                Assert.True(avatars.SelectedAvatar!.IsPrivate);
+                Assert.False(avatars.SelectedAvatar.CanUse);
+                Assert.Equal("Secret Kitten", avatars.SelectedAvatar.Name);
+                Assert.Contains("owner can wear", avatars.SelectedAvatar.UseHint);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
     public void RefreshFriendProfileBypassesBothGroupCaches()
     {
         RunOnSta(() =>
@@ -88,6 +501,102 @@ public class MainViewModelSectionTests
                 Directory.Delete(notesDirectory, recursive: true);
             }
         });
+    }
+
+    [Fact]
+    public void ProfileInviteAndRequestAreAvailableWithoutAKnownCurrentWorld()
+    {
+        using var shell = new MainViewModel();
+        TestHooks.SetLoggedIn(shell);
+        var friend = new FriendItem(new VrcUser
+        {
+            Id = "usr_invite_target",
+            DisplayName = "Invite Target",
+            Username = "invitetarget",
+            Status = "active",
+            Location = "private"
+        });
+
+        Assert.True(shell.InviteFriendCommand.CanExecute(friend));
+        Assert.True(shell.RequestInviteFriendCommand.CanExecute(friend));
+    }
+
+    [Fact]
+    public void HeaderFriendsCommandFocusesTheFriendsSection()
+    {
+        RunOnSta(() =>
+        {
+            var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            shell.SelectedSection = Section(shell, "activity");
+
+            shell.OpenFriendsCommand.Execute(null);
+
+            Assert.Equal("friends", shell.SelectedSection.Key);
+            Assert.False(Section(shell, "friends").IsVisible);
+        });
+    }
+
+    [Fact]
+    public void FriendFiltersSeparateInGameActiveAndOfflinePresence()
+    {
+        RunOnSta(() =>
+        {
+            var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            shell.Friends.Add(new FriendItem(new VrcUser
+            {
+                Id = "usr_ingame",
+                DisplayName = "In Game",
+                State = "online",
+                Status = "join me",
+                Location = "wrld_11111111-1111-1111-1111-111111111111:12345"
+            }));
+            shell.Friends.Add(new FriendItem(new VrcUser
+            {
+                Id = "usr_web",
+                DisplayName = "Web Active",
+                State = "active",
+                Status = "join me",
+                Location = "offline"
+            }));
+            shell.Friends.Add(new FriendItem(new VrcUser
+            {
+                Id = "usr_offline",
+                DisplayName = "Offline",
+                State = "offline",
+                Status = "offline",
+                Location = "offline"
+            }));
+
+            string[] Filtered(string key)
+            {
+                shell.SelectedFriendFilter = shell.FriendFilters.Single(option => option.Key == key);
+                return shell.FriendsView.Cast<FriendItem>().Select(friend => friend.Id).ToArray();
+            }
+
+            Assert.Equal(new[] { "usr_ingame" }, Filtered("online"));
+            Assert.Equal(new[] { "usr_web" }, Filtered("active"));
+            Assert.Equal(new[] { "usr_ingame" }, Filtered("joinme"));
+            Assert.Equal(new[] { "usr_offline" }, Filtered("offline"));
+        });
+    }
+
+    [Fact]
+    public void ActiveAccountLabelFollowsTheSignedInUserNotStaleStoredState()
+    {
+        using var api = new VrcApiClient();
+        TestHooks.SetCurrentUser(api, new VrcUser
+        {
+            Id = "usr_chebe",
+            DisplayName = "chebe",
+            Username = "chebe"
+        });
+
+        var accounts = new MultiAccountViewModel(api);
+
+        Assert.Equal("chebe", accounts.ActiveAccountLabel);
+        Assert.Equal("C", accounts.ActiveAccountInitial);
     }
 
     private static void WaitUntil(Func<bool> condition)
@@ -186,6 +695,135 @@ public class MainViewModelSectionTests
         }
 
         failure?.Throw();
+    }
+
+    private sealed class ActivityAvatarHandler : HttpMessageHandler
+    {
+        private readonly bool _isPrivate;
+
+        public ActivityAvatarHandler(bool isPrivate)
+        {
+            _isPrivate = isPrivate;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.EndsWith("/avatars", StringComparison.Ordinal) &&
+                request.RequestUri?.Query.Contains("search=", StringComparison.Ordinal) == true)
+            {
+                return Json(_isPrivate
+                    ? "[]"
+                    : """
+                      [
+                        {
+                          "id": "avtr_private_duplicate",
+                          "name": "Mellzie",
+                          "authorName": "Avatar Maker",
+                          "releaseStatus": "private"
+                        },
+                        {
+                          "id": "avtr_public_change",
+                          "name": "Mellzie",
+                          "authorName": "Avatar Maker",
+                          "releaseStatus": "public",
+                          "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_log_avatar/1/256"
+                        }
+                      ]
+                      """);
+            }
+
+            if (path.Contains("/avatars/", StringComparison.Ordinal))
+            {
+                if (_isPrivate)
+                {
+                    return Json("""
+                        {
+                          "id": "avtr_private_change",
+                          "name": "Secret Kitten",
+                          "authorName": "Avatar Maker",
+                          "releaseStatus": "private"
+                        }
+                        """);
+                }
+
+                return Json("""
+                    {
+                      "id": "avtr_public_change",
+                      "name": "Public Avatar",
+                      "authorName": "Avatar Maker",
+                      "releaseStatus": "public"
+                    }
+                    """);
+            }
+
+            // The popup may load favourites in the background.
+            return Json("[]");
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
+    private sealed class SelfAvatarHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            return Json("""
+                {
+                  "id": "avtr_new",
+                  "name": "New Look",
+                  "authorName": "Me",
+                  "releaseStatus": "private",
+                  "thumbnailImageUrl": "https://example.test/new-look.png"
+                }
+                """);
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
+    private sealed class ActivityAvatarCommunityHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            return Json("""
+                [
+                  {
+                    "id": "avtr_private_duplicate",
+                    "name": "Mellzie",
+                    "authorName": "Avatar Maker",
+                    "releaseStatus": "private"
+                  },
+                  {
+                    "id": "avtr_public_change",
+                    "name": "Mellzie",
+                    "authorName": "Avatar Maker",
+                    "releaseStatus": "public",
+                    "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_log_avatar/1/256"
+                  }
+                ]
+                """);
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
     }
 
     private sealed class ActivityProfileHandler : HttpMessageHandler

@@ -50,7 +50,34 @@ public sealed class NotificationDetailViewModel : ViewModelBase
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
 
-    public bool HasSender => !string.IsNullOrWhiteSpace(Notification.SenderUserId);
+    public bool HasSender =>
+        !string.IsNullOrWhiteSpace(Notification.SenderUserId) &&
+        !Notification.SenderUserId.StartsWith("grp_", StringComparison.OrdinalIgnoreCase) &&
+        (!Notification.IsGroup || Notification.IsGroupInvite);
+
+    public bool IsGroup => Notification.IsGroup;
+
+    public bool IsGroupInvite => Notification.IsGroupInvite;
+
+    public bool CanAcceptGroupInvite => Notification.CanAcceptGroupInvite;
+
+    public bool CanDeclineGroupInvite => Notification.CanDeclineGroupInvite;
+
+    public bool HasGroup => Notification.IsGroup;
+
+    public string GroupId => Notification.GroupId;
+
+    public bool CanOpenGroup => Notification.HasGroupId;
+
+    public string GroupName => Notification.GroupName;
+
+    public string GroupTitle => Notification.GroupTitle;
+
+    public bool HasGroupTitle => Notification.HasGroupTitle;
+
+    public string GroupImageUrl => Notification.GroupImageUrl;
+
+    public bool HasGroupImage => Notification.HasGroupImage;
 
     public string SenderName => string.IsNullOrWhiteSpace(_user?.DisplayName)
         ? Notification.SenderName
@@ -77,40 +104,57 @@ public sealed class NotificationDetailViewModel : ViewModelBase
 
             return ImageUrlHelper.PickAvatarThumbnailUrl(
                 _user.UserIcon,
-                _user.ProfilePicOverrideThumbnail,
+                _user.ProfilePicOverrideThumbnail ?? _user.IconUrl,
                 _user.CurrentAvatarThumbnailImageUrl,
                 _user.CurrentAvatarImageUrl,
                 256) ?? string.Empty;
         }
     }
 
-    public string TrustLabel => UserPresentation.TrustLabel(_user?.Tags);
+    public bool HasSenderAvatar => !string.IsNullOrWhiteSpace(SenderAvatarUrl);
 
-    public string SenderStatusLabel => (_user?.Status ?? string.Empty).ToLowerInvariant() switch
-    {
-        "active" => "Online",
-        "join me" => "Join Me",
-        "ask me" => "Ask Me",
-        "busy" => "Busy",
-        "offline" => "Offline",
-        var status when !string.IsNullOrWhiteSpace(status) => char.ToUpperInvariant(status[0]) + status[1..],
-        _ => "Unknown"
-    };
+    public string TrustLabel => UserPresentation.TrustLabel(_user?.Tags, _user?.DeveloperType);
 
-    public Brush SenderStatusBrush => string.Equals(_user?.Status, "offline", StringComparison.OrdinalIgnoreCase)
+    public Brush TrustBrush => UserPresentation.TrustBrush(_user?.Tags, _user?.DeveloperType);
+
+    public string IconFrameUrl => UserPresentation.IconFrameUrl(_user?.IconFrame) ?? string.Empty;
+
+    public string IconFrameIntroUrl => UserPresentation.IconFrameIntroUrl(_user?.IconFrame) ?? string.Empty;
+
+    public bool HasIconFrame => IconFrameUrl.Length > 0;
+
+    public string ProfileEffectUrl => UserPresentation.ProfileEffectUrl(_user?.ProfileEffect) ?? string.Empty;
+
+    public string ProfileEffectIntroUrl => UserPresentation.ProfileEffectIntroUrl(_user?.ProfileEffect) ?? string.Empty;
+
+    public bool HasProfileEffect => ProfileEffectUrl.Length > 0;
+
+    public string SenderStatusLabel => _user is null
+        ? "Unknown"
+        : UserPresence.Label(_user.Status, SenderPresence);
+
+    public Brush SenderStatusBrush => _user is null
         ? OfflineBrush
-        : OnlineBrush;
+        : UserPresence.Brush(_user.Status, SenderPresence);
+
+    private UserPresenceState SenderPresence => _user is null
+        ? UserPresenceState.Offline
+        : UserPresence.Classify(_user.Location, _user.Status, _user.State, _user.Platform ?? _user.LastPlatform);
 
     /// <summary>The sender's current world, when VRChat exposes it to you.</summary>
     public string UserLocation => _user?.Location ?? string.Empty;
 
-    public bool CanJoinUser => LaunchService.IsLocation(UserLocation);
+    // For an invite, the invited instance is the destination the sender chose.
+    // Do not offer their current location as a second, possibly different join.
+    public bool CanJoinUser => !Notification.IsInvite && LaunchService.IsLocation(UserLocation);
 
     public string UserLocationLine => CanJoinUser
         ? "In a world you can join"
-        : string.IsNullOrWhiteSpace(_user?.Location) || string.Equals(_user!.Location, "offline", StringComparison.OrdinalIgnoreCase)
-            ? "Offline"
-            : "Their world is hidden";
+        : SenderPresence == UserPresenceState.Active
+            ? "Active on web"
+            : SenderPresence == UserPresenceState.Offline
+                ? "Offline"
+                : "Their world is hidden";
 
     public string SenderBio => string.IsNullOrWhiteSpace(_user?.Bio) ? string.Empty : _user!.Bio!.Trim();
 
@@ -124,6 +168,16 @@ public sealed class NotificationDetailViewModel : ViewModelBase
 
     public string MessageText => Notification.MessageText;
 
+    public bool IsBoop => Notification.IsBoop;
+
+    public string BoopImageUrl => Notification.BoopImageUrl;
+
+    public bool HasBoopImage => Notification.HasBoopImage;
+
+    public string BoopAttachmentTitle => Notification.BoopAttachmentTitle;
+
+    public string BoopKindText => Notification.BoopKindText;
+
     public string DetailsText => Notification.DetailsText;
 
     public bool HasDetailsText => !string.IsNullOrWhiteSpace(DetailsText);
@@ -134,13 +188,42 @@ public sealed class NotificationDetailViewModel : ViewModelBase
 
     public bool CanAcceptFriendRequest => Notification.CanAcceptFriendRequest;
 
+    public bool CanAcceptInviteRequest => Notification.CanAcceptInviteRequest;
+
+    public bool CanDeclineNotification => Notification.CanDecline;
+
     public bool CanJoinInvite => Notification.CanJoinInvite;
+
+    public bool IsFriendRequest => Notification.IsFriendRequest;
+
+    public string NotificationKindText => Notification.IsFriendRequest
+        ? "Friend request"
+        : Notification.IsInvite
+            ? "World invite"
+            : Notification.IsInviteRequest
+                ? "Invite request"
+                : Notification.IsGroupInvite
+                    ? "Group invite"
+                    : Notification.IsGroup
+                        ? "Group update"
+                        : "Notification";
+
+    public string NotificationKindGlyph => Notification.IsFriendRequest
+        ? "\uE8FA"
+        : Notification.TypeGlyph;
 
     public string InviteLocation => Notification.InviteLocation ?? string.Empty;
 
-    public bool HasWorld => _world is not null;
+    public bool HasWorld => _world is not null ||
+                            (Notification.IsInvite &&
+                             (!string.IsNullOrWhiteSpace(Notification.InviteLocation) ||
+                              !string.IsNullOrWhiteSpace(Notification.InviteWorldName)));
 
-    public string WorldName => string.IsNullOrWhiteSpace(_world?.Name) ? "Invited world" : _world!.Name;
+    public string WorldName => !string.IsNullOrWhiteSpace(_world?.Name)
+        ? _world!.Name
+        : !string.IsNullOrWhiteSpace(Notification.InviteWorldName)
+            ? Notification.InviteWorldName
+            : "Invited world";
 
     public string WorldAuthorText => string.IsNullOrWhiteSpace(_world?.AuthorName)
         ? string.Empty
@@ -185,7 +268,9 @@ public sealed class NotificationDetailViewModel : ViewModelBase
         ? "wants to be friends"
         : Notification.IsInvite
             ? "invited you to a world"
-            : Notification.TypeLabel.ToLowerInvariant() switch
+            : Notification.IsGroupInvite
+                ? "invited you to a group"
+                : Notification.TypeLabel.ToLowerInvariant() switch
             {
                 "boop" => "booped you",
                 "requestinvite" => "asked you for an invite",
@@ -199,6 +284,7 @@ public sealed class NotificationDetailViewModel : ViewModelBase
     {
         IsLoading = true;
         ErrorMessage = null;
+        _ = LoadCosmeticsAsync(cancellationToken);
 
         try
         {
@@ -208,6 +294,46 @@ public sealed class NotificationDetailViewModel : ViewModelBase
                 if (cancellationToken.IsCancellationRequested)
                 {
                     return;
+                }
+
+                // Friend requests frequently arrive before the sender is a
+                // friend. The user endpoint then omits the avatar; the public
+                // profile still carries the newer iconUrl field.
+                if (string.IsNullOrWhiteSpace(SenderAvatarUrl))
+                {
+                    var profile = await _api.GetProfileAsync(
+                        Notification.SenderUserId,
+                        cancellationToken: cancellationToken);
+                    if (profile is not null && !cancellationToken.IsCancellationRequested)
+                    {
+                        _user ??= new VrcUser
+                        {
+                            Id = Notification.SenderUserId,
+                            DisplayName = Notification.SenderName
+                        };
+                        if (string.IsNullOrWhiteSpace(_user.UserIcon))
+                        {
+                            _user.UserIcon = profile.UserIcon;
+                        }
+                        if (string.IsNullOrWhiteSpace(_user.IconUrl))
+                        {
+                            _user.IconUrl = profile.IconUrl;
+                        }
+                        if (string.IsNullOrWhiteSpace(_user.CurrentAvatarThumbnailImageUrl))
+                        {
+                            _user.CurrentAvatarThumbnailImageUrl = profile.CurrentAvatarThumbnailImageUrl;
+                        }
+                        if (string.IsNullOrWhiteSpace(_user.CurrentAvatarImageUrl))
+                        {
+                            _user.CurrentAvatarImageUrl = profile.CurrentAvatarImageUrl;
+                        }
+                        _user.IconFrame ??= profile.IconFrame;
+                        _user.ProfileEffect ??= profile.ProfileEffect;
+                        _user.NameplateEffect ??= profile.NameplateEffect;
+                        _user.ThemeIconColor ??= profile.ThemeIconColor;
+                        _user.ThemeButtonColor ??= profile.ThemeButtonColor;
+                        _user.ThemeSubtextColor ??= profile.ThemeSubtextColor;
+                    }
                 }
             }
 
@@ -247,6 +373,31 @@ public sealed class NotificationDetailViewModel : ViewModelBase
             {
                 IsLoading = false;
             }
+        }
+    }
+
+    private async Task LoadCosmeticsAsync(CancellationToken cancellationToken)
+    {
+        if (CosmeticCatalog.IsLoaded)
+        {
+            return;
+        }
+
+        try
+        {
+            await CosmeticCatalog.EnsureLoadedAsync(_api, cancellationToken);
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                OnAllPropertiesChanged();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Selection changed.
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
         }
     }
 

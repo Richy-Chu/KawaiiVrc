@@ -218,6 +218,38 @@ public class FriendDetailNoteTests : IDisposable
     }
 
     [Fact]
+    public void FriendshipActionSwitchesBetweenAddAndRemove()
+    {
+        var profile = new FriendDetailViewModel(
+            new FriendItem(new VrcUser
+            {
+                Id = "usr_friend",
+                DisplayName = "Friend",
+                Username = "friend",
+                IsFriend = true
+            }),
+            new VrcApiClient(),
+            ImageLoader.Shared);
+
+        Assert.True(profile.IsFriend);
+        Assert.Equal("Friend", profile.FriendshipLabel);
+        Assert.Equal("Remove friend", profile.FriendActionLabel);
+
+        profile.ApplyFriendshipState(false, false, false);
+        Assert.False(profile.IsFriend);
+        Assert.Equal("Not friends", profile.FriendshipLabel);
+        Assert.Equal("Add friend", profile.FriendActionLabel);
+
+        profile.ApplyFriendshipState(false, true, false);
+        Assert.Equal("Friend request sent", profile.FriendshipLabel);
+        Assert.Equal("Cancel request", profile.FriendActionLabel);
+
+        profile.ApplyFriendshipState(false, false, true);
+        Assert.Equal("Friend request received", profile.FriendshipLabel);
+        Assert.Equal("Accept friend", profile.FriendActionLabel);
+    }
+
+    [Fact]
     public void OpenGroupsCommand_ShowsTheProfileGroupListUntilClosed()
     {
         var profile = CreateProfile(new FriendNotesStore(NotesPath));

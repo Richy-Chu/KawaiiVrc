@@ -16,7 +16,7 @@ public class NowPlayingTests
         Assert.NotNull(info);
         Assert.Equal("YouTube", info.Source);
         Assert.Equal("Lo-fi Beats", info.Title);
-        Assert.Equal("♪ Chill Channel — Lo-fi Beats · YouTube", info.ChatboxText);
+        Assert.Equal("▶ Chill Channel — Lo-fi Beats · YouTube", info.ChatboxText);
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public class NowPlayingTests
 
         Assert.NotNull(info);
         Assert.Equal("Spotify", info.Source);
-        Assert.Equal("♪ The Weeknd — Starboy · Spotify", info.ChatboxText);
+        Assert.Equal("▶ The Weeknd — Starboy · Spotify", info.ChatboxText);
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public class NowPlayingTests
 
         Assert.NotNull(info);
         Assert.Equal("Brave", info.Source);
-        Assert.Equal("♪ Artist — Some Song · Brave", info.ChatboxText);
+        Assert.Equal("▶ Artist — Some Song · Brave", info.ChatboxText);
     }
 
     [Fact]

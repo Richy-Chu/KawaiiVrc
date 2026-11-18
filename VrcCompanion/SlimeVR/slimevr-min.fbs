@@ -1,0 +1,129 @@
+// Minimal SolarXR data-feed schema matching SlimeVR v22.
+// Only the fields this app reads/writes are declared; FlatBuffers keeps
+// unknown fields out of the way as long as field order and types match.
+namespace solarxr_protocol;
+
+struct Vec3f {
+    x:float;
+    y:float;
+    z:float;
+}
+
+struct Quat {
+    x:float;
+    y:float;
+    z:float;
+    w:float;
+}
+
+enum FirmwareErrorCode : ubyte {
+    Other = 0,
+    Disconnected,
+    Occluded,
+    ImuError
+}
+
+table HardwareInfo {
+    mcu_id:ushort;
+    display_name:string;
+}
+
+table HardwareStatus {
+    error_status:FirmwareErrorCode = null;
+    ping:ushort = null;
+    rssi:short = null;
+    rssi_min:short = null;
+    rssi_max:short = null;
+    mcu_temp:float = null;
+    battery_voltage:float = null;
+    battery_pct_estimate:ubyte = null;
+}
+
+table TrackerInfo {
+    is_imu:bool;
+    imu_type:ushort;
+    body_part:ubyte;
+    intended_body_part:ubyte;
+    mounting_orientation:Quat;
+    mounting_reset_orientation:Quat;
+    display_name:string;
+    custom_name:string;
+    last_mounting_method:ubyte;
+    magnetometer:ubyte;
+    data_type:ubyte;
+    bone_offset:Vec3f;
+}
+
+table TrackerData {
+    device_id:ushort;
+    tracker_id:ushort;
+    info:TrackerInfo;
+    status:ubyte;
+}
+
+table DeviceData {
+    id:ushort;
+    custom_name:string;
+    hardware_info:HardwareInfo;
+    hardware_status:HardwareStatus;
+    trackers:[TrackerData];
+}
+
+table TrackerDataMask {
+    info:bool;
+    status:bool;
+    rotation:bool;
+    position:bool;
+    raw_acceleration:bool;
+    temp:bool;
+    linear_acceleration:bool;
+    rotation_reference_adjusted:bool;
+    rotation_identity_adjusted:bool;
+    tps:bool;
+    raw_magnetic_vector:bool;
+    stay_aligned:bool;
+    origin:bool;
+}
+
+table DeviceDataMask {
+    tracker_data:TrackerDataMask;
+    device_data:bool;
+}
+
+table DataFeedConfig {
+    minimum_time_since_last:ushort;
+    data_mask:DeviceDataMask;
+    bone_mask:bool;
+    server_guards_mask:bool;
+}
+
+table StartDataFeed {
+    data_feeds:[DataFeedConfig];
+}
+
+table DataFeedUpdate {
+    devices:[DeviceData];
+}
+
+table PollDataFeed {
+}
+
+table DataFeedConfigMessage {
+}
+
+union DataFeedMessage {
+    PollDataFeed,
+    StartDataFeed,
+    DataFeedUpdate,
+    DataFeedConfig
+}
+
+table DataFeedMessageHeader {
+    message:DataFeedMessage;
+}
+
+table MessageBundle {
+    data_feed_msgs:[DataFeedMessageHeader];
+}
+
+root_type MessageBundle;

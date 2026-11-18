@@ -1,0 +1,4 @@
+! Brave-recommended Spotify web-player audio ad redirect.
+! Uses the same akamaized.net/audio endpoint and noop resource Brave's
+! filter-list maintainers recommend for the Spotify web player.
+||akamaized.net/audio/$media,redirect=noop-1s.mp4,domain=open.spotify.com,important

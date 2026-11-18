@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation.Peers;
@@ -11,6 +15,8 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
+using VrcCompanion.Models;
+using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
 
 namespace VrcCompanion.Controls;
@@ -32,6 +38,12 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         typeof(bool),
         typeof(EmbeddedBrowser),
         new PropertyMetadata(false));
+
+    public static readonly DependencyProperty AdBlockEnabledProperty = DependencyProperty.Register(
+        nameof(AdBlockEnabled),
+        typeof(bool),
+        typeof(EmbeddedBrowser),
+        new PropertyMetadata(true, OnAdBlockEnabledChanged));
 
     private const string FocusShortcutScript = """
         window.__vrcFocusMode = false;
@@ -59,19 +71,227 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         }, true);
         """;
 
+    private const string FallbackAdBlockCss =
+        "[data-ad-slot], [data-ad-unit], [data-ad-client],\n" +
+        "[id^=\"google_ads\"], [id^=\"div-gpt-ad\"], [id^=\"ad-slot\"], [id^=\"ad_banner\"],\n" +
+        "ins.adsbygoogle,\n" +
+        "iframe[src*=\"doubleclick.net\"],\n" +
+        "iframe[src*=\"googlesyndication.com\"],\n" +
+        "iframe[src*=\"amazon-adsystem.com\"],\n" +
+        "[aria-label=\"Advertisement\"] { display: none !important; }";
+
+    private const string ApplyAdBlockCssTemplate = """
+        (() => {
+          const id = 'vrc-adblock-style';
+          let style = document.getElementById(id);
+          if (!style) {
+            style = document.createElement('style');
+            style.id = id;
+            (document.head || document.documentElement).appendChild(style);
+          }
+          style.textContent = {0};
+          return 'added';
+        })()
+        """;
+
+    private const string RemoveAdBlockCssScript =
+        "document.getElementById('vrc-adblock-style')?.remove();";
+
+    private const string FingerprintProtectionScript = """
+        (() => {
+          if (window.__vrcFingerprintShield) return;
+          window.__vrcFingerprintShield = true;
+
+          const define = (target, property, value) => {
+            try {
+              Object.defineProperty(target, property, {
+                configurable: true,
+                get: () => value
+              });
+            } catch (_) {}
+          };
+
+          define(navigator, 'hardwareConcurrency', 4);
+          define(navigator, 'deviceMemory', 8);
+          define(navigator, 'plugins', []);
+          define(navigator, 'mimeTypes', []);
+          if (navigator.languages) define(navigator, 'languages', ['en-US', 'en']);
+
+          const patchWebGl = (prototype) => {
+            if (!prototype || prototype.__vrcShieldPatched) return;
+            const original = prototype.getParameter;
+            prototype.getParameter = function (parameter) {
+              if (parameter === 37445) return 'Google Inc.';
+              if (parameter === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics, OpenGL 4.1)';
+              return original.call(this, parameter);
+            };
+            prototype.__vrcShieldPatched = true;
+          };
+          patchWebGl(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+          patchWebGl(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+
+          const addCanvasNoise = (data) => {
+            for (let i = 0; i < data.length; i += 997) {
+              data[i] = (data[i] + 1) % 256;
+            }
+          };
+
+          if (window.CanvasRenderingContext2D) {
+            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+            CanvasRenderingContext2D.prototype.getImageData = function () {
+              const result = originalGetImageData.apply(this, arguments);
+              try { addCanvasNoise(result.data); } catch (_) {}
+              return result;
+            };
+          }
+
+          if (window.HTMLCanvasElement) {
+            const originalToDataUrl = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function () {
+              try {
+                const context = this.getContext('2d');
+                if (context && this.width && this.height) {
+                  const image = context.getImageData(0, 0, this.width, this.height);
+                  addCanvasNoise(image.data);
+                  context.putImageData(image, 0, 0);
+                }
+              } catch (_) {}
+              return originalToDataUrl.apply(this, arguments);
+            };
+          }
+        })();
+        """;
+
+    private const string StrictFingerprintProtectionScript = """
+        (() => {
+          if (window.__vrcFingerprintShieldStrict) return;
+          window.__vrcFingerprintShieldStrict = true;
+
+          const define = (target, property, value) => {
+            try {
+              Object.defineProperty(target, property, {
+                configurable: true,
+                get: () => value
+              });
+            } catch (_) {}
+          };
+
+          define(navigator, 'hardwareConcurrency', 2);
+          define(navigator, 'deviceMemory', 4);
+          define(navigator, 'plugins', []);
+          define(navigator, 'mimeTypes', []);
+          if (navigator.languages) define(navigator, 'languages', ['en-US', 'en']);
+
+          const blankCanvas = () => {
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = 1;
+              canvas.height = 1;
+              return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL1WQAAAABJRU5ErkJggg==';
+            } catch (_) {
+              return 'data:image/png;base64,';
+            }
+          };
+
+          if (window.CanvasRenderingContext2D) {
+            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+            CanvasRenderingContext2D.prototype.getImageData = function () {
+              const result = originalGetImageData.apply(this, arguments);
+              try { result.data.fill(0); } catch (_) {}
+              return result;
+            };
+          }
+
+          if (window.HTMLCanvasElement) {
+            HTMLCanvasElement.prototype.toDataURL = function () {
+              return blankCanvas();
+            };
+            const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+            HTMLCanvasElement.prototype.toBlob = function (callback) {
+              if (typeof callback === 'function') {
+                const binary = atob(blankCanvas().split(',')[1]);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                callback(new Blob([bytes], { type: 'image/png' }));
+              }
+            };
+          }
+
+          const patchWebGl = (prototype) => {
+            if (!prototype || prototype.__vrcStrictShieldPatched) return;
+            const original = prototype.getParameter;
+            prototype.getParameter = function (parameter) {
+              if (parameter === 37445) return 'Google Inc.';
+              if (parameter === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics, OpenGL 4.1)';
+              return original.call(this, parameter);
+            };
+            prototype.__vrcStrictShieldPatched = true;
+          };
+          patchWebGl(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+          patchWebGl(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+        })();
+        """;
+
+    // WebRTC normally advertises this machine through mDNS. Windows Firewall
+    // treats that as a new inbound service and prompts for access, even after
+    // the user has allowed an earlier WebView2 runtime build. Discord voice and
+    // the other embedded pages still work without mDNS host candidates.
+    private const string BrowserArguments = "--disable-features=WebRtcHideLocalIpsWithMdns";
+
+    private static readonly Lazy<Task<CoreWebView2Environment>> SharedEnvironment =
+        new(CreateSharedEnvironmentAsync);
+
     private IEmbeddedBrowserHost? _viewModel;
     private Task? _initialization;
     private string? _pendingUrl;
     private Window? _window;
     private bool _disposed;
     private bool _focusErrorAnnouncementScheduled;
+    private bool _adBlockActive;
+    private bool _isSuspended;
+    private int _suspensionVersion;
+    private string? _fingerprintScriptId;
+    private BraveFingerprintMode? _fingerprintScriptMode;
+    private string? _documentScriptId;
+    private string? _documentScriptUrl;
+    private string? _scriptPreparedNavigationUri;
+    private readonly SemaphoreSlim _documentScriptGate = new(1, 1);
+    private BraveCookieMode? _cookieMode;
+    private bool _cookieRestrictionActive;
+    private bool _networkEnabled;
+    private readonly HashSet<CoreWebView2DownloadOperation> _activeDownloads = new();
+    private const int SuspendDelayMilliseconds = 7000;
+
+    // Test seam only; production leaves this null and shows the Save As dialog.
+    internal static Func<string, string?>? DownloadPathProvider { get; set; }
+
+    internal bool IsAdBlockFilterActive => _adBlockActive;
+
+    internal int ObservedAdBlockRequests { get; private set; }
+
+    internal int BlockedAdBlockRequests { get; private set; }
+
+    internal bool IsSuspendedForTest => _isSuspended;
+
+    internal bool HasActiveDownloadsForTest => _activeDownloads.Count > 0;
+
+    internal CoreWebView2DownloadOperation? ActiveDownloadForTest
+        => _activeDownloads.FirstOrDefault();
 
     public EmbeddedBrowser()
     {
         InitializeComponent();
+        Shields = new BraveShieldsPanelViewModel(BraveShieldsService.Shared);
+        Shields.SettingsChanged += OnShieldsSettingsChanged;
+        BraveShieldsService.Shared.Changed += OnExternalShieldsChanged;
+        ShieldsPopup.DataContext = Shields;
         Loaded += OnLoaded;
         IsVisibleChanged += OnIsVisibleChanged;
     }
+
+    public BraveShieldsPanelViewModel Shields { get; }
+
+    private bool EffectiveBlockAds => AdBlockEnabled && Shields.ShouldBlockTrackersAndAds;
 
     public bool CanGoBack
     {
@@ -84,6 +304,17 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         get => (bool)GetValue(CanGoForwardProperty);
         private set => SetValue(CanGoForwardProperty, value);
     }
+
+    public bool AdBlockEnabled
+    {
+        get => (bool)GetValue(AdBlockEnabledProperty);
+        set => SetValue(AdBlockEnabledProperty, value);
+    }
+
+    private static void OnAdBlockEnabledChanged(
+        DependencyObject dependencyObject,
+        DependencyPropertyChangedEventArgs e)
+        => ((EmbeddedBrowser)dependencyObject).RefreshAdBlock();
 
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
         => UpdateMemoryTargetLevel();
@@ -128,6 +359,27 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         AnnounceFocusBrowserError();
     }
 
+    /// <summary>
+    /// The section host calls this before dropping a cached browser view so a
+    /// hidden WebView2 renderer does not stay alive for the rest of the session.
+    /// </summary>
+    public void ReleaseForMemory()
+    {
+        // Keep a page alive while it is producing audio or downloading. This is
+        // the same protection Discord gets for an active voice call.
+        if (ShouldReleaseForMemory(HasActiveDownloads, IsDocumentPlayingAudio))
+        {
+            DisposeBrowser();
+        }
+    }
+
+    internal bool HasBackgroundActivity => HasActiveDownloads || IsDocumentPlayingAudio;
+
+    internal static bool ShouldReleaseForMemory(
+        bool hasActiveDownloads,
+        bool isDocumentPlayingAudio)
+        => !hasActiveDownloads && !isDocumentPlayingAudio;
+
     private void OnWindowClosed(object? sender, EventArgs e)
     {
         if (_window is not null)
@@ -164,6 +416,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         try
         {
             await EnsureBrowserAsync();
+            ResumeIfSuspended();
             if (_disposed || !IsLoaded ||
                 !string.Equals(_pendingUrl, url, StringComparison.Ordinal))
             {
@@ -195,6 +448,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         }
 
         await EnsureBrowserAsync();
+        ResumeIfSuspended();
         return _disposed ? null : Browser.CoreWebView2;
     }
 
@@ -275,6 +529,11 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
         _disposed = true;
         _initialization = null;
+        _suspensionVersion++;
+        _isSuspended = false;
+        Shields.SettingsChanged -= OnShieldsSettingsChanged;
+        BraveShieldsService.Shared.Changed -= OnExternalShieldsChanged;
+        ShieldsPopup.IsOpen = false;
 
         if (_viewModel is not null)
         {
@@ -295,12 +554,38 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         {
             if (Browser.CoreWebView2 is { } core)
             {
+                if (_adBlockActive)
+                {
+                    try
+                    {
+                        core.WebResourceRequested -= OnWebResourceRequested;
+                        core.RemoveWebResourceRequestedFilter(
+                            "*://*/*",
+                            CoreWebView2WebResourceContext.All,
+                            CoreWebView2WebResourceRequestSourceKinds.All);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine(ex);
+                    }
+
+                    _adBlockActive = false;
+                }
+
                 core.NewWindowRequested -= OnNewWindowRequested;
                 core.DownloadStarting -= OnDownloadStarting;
                 core.SourceChanged -= OnSourceChanged;
+                core.NavigationStarting -= OnNavigationStarting;
                 core.NavigationCompleted -= OnNavigationCompleted;
                 core.DocumentTitleChanged -= OnDocumentTitleChanged;
                 core.WebMessageReceived -= OnWebMessageReceived;
+                core.IsDocumentPlayingAudioChanged -= OnIsDocumentPlayingAudioChanged;
+
+                foreach (var operation in _activeDownloads)
+                {
+                    operation.StateChanged -= OnDownloadStateChanged;
+                }
+                _activeDownloads.Clear();
             }
 
             Browser.Dispose();
@@ -313,7 +598,8 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
     private async Task InitializeBrowserAsync()
     {
-        await Browser.EnsureCoreWebView2Async();
+        var environment = await SharedEnvironment.Value;
+        await Browser.EnsureCoreWebView2Async(environment);
 
         if (Browser.CoreWebView2 is not { } core)
         {
@@ -325,9 +611,11 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         core.NewWindowRequested += OnNewWindowRequested;
         core.DownloadStarting += OnDownloadStarting;
         core.SourceChanged += OnSourceChanged;
+        core.NavigationStarting += OnNavigationStarting;
         core.NavigationCompleted += OnNavigationCompleted;
         core.DocumentTitleChanged += OnDocumentTitleChanged;
         core.WebMessageReceived += OnWebMessageReceived;
+        core.IsDocumentPlayingAudioChanged += OnIsDocumentPlayingAudioChanged;
         try
         {
             await core.AddScriptToExecuteOnDocumentCreatedAsync(FocusShortcutScript);
@@ -336,13 +624,23 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         {
             Debug.WriteLine(ex);
         }
+        RefreshAdBlock();
         UpdateNavigationState();
+        await ApplyShieldsPolicyAsync();
         await SetPageFocusModeAsync(_viewModel?.IsFocusMode == true);
         UpdateMemoryTargetLevel();
     }
 
-    // Collapsed tabs and a minimized window keep their page and call alive while
-    // Chromium releases memory. TrySuspendAsync would stop the call.
+    private static async Task<CoreWebView2Environment> CreateSharedEnvironmentAsync()
+    {
+        var options = new CoreWebView2EnvironmentOptions(BrowserArguments);
+        return await CoreWebView2Environment.CreateAsync(null, null, options);
+    }
+
+    // Collapsed tabs and a minimized window keep their page alive while Chromium
+    // releases memory. Non-Discord pages are suspended after a short grace period
+    // unless they are playing audio or downloading; Discord stays awake so an
+    // active voice call is not interrupted.
     private void UpdateMemoryTargetLevel()
     {
         if (_disposed || Browser.CoreWebView2 is not { } core)
@@ -352,10 +650,119 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
         try
         {
-            core.MemoryUsageTargetLevel =
-                !IsVisible || _window?.WindowState == WindowState.Minimized
-                    ? CoreWebView2MemoryUsageTargetLevel.Low
-                    : CoreWebView2MemoryUsageTargetLevel.Normal;
+            var hidden = !IsVisible || _window?.WindowState == WindowState.Minimized;
+            core.MemoryUsageTargetLevel = ShouldUseLowMemoryTarget(
+                hidden,
+                HasActiveDownloads,
+                IsDocumentPlayingAudio)
+                ? CoreWebView2MemoryUsageTargetLevel.Low
+                : CoreWebView2MemoryUsageTargetLevel.Normal;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+
+        UpdateSuspensionState();
+    }
+
+    private bool ShouldSuspendWhenHidden =>
+        !_disposed &&
+        (!IsVisible || _window?.WindowState == WindowState.Minimized) &&
+        ShouldSuspendHiddenPage(
+            _viewModel is DiscordBrowserViewModel,
+            HasActiveDownloads,
+            IsDocumentPlayingAudio);
+
+    internal static bool ShouldUseLowMemoryTarget(
+        bool hidden,
+        bool hasActiveDownloads,
+        bool isDocumentPlayingAudio)
+        => hidden && !hasActiveDownloads && !isDocumentPlayingAudio;
+
+    internal static bool ShouldSuspendHiddenPage(
+        bool isDiscord,
+        bool hasActiveDownloads,
+        bool isDocumentPlayingAudio)
+        => !isDiscord && !hasActiveDownloads && !isDocumentPlayingAudio;
+
+    private bool HasActiveDownloads => _activeDownloads.Count > 0;
+
+    private bool IsDocumentPlayingAudio
+    {
+        get
+        {
+            try
+            {
+                return Browser.CoreWebView2?.IsDocumentPlayingAudio == true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                return false;
+            }
+        }
+    }
+
+    private void OnIsDocumentPlayingAudioChanged(object? sender, object e)
+        => UpdateMemoryTargetLevel();
+
+    private void UpdateSuspensionState()
+    {
+        if (!ShouldSuspendWhenHidden)
+        {
+            _suspensionVersion++;
+            ResumeIfSuspended();
+            return;
+        }
+
+        if (_isSuspended)
+        {
+            return;
+        }
+
+        _ = SuspendAfterDelayAsync(++_suspensionVersion);
+    }
+
+    private async Task SuspendAfterDelayAsync(int version)
+    {
+        await Task.Delay(SuspendDelayMilliseconds);
+        if (version != _suspensionVersion || !ShouldSuspendWhenHidden)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Browser.CoreWebView2 is not { } core)
+            {
+                return;
+            }
+
+            _isSuspended = await core.TrySuspendAsync();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    private void ResumeIfSuspended()
+    {
+        if (!_isSuspended)
+        {
+            return;
+        }
+
+        _isSuspended = false;
+        if (_disposed || Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            core.Resume();
         }
         catch (Exception ex)
         {
@@ -365,8 +772,87 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
     private void OnSourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
     {
+        if (Browser.CoreWebView2?.Source is { } source &&
+            Uri.TryCreate(source, UriKind.Absolute, out var uri))
+        {
+            Shields.SetHost(uri.Host);
+        }
+
         RememberCurrentLocation();
         UpdateNavigationState();
+    }
+
+    private void OnNavigationStarting(
+        object? sender,
+        CoreWebView2NavigationStartingEventArgs e)
+    {
+        if (_disposed ||
+            Browser.CoreWebView2 is not { } core ||
+            !Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return;
+        }
+
+        // A CDP script registered after NavigationStarting can lose the race
+        // with the new document. For pages that need Brave scriptlets, cancel
+        // once, register the script, and then reissue the same navigation.
+        if (!string.Equals(e.Uri, _scriptPreparedNavigationUri, StringComparison.Ordinal) &&
+            !e.IsRedirected &&
+            HasInjectedScript(uri))
+        {
+            e.Cancel = true;
+            _scriptPreparedNavigationUri = e.Uri;
+            _ = PrepareDocumentScriptAndNavigateAsync(core, uri);
+            return;
+        }
+
+        if (string.Equals(e.Uri, _scriptPreparedNavigationUri, StringComparison.Ordinal))
+        {
+            _scriptPreparedNavigationUri = null;
+        }
+
+        var previousHost = Shields.SiteHost;
+        if (previousHost.Length > 0 &&
+            !string.Equals(previousHost, uri.Host, StringComparison.OrdinalIgnoreCase) &&
+            Shields.ShouldForgetOnLeave)
+        {
+            _ = ClearSiteDataAsync(previousHost);
+        }
+
+        Shields.SetHost(uri.Host);
+
+        if (Shields.ShouldBlockAllCookies)
+        {
+            // WebView2 has no native "block all cookies" switch. Brave's mode
+            // therefore clears the site's cookies before and after navigation.
+            _ = ClearSiteCookiesAsync(uri.Host);
+        }
+
+        // Script settings must be ready before the new document starts.
+        try
+        {
+            core.Settings.IsScriptEnabled = !Shields.ShouldBlockScripts;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+
+        _ = ApplyShieldsPolicyAsync();
+
+        if (Shields.ShouldUpgradeToHttps &&
+            uri.Scheme == Uri.UriSchemeHttp &&
+            !IsLocalAddress(uri))
+        {
+            e.Cancel = true;
+            var secure = new UriBuilder(uri)
+            {
+                Scheme = Uri.UriSchemeHttps,
+                Port = -1
+            }.Uri;
+            core.Navigate(secure.AbsoluteUri);
+        }
     }
 
     private void OnNavigationCompleted(
@@ -374,7 +860,537 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         CoreWebView2NavigationCompletedEventArgs e)
     {
         UpdateNavigationState();
+        if (Browser.CoreWebView2?.Source is { } source &&
+            Uri.TryCreate(source, UriKind.Absolute, out var uri))
+        {
+            Shields.SetHost(uri.Host);
+        }
         _ = SetPageFocusModeAsync(_viewModel?.IsFocusMode == true);
+        _ = ApplyShieldsPolicyAsync();
+        if (Shields.ShouldBlockAllCookies &&
+            Browser.CoreWebView2?.Source is { } currentSource &&
+            Uri.TryCreate(currentSource, UriKind.Absolute, out var currentUri))
+        {
+            _ = ClearSiteCookiesAsync(currentUri.Host);
+        }
+    }
+
+    /// <summary>
+    /// Adds or removes the network filter immediately. It takes effect for
+    /// requests made after the switch changes; the cosmetic CSS is applied to
+    /// the current page as well, so already-rendered ad slots disappear.
+    /// </summary>
+    private void RefreshAdBlock()
+    {
+        if (_disposed || Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            if (EffectiveBlockAds && !_adBlockActive)
+            {
+                core.AddWebResourceRequestedFilter(
+                    "*://*/*",
+                    CoreWebView2WebResourceContext.All,
+                    CoreWebView2WebResourceRequestSourceKinds.All);
+                core.WebResourceRequested += OnWebResourceRequested;
+                _adBlockActive = true;
+            }
+            else if (!EffectiveBlockAds && _adBlockActive)
+            {
+                core.WebResourceRequested -= OnWebResourceRequested;
+                core.RemoveWebResourceRequestedFilter(
+                    "*://*/*",
+                    CoreWebView2WebResourceContext.All,
+                    CoreWebView2WebResourceRequestSourceKinds.All);
+                _adBlockActive = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+
+        _ = ApplyCosmeticAdBlockAsync();
+    }
+
+    private bool HasInjectedScript(Uri pageUri)
+    {
+        if (!EffectiveBlockAds || BraveAdBlockEngine.Shared is not { } engine)
+        {
+            return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(
+            engine.GetCosmeticResources(pageUri)?.InjectedScript);
+    }
+
+    private async Task PrepareDocumentScriptAndNavigateAsync(CoreWebView2 core, Uri pageUri)
+    {
+        await RegisterDocumentScriptAsync(core, pageUri);
+        if (!_disposed)
+        {
+            // The cancelled navigation needs to settle before WebView2 accepts
+            // the replacement navigation for the same URL.
+            await Task.Delay(50);
+            core.Navigate(pageUri.AbsoluteUri);
+        }
+    }
+
+    private async Task RegisterDocumentScriptAsync(CoreWebView2 core, Uri pageUri)
+    {
+        if (_disposed || !EffectiveBlockAds || BraveAdBlockEngine.Shared is not { } engine)
+        {
+            return;
+        }
+
+        var resources = engine.GetCosmeticResources(pageUri);
+        if (string.IsNullOrWhiteSpace(resources?.InjectedScript))
+        {
+            return;
+        }
+
+        await _documentScriptGate.WaitAsync();
+        try
+        {
+            if (_documentScriptId is { } previousId)
+            {
+                try
+                {
+                    await core.CallDevToolsProtocolMethodAsync(
+                        "Page.removeScriptToEvaluateOnNewDocument",
+                        JsonSerializer.Serialize(new { identifier = previousId }));
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                }
+
+                _documentScriptId = null;
+                _documentScriptUrl = null;
+            }
+
+            var source = resources.InjectedScript +
+                "\n;window.__vrcBraveDocumentScript = document.readyState;";
+            await core.CallDevToolsProtocolMethodAsync("Page.enable", "{}");
+            var result = await core.CallDevToolsProtocolMethodAsync(
+                "Page.addScriptToEvaluateOnNewDocument",
+                JsonSerializer.Serialize(new { source }));
+            using var document = JsonDocument.Parse(result);
+            if (document.RootElement.TryGetProperty("identifier", out var identifier))
+            {
+                _documentScriptId = identifier.GetString();
+                _documentScriptUrl = pageUri.AbsoluteUri;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+        finally
+        {
+            _documentScriptGate.Release();
+        }
+    }
+
+    private async Task ApplyCosmeticAdBlockAsync()
+    {
+        if (_disposed || Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!EffectiveBlockAds)
+            {
+                await core.ExecuteScriptAsync(RemoveAdBlockCssScript);
+                return;
+            }
+
+            // Cosmetic filtering is part of both Brave modes. The difference
+            // between Standard and Aggressive is the first-party protection
+            // level inside the engine, not whether selectors are applied.
+            var pageUri = Browser.Source;
+            var resources = pageUri is not null
+                ? BraveAdBlockEngine.Shared?.GetCosmeticResources(pageUri)
+                : null;
+            var css = string.IsNullOrEmpty(resources?.Css)
+                ? FallbackAdBlockCss
+                : resources.Css + "\n" + FallbackAdBlockCss;
+            var applyScript = ApplyAdBlockCssTemplate.Replace(
+                "{0}",
+                JsonSerializer.Serialize(css));
+            await core.ExecuteScriptAsync(applyScript);
+
+            if (!string.IsNullOrWhiteSpace(resources?.InjectedScript) &&
+                (_documentScriptId is null ||
+                 !string.Equals(
+                     _documentScriptUrl,
+                     pageUri?.AbsoluteUri,
+                     StringComparison.Ordinal)))
+            {
+                await core.ExecuteScriptAsync(resources.InjectedScript);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    private void OnWebResourceRequested(
+        object? sender,
+        CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        if (!EffectiveBlockAds || Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            ObservedAdBlockRequests++;
+            if (!Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri))
+            {
+                return;
+            }
+
+            // Use Brave's engine for every request so filter-list exceptions,
+            // $domain rules, redirects, and removeparam rules behave exactly as
+            // they do in Brave. The small host list is only a fallback if the
+            // native engine is unavailable.
+            var sourceUri = Browser.Source;
+            var engine = BraveAdBlockEngine.Shared;
+            if (engine is null)
+            {
+                if (!AdBlockList.ShouldBlock(uri))
+                {
+                    return;
+                }
+
+                BlockedAdBlockRequests++;
+                Shields.IncrementBlocked();
+                e.Response = core.Environment.CreateWebResourceResponse(
+                    new MemoryStream(),
+                    403,
+                    "Blocked by Brave Shields",
+                    "Content-Type: text/plain");
+                return;
+            }
+
+            var decision = engine.Check(uri, sourceUri, e.ResourceContext);
+            if (!string.IsNullOrWhiteSpace(decision.Redirect))
+            {
+                BlockedAdBlockRequests++;
+                Shields.IncrementBlocked();
+                var fallbackType = e.ResourceContext switch
+                {
+                    CoreWebView2WebResourceContext.Script => "application/javascript",
+                    CoreWebView2WebResourceContext.Image => "image/gif",
+                    CoreWebView2WebResourceContext.Media => "video/mp4",
+                    _ => "application/octet-stream"
+                };
+                var (body, contentType) = DecodeRedirectBody(decision.Redirect, fallbackType);
+                e.Response = core.Environment.CreateWebResourceResponse(
+                    new MemoryStream(body),
+                    200,
+                    "OK",
+                    $"Content-Type: {contentType}");
+                return;
+            }
+
+            if (decision.Blocked)
+            {
+                BlockedAdBlockRequests++;
+                Shields.IncrementBlocked();
+                e.Response = core.Environment.CreateWebResourceResponse(
+                    new MemoryStream(),
+                    403,
+                    "Blocked by Brave Shields",
+                    "Content-Type: text/plain");
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(decision.RewrittenUrl) &&
+                Uri.TryCreate(decision.RewrittenUrl, UriKind.Absolute, out var rewritten))
+            {
+                e.Request.Uri = rewritten.AbsoluteUri;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    private static (byte[] Body, string ContentType) DecodeRedirectBody(
+        string redirect,
+        string fallbackContentType)
+    {
+        if (!redirect.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            return (Encoding.UTF8.GetBytes(redirect), fallbackContentType);
+        }
+
+        var comma = redirect.IndexOf(',');
+        if (comma < 0)
+        {
+            return (Encoding.UTF8.GetBytes(redirect), fallbackContentType);
+        }
+
+        var metadata = redirect[5..comma];
+        var payload = redirect[(comma + 1)..];
+        var isBase64 = metadata.EndsWith(";base64", StringComparison.OrdinalIgnoreCase);
+        var contentType = metadata.Split(';')[0];
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            contentType = fallbackContentType;
+        }
+
+        try
+        {
+            var body = isBase64
+                ? Convert.FromBase64String(payload)
+                : Encoding.UTF8.GetBytes(Uri.UnescapeDataString(payload));
+            return (body, contentType);
+        }
+        catch (FormatException ex)
+        {
+            Debug.WriteLine(ex);
+            return (Encoding.UTF8.GetBytes(redirect), fallbackContentType);
+        }
+    }
+
+    private async Task ApplyShieldsPolicyAsync()
+    {
+        if (_disposed || Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            core.Settings.IsScriptEnabled = !Shields.ShouldBlockScripts;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+
+        RefreshAdBlock();
+        await ApplyCookieControlsAsync(core);
+        await ApplyFingerprintProtectionAsync(core);
+        await ApplyCosmeticAdBlockAsync();
+    }
+
+    private async Task ApplyCookieControlsAsync(CoreWebView2 core)
+    {
+        var enabled = Shields.ShouldBlockThirdPartyCookies;
+        if (enabled == _cookieRestrictionActive && Shields.CookieMode == _cookieMode)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_networkEnabled)
+            {
+                await core.CallDevToolsProtocolMethodAsync("Network.enable", "{}");
+                _networkEnabled = true;
+            }
+
+            await core.CallDevToolsProtocolMethodAsync(
+                "Network.setCookieControls",
+                JsonSerializer.Serialize(new { enableThirdPartyCookieRestriction = enabled }));
+            _cookieRestrictionActive = enabled;
+            _cookieMode = Shields.CookieMode;
+        }
+        catch (Exception ex)
+        {
+            // Older WebView2 runtimes do not expose this experimental command.
+            Debug.WriteLine(ex);
+        }
+
+        if (Shields.ShouldBlockAllCookies && Shields.SiteHost.Length > 0)
+        {
+            await ClearSiteCookiesAsync(Shields.SiteHost);
+        }
+    }
+
+    private async Task ApplyFingerprintProtectionAsync(CoreWebView2 core)
+    {
+        if (!Shields.ShouldBlockFingerprinting)
+        {
+            await RemoveFingerprintProtectionAsync(core);
+            return;
+        }
+
+        var mode = Shields.FingerprintMode;
+        if (_fingerprintScriptId is not null && _fingerprintScriptMode != mode)
+        {
+            await RemoveFingerprintProtectionAsync(core);
+        }
+
+        var script = mode == BraveFingerprintMode.Strict
+            ? StrictFingerprintProtectionScript
+            : FingerprintProtectionScript;
+
+        if (_fingerprintScriptId is null)
+        {
+            try
+            {
+                var result = await core.CallDevToolsProtocolMethodAsync(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    JsonSerializer.Serialize(new { source = script }));
+                using var document = JsonDocument.Parse(result);
+                if (document.RootElement.TryGetProperty("identifier", out var identifier))
+                {
+                    _fingerprintScriptId = identifier.GetString();
+                    _fingerprintScriptMode = mode;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+        }
+
+        try
+        {
+            await core.ExecuteScriptAsync(script);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    private async Task RemoveFingerprintProtectionAsync(CoreWebView2 core)
+    {
+        if (_fingerprintScriptId is not { } removalId)
+        {
+            return;
+        }
+
+        try
+        {
+            await core.CallDevToolsProtocolMethodAsync(
+                "Page.removeScriptToEvaluateOnNewDocument",
+                JsonSerializer.Serialize(new { identifier = removalId }));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+
+        _fingerprintScriptId = null;
+        _fingerprintScriptMode = null;
+    }
+
+    private async Task ClearSiteCookiesAsync(string host)
+    {
+        if (_disposed ||
+            string.IsNullOrWhiteSpace(host) ||
+            Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            var cookies = await core.CookieManager.GetCookiesAsync($"https://{host}/");
+            foreach (var cookie in cookies)
+            {
+                core.CookieManager.DeleteCookie(cookie);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    private async Task ClearSiteDataAsync(string host)
+    {
+        if (_disposed ||
+            string.IsNullOrWhiteSpace(host) ||
+            Browser.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        try
+        {
+            var cookies = await core.CookieManager.GetCookiesAsync($"https://{host}/");
+            foreach (var cookie in cookies)
+            {
+                core.CookieManager.DeleteCookie(cookie);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+
+        foreach (var origin in new[] { $"https://{host}", $"http://{host}" })
+        {
+            try
+            {
+                await core.CallDevToolsProtocolMethodAsync(
+                    "Storage.clearDataForOrigin",
+                    JsonSerializer.Serialize(new { origin, storageTypes = "all" }));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+        }
+    }
+
+    private static bool IsLocalAddress(Uri uri)
+        => uri.IsLoopback ||
+           uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+           uri.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase);
+
+    private void OnShieldsSettingsChanged(object? sender, EventArgs e)
+        => _ = ApplyShieldsPolicyAsync();
+
+    private void OnExternalShieldsChanged(object? sender, string host)
+    {
+        if (_disposed ||
+            host.Length == 0 ||
+            !string.Equals(host, Shields.SiteHost, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Shields.ReloadSettings();
+        _ = ApplyShieldsPolicyAsync();
+    }
+
+    private void ShieldsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is UIElement placementTarget)
+        {
+            ShieldsPopup.PlacementTarget = placementTarget;
+        }
+
+        ShieldsPopup.IsOpen = true;
+    }
+
+    private void FilterLists_Click(object sender, RoutedEventArgs e)
+        => Shields.ShowFilterLists = !Shields.ShowFilterLists;
+
+    private void GlobalSettings_Click(object sender, RoutedEventArgs e)
+        => Shields.ShowGlobalSettings = !Shields.ShowGlobalSettings;
+
+    private void ResetSite_Click(object sender, RoutedEventArgs e)
+    {
+        Shields.ResetSiteToDefaults();
+        _ = ApplyShieldsPolicyAsync();
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -462,28 +1478,35 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             e.Handled = true;
 
             string? selectedPath = null;
-            Dispatcher.Invoke(() =>
+            if (DownloadPathProvider is { } pathProvider)
             {
-                var suggestedName = string.IsNullOrWhiteSpace(e.ResultFilePath)
-                    ? "download"
-                    : Path.GetFileName(e.ResultFilePath);
-
-                var dialog = new SaveFileDialog
+                selectedPath = pathProvider(Path.GetFileName(e.ResultFilePath));
+            }
+            else
+            {
+                Dispatcher.Invoke(() =>
                 {
-                    Title = "Save download",
-                    FileName = suggestedName,
-                    Filter = "All files (*.*)|*.*",
-                    AddExtension = false,
-                    OverwritePrompt = true
-                };
+                    var suggestedName = string.IsNullOrWhiteSpace(e.ResultFilePath)
+                        ? "download"
+                        : Path.GetFileName(e.ResultFilePath);
 
-                var owner = Window.GetWindow(this);
-                var accepted = owner is null ? dialog.ShowDialog() : dialog.ShowDialog(owner);
-                if (accepted == true)
-                {
-                    selectedPath = dialog.FileName;
-                }
-            });
+                    var dialog = new SaveFileDialog
+                    {
+                        Title = "Save download",
+                        FileName = suggestedName,
+                        Filter = "All files (*.*)|*.*",
+                        AddExtension = false,
+                        OverwritePrompt = true
+                    };
+
+                    var owner = Window.GetWindow(this);
+                    var accepted = owner is null ? dialog.ShowDialog() : dialog.ShowDialog(owner);
+                    if (accepted == true)
+                    {
+                        selectedPath = dialog.FileName;
+                    }
+                });
+            }
 
             if (selectedPath is null)
             {
@@ -497,7 +1520,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             SetDownloadStatus($"Downloading {Path.GetFileName(selectedPath)}...");
 
             var operation = e.DownloadOperation;
-            operation.StateChanged += (_, _) => ReportDownloadState(operation);
+            TrackDownload(operation);
         }
         catch (Exception ex)
         {
@@ -525,6 +1548,35 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
                 SetDownloadStatus($"Download failed: {Describe(operation.InterruptReason)}.", true);
                 break;
         }
+    }
+
+    private void TrackDownload(CoreWebView2DownloadOperation operation)
+    {
+        if (!_activeDownloads.Add(operation))
+        {
+            return;
+        }
+
+        operation.StateChanged += OnDownloadStateChanged;
+        UpdateMemoryTargetLevel();
+    }
+
+    private void OnDownloadStateChanged(object? sender, object e)
+    {
+        if (sender is not CoreWebView2DownloadOperation operation)
+        {
+            return;
+        }
+
+        ReportDownloadState(operation);
+        if (operation.State is not (CoreWebView2DownloadState.Completed or CoreWebView2DownloadState.Interrupted))
+        {
+            return;
+        }
+
+        operation.StateChanged -= OnDownloadStateChanged;
+        _activeDownloads.Remove(operation);
+        UpdateMemoryTargetLevel();
     }
 
     private void SetDownloadStatus(string message, bool isError = false, string? downloadedPath = null)

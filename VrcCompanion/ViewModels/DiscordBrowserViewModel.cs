@@ -29,6 +29,54 @@ public sealed class DiscordBrowserViewModel : ViewModelBase, IEmbeddedBrowserHos
         })()
         """;
 
+    private const string VoiceStateScript = """
+        (() => {
+          const clean = value => (value || '').replace(/\s+/g, ' ').trim();
+          const panels = Array.from(document.querySelectorAll('[class*="connectionPanel"], [class*="voicePanel"], [class*="voiceConnected"]'));
+          let panel = panels.find(node =>
+            /voice connected/i.test(clean(node.innerText)) ||
+            node.querySelector('[class*="voiceUser"]'));
+          if (!panel) {
+            panel = Array.from(document.querySelectorAll('div, section'))
+              .filter(node => /voice connected/i.test(clean(node.innerText)))
+              .sort((left, right) => clean(left.innerText).length - clean(right.innerText).length)[0];
+          }
+          if (!panel) return 'null';
+
+          const users = Array.from(panel.querySelectorAll('[class*="voiceUser"]'));
+          const nameNode = panel.querySelector('[class*="channelName"]') ||
+            panel.querySelector('[class*="channel"] [class*="name"]');
+          let channel = clean(nameNode && nameNode.innerText);
+          if (!channel) {
+            const labelled = Array.from(panel.querySelectorAll('[aria-label]')).find(node =>
+              /voice connected/i.test(node.getAttribute('aria-label') || ''));
+            channel = clean(labelled && labelled.getAttribute('aria-label'))
+              .replace(/^voice connected\s*[-–—:]?\s*/i, '');
+          }
+
+          if (!channel) {
+            channel = panel.innerText.split('\n').map(clean).find(line =>
+              line.length > 0 &&
+              line.length < 80 &&
+              !/^voice connected$/i.test(line) &&
+              !/^(disconnect|video|screen share|voice settings|settings)$/i.test(line)) || '';
+          }
+
+          const speaking = users.filter(node =>
+            /speaking/i.test(String(node.className || '')) ||
+            node.querySelector('[class*="speaking"]')).map(node => {
+              const name = node.querySelector('[class*="username"], [class*="userName"], [class*="name"]');
+              return clean(name && name.innerText) || clean(node.innerText).split(' ')[0];
+            }).filter(Boolean);
+
+          return JSON.stringify({
+            channel: channel || 'Voice',
+            count: users.length,
+            speaking
+          });
+        })()
+        """;
+
     private string _searchQuery = string.Empty;
     private bool _isBrowserOpen = true;
     private string _browserUrl = LoginUrl;
@@ -190,6 +238,29 @@ public sealed class DiscordBrowserViewModel : ViewModelBase, IEmbeddedBrowserHos
         DownloadStatus = message;
         DownloadStatusIsError = isError;
         SetDownloadedFilePath(downloadedPath);
+    }
+
+    /// <summary>
+    /// Reads the connected voice channel from the Discord page the user is
+    /// already signed into. Returns null when the page is not ready, the user
+    /// is not in a voice channel, or Discord's DOM has changed.
+    /// </summary>
+    public async Task<DiscordVoiceSnapshot?> ReadVoiceStateAsync()
+    {
+        if (Automation is not { } automation || IsLoginPage)
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await automation.ExecuteScriptAsync(VoiceStateScript);
+            return DiscordVoiceSnapshot.TryParse(result);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private bool CanSearch()

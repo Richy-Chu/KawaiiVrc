@@ -12,6 +12,7 @@ public static class OscMessage
 {
     public const int ChatboxLimit = 144;
 
+
     public static byte[] ChatboxInput(string text, bool sendImmediately = true, bool playSound = false)
     {
         var trimmed = text.Length > ChatboxLimit ? text[..ChatboxLimit] : text;
@@ -23,13 +24,21 @@ public static class OscMessage
     /// in half. The ellipsis counts toward VRChat's 144-character limit.
     /// </summary>
     public static string FitChatboxText(string text)
+        => FitChatboxText(text, ChatboxLimit);
+
+    public static string FitChatboxText(string text, int limit)
     {
-        if (text.Length <= ChatboxLimit)
+        if (limit <= 0)
+        {
+            return string.Empty;
+        }
+
+        if (text.Length <= limit)
         {
             return text;
         }
 
-        var available = ChatboxLimit - 1;
+        var available = limit - 1;
         var slice = text[..available];
         var boundary = slice.LastIndexOf(' ');
         if (boundary < available / 2)
@@ -42,6 +51,14 @@ public static class OscMessage
 
     public static byte[] ChatboxTyping(bool typing)
         => Encode("/chatbox/typing", typing);
+
+    /// <summary>
+    /// Asks the running VRChat client to load an avatar immediately. VRChat
+    /// applies this locally without waiting for the REST avatar change to reach
+    /// the game session.
+    /// </summary>
+    public static byte[] AvatarChange(string avatarId)
+        => Encode("/avatar/change", avatarId);
 
     public static byte[] Encode(string address, params object[] arguments)
     {
@@ -86,13 +103,64 @@ public static class OscMessage
     }
 }
 
+/// <summary>
+/// Sends a one-shot avatar switch to the local VRChat client. OSC must be
+/// enabled in VRChat (Action Menu → Options → OSC).
+/// </summary>
+public static class OscAvatarSwitch
+{
+    public static bool TrySend(string avatarId, string? host, int port)
+    {
+        if (string.IsNullOrWhiteSpace(avatarId))
+        {
+            return false;
+        }
+
+        var packet = OscMessage.AvatarChange(avatarId);
+        var configuredPort = Math.Clamp(port, 1, 65535);
+        var sent = false;
+
+        // VRChat listens for OSC on IPv4 127.0.0.1:9000 by default. Send there
+        // explicitly even if the saved chatbox setting points elsewhere, so a
+        // stale port or a hostname that resolves to ::1 cannot lose the switch.
+        try
+        {
+            using var udp = new UdpClient(AddressFamily.InterNetwork);
+            udp.Send(packet, packet.Length, new IPEndPoint(IPAddress.Loopback, 9000));
+            sent = true;
+
+            var customHost = string.IsNullOrWhiteSpace(host) ? null : host.Trim();
+            var isLocalHost = customHost is null ||
+                              customHost.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                              customHost == "127.0.0.1";
+
+            if (!isLocalHost)
+            {
+                udp.Send(packet, packet.Length, customHost!, configuredPort);
+                sent = true;
+            }
+            else if (configuredPort != 9000)
+            {
+                udp.Send(packet, packet.Length, new IPEndPoint(IPAddress.Loopback, configuredPort));
+                sent = true;
+            }
+        }
+        catch
+        {
+            // UDP has no acknowledgement; a failed custom target must not break Wear.
+        }
+
+        return sent;
+    }
+}
+
 public interface IChatboxSender
 {
     string Host { get; set; }
 
     int Port { get; set; }
 
-    void SendChatbox(string text, bool sendImmediately = true);
+    void SendChatbox(string text, bool sendImmediately = true, bool playSound = false);
 
     void SendTyping(bool typing);
 }
@@ -110,8 +178,8 @@ public sealed class OscChatboxService : IChatboxSender, IDisposable
 
     public int Port { get; set; } = 9000;
 
-    public void SendChatbox(string text, bool sendImmediately = true)
-        => Send(OscMessage.ChatboxInput(text, sendImmediately));
+    public void SendChatbox(string text, bool sendImmediately = true, bool playSound = false)
+        => Send(OscMessage.ChatboxInput(text, sendImmediately, playSound));
 
     public void SendTyping(bool typing)
         => Send(OscMessage.ChatboxTyping(typing));

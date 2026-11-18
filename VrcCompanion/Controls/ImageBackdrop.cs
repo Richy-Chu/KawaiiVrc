@@ -17,8 +17,17 @@ namespace VrcCompanion.Controls;
 /// </summary>
 public sealed class ImageBackdrop : Image
 {
+    private const int MaxBackdropDecodeWidth = 2048;
+    // Animated GIFs keep every frame in memory. Decode them at a smaller size
+    // than a still wallpaper; motion hides the difference and the saving is large.
+    private const int MaxAnimatedBackdropDecodeWidth = 1280;
+    private const double AnimationSpeedRatio = 0.75;
+
     private Window? _window;
     private bool _isActive = true;
+    private string? _loadedPath;
+    private bool _loadedAnimate;
+    private bool _isLoaded;
 
     public static readonly DependencyProperty SourcePathProperty = DependencyProperty.Register(
         nameof(SourcePath),
@@ -69,8 +78,22 @@ public sealed class ImageBackdrop : Image
         var path = SourcePath;
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
-            ImageBehavior.SetAnimatedSource(this, null);
-            Source = null;
+            ReleaseImage();
+            return;
+        }
+
+        // The profile backdrop lives in a collapsed popup. Do not hold a second
+        // full-size image (or every GIF frame) while that popup is closed.
+        if (!IsVisible || !_isActive)
+        {
+            return;
+        }
+
+        // Restore may raise both StateChanged and Activated. Decode once.
+        if (_isLoaded &&
+            string.Equals(_loadedPath, path, StringComparison.Ordinal) &&
+            _loadedAnimate == Animate)
+        {
             return;
         }
 
@@ -81,8 +104,20 @@ public sealed class ImageBackdrop : Image
             if (isGif && Animate)
             {
                 // WPF's BitmapImage alone renders only the first GIF frame.
-                // ImageBehavior drives the frames, so the setting really animates.
-                ImageBehavior.SetAnimatedSource(this, new BitmapImage(new Uri(path, UriKind.Absolute)));
+                // ImageBehavior drives the frames; 75% keeps the motion close to
+                // natural without triggering the much costlier full-rate path.
+                ImageBehavior.SetAnimationSpeedRatio(this, AnimationSpeedRatio);
+                var animation = new BitmapImage();
+                animation.BeginInit();
+                animation.CacheOption = BitmapCacheOption.OnLoad;
+                animation.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                animation.UriSource = new Uri(path, UriKind.Absolute);
+                animation.DecodePixelWidth = AnimatedBackdropDecodeWidth;
+                animation.EndInit();
+                ImageBehavior.SetAnimatedSource(this, animation);
+                _loadedPath = path;
+                _loadedAnimate = Animate;
+                _isLoaded = true;
                 QueueAnimationStateUpdate();
                 return;
             }
@@ -93,18 +128,33 @@ public sealed class ImageBackdrop : Image
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
             image.UriSource = new Uri(path, UriKind.Absolute);
+            // Do not decode a 4K wallpaper at full size just to draw it behind
+            // a 1080p/1440p window. This is the largest single VRAM saving for
+            // custom backgrounds while staying above normal window widths.
+            image.DecodePixelWidth = BackdropDecodeWidth;
             image.EndInit();
 
             // A frozen bitmap only ever shows the first frame.
             image.Freeze();
             Source = image;
+            _loadedPath = path;
+            _loadedAnimate = Animate;
+            _isLoaded = true;
             UpdateAnimationState();
         }
         catch
         {
-            ImageBehavior.SetAnimatedSource(this, null);
-            Source = null;
+            ReleaseImage();
         }
+    }
+
+    private void ReleaseImage()
+    {
+        ImageBehavior.GetAnimationController(this)?.Pause();
+        ImageBehavior.SetAnimatedSource(this, null);
+        Source = null;
+        _loadedPath = null;
+        _isLoaded = false;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -118,8 +168,18 @@ public sealed class ImageBackdrop : Image
             _isActive = _window.IsActive;
         }
 
+        LoadImage();
         UpdateAnimationState();
     }
+
+    private static int BackdropDecodeWidth
+        => Math.Clamp(
+            (int)Math.Round(SystemParameters.PrimaryScreenWidth * 1.25),
+            1280,
+            MaxBackdropDecodeWidth);
+
+    private static int AnimatedBackdropDecodeWidth
+        => Math.Min(BackdropDecodeWidth, MaxAnimatedBackdropDecodeWidth);
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
@@ -131,26 +191,52 @@ public sealed class ImageBackdrop : Image
             _window = null;
         }
 
-        ImageBehavior.GetAnimationController(this)?.Pause();
+        ReleaseImage();
     }
 
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
-        => UpdateAnimationState();
+    {
+        if (IsVisible)
+        {
+            LoadImage();
+        }
+        else
+        {
+            ReleaseImage();
+        }
+
+        UpdateAnimationState();
+    }
 
     private void OnWindowActivated(object? sender, EventArgs e)
     {
         _isActive = true;
+        // Drop the backdrop while the app is in the background; its native
+        // surfaces are one of the largest optional allocations in the process.
+        LoadImage();
         UpdateAnimationState();
     }
 
     private void OnWindowDeactivated(object? sender, EventArgs e)
     {
         _isActive = false;
+        ReleaseImage();
         UpdateAnimationState();
     }
 
     private void OnWindowStateChanged(object? sender, EventArgs e)
-        => UpdateAnimationState();
+    {
+        if (_window?.WindowState == WindowState.Minimized)
+        {
+            ReleaseImage();
+        }
+        else if (_isActive)
+        {
+            LoadImage();
+        }
+
+        UpdateAnimationState();
+    }
 
     private void QueueAnimationStateUpdate()
         => Dispatcher.BeginInvoke(new Action(UpdateAnimationState));

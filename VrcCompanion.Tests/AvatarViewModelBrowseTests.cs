@@ -68,6 +68,34 @@ public class AvatarViewModelBrowseTests
         }
     }
 
+    private sealed class AvatarDetailsHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {
+                      "id": "avtr_search-detail",
+                      "name": "Sofia",
+                      "authorName": "Rhoost",
+                      "description": "Full VRChat description",
+                      "releaseStatus": "public",
+                      "imageUrl": "https://api.vrchat.cloud/api/1/file/file_search/1/file",
+                      "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_search/1/256",
+                      "created_at": "2026-08-22T12:00:00Z",
+                      "updated_at": "2026-10-18T12:35:39Z",
+                      "unityPackages": [
+                        { "platform": "standalonewindows" },
+                        { "platform": "android" },
+                        { "platform": "ios" }
+                      ]
+                    }
+                    """, Encoding.UTF8, "application/json")
+            });
+    }
+
     private static async Task WaitUntilIdle(AvatarViewModel vm)
     {
         var deadline = Environment.TickCount64 + 5000;
@@ -123,29 +151,30 @@ public class AvatarViewModelBrowseTests
             await WaitUntilIdle(vm);
 
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
-            Assert.Equal(1, handler.Requests);
+            // Page 1 asks both browse indexes (avtr.icu and VRCNDb) together.
+            Assert.Equal(2, handler.Requests);
 
             // Inside the 30 s cooldown, opening the tab again must not hit the index.
             vm.BrowseCatalog();
             vm.BrowseCatalog();
-            Assert.Equal(1, handler.Requests);
+            Assert.Equal(2, handler.Requests);
 
             // Once the cooldown passes, the next activation retries exactly once.
             now = now.AddSeconds(31);
             vm.BrowseCatalog();
             await WaitUntilIdle(vm);
-            Assert.Equal(2, handler.Requests);
+            Assert.Equal(4, handler.Requests);
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
 
             // A second failure doubles the wait: 31 s is no longer enough, 61 s is.
             now = now.AddSeconds(31);
             vm.BrowseCatalog();
-            Assert.Equal(2, handler.Requests);
+            Assert.Equal(4, handler.Requests);
 
             now = now.AddSeconds(30);
             vm.BrowseCatalog();
             await WaitUntilIdle(vm);
-            Assert.Equal(3, handler.Requests);
+            Assert.Equal(6, handler.Requests);
         }
         finally
         {
@@ -210,7 +239,7 @@ public class AvatarViewModelBrowseTests
                 now = now.AddSeconds(1);
                 vm.BrowseCatalog();
                 await WaitUntilIdle(vm);
-                Assert.Equal(before + 1, handler.Requests);
+                Assert.Equal(before + 2, handler.Requests);
             }
 
             // A seventh failure would have been 480 s without the cap.
@@ -235,7 +264,7 @@ public class AvatarViewModelBrowseTests
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
             await WaitUntilIdle(vm);
-            Assert.Equal(1, handler.Requests);
+            Assert.Equal(2, handler.Requests);
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
             // No tab switch: the countdown reaching zero is what triggers the retry.
@@ -243,7 +272,7 @@ public class AvatarViewModelBrowseTests
             TestHooks.PumpBrowseBackoff(vm);
             await WaitUntilIdle(vm);
 
-            Assert.Equal(2, handler.Requests);
+            Assert.Equal(4, handler.Requests);
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
             Assert.Contains("retrying in 60s", vm.CommunityStatusText);
         }
@@ -296,20 +325,20 @@ public class AvatarViewModelBrowseTests
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
             await WaitUntilIdle(vm);
-            Assert.Equal(1, handler.Requests);
+            Assert.Equal(2, handler.Requests);
 
             // Search owns the tab: a browse retry would replace its results.
             vm.GlobalSearchTerm = "cat";
             now = now.AddSeconds(30);
             TestHooks.PumpBrowseBackoff(vm);
             await WaitUntilIdle(vm);
-            Assert.Equal(1, handler.Requests);
+            Assert.Equal(2, handler.Requests);
 
             // Once the search is cleared the next tick catches up and retries.
             vm.GlobalSearchTerm = string.Empty;
             TestHooks.PumpBrowseBackoff(vm);
             await WaitUntilIdle(vm);
-            Assert.Equal(2, handler.Requests);
+            Assert.Equal(4, handler.Requests);
         }
         finally
         {
@@ -336,7 +365,7 @@ public class AvatarViewModelBrowseTests
             vm.NextGlobalPageCommand.Execute(null);
             await WaitUntilIdle(vm);
 
-            Assert.Equal(afterFirstPage + 1, handler.Requests);
+            Assert.Equal(afterFirstPage + 2, handler.Requests);
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
@@ -346,7 +375,7 @@ public class AvatarViewModelBrowseTests
             vm.NextGlobalPageCommand.Execute(null);
             await WaitUntilIdle(vm);
 
-            Assert.Equal(afterFirstPage + 1, handler.Requests);
+            Assert.Equal(afterFirstPage + 2, handler.Requests);
             Assert.Contains("cooling down", vm.GlobalError);
             Assert.DoesNotContain("page 2", vm.CommunityStatusText);
 
@@ -357,7 +386,7 @@ public class AvatarViewModelBrowseTests
             vm.NextGlobalPageCommand.Execute(null);
             await WaitUntilIdle(vm);
 
-            Assert.Equal(afterFirstPage + 2, handler.Requests);
+            Assert.Equal(afterFirstPage + 4, handler.Requests);
             Assert.Contains("page 2", vm.CommunityStatusText);
             Assert.DoesNotContain("cooling down", vm.GlobalError);
         }
@@ -385,7 +414,7 @@ public class AvatarViewModelBrowseTests
             var afterPageOne = handler.Requests;
             vm.NextGlobalPageCommand.Execute(null);
             await WaitUntilIdle(vm);
-            Assert.Equal(afterPageOne + 1, handler.Requests);
+            Assert.Equal(afterPageOne + 2, handler.Requests);
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
             // The expiry tick must fetch page 2 itself, with no click.
@@ -395,12 +424,12 @@ public class AvatarViewModelBrowseTests
             TestHooks.PumpBrowseBackoff(vm);
             await WaitUntilIdle(vm);
 
-            Assert.Equal(afterPageOne + 2, handler.Requests);
+            Assert.Equal(afterPageOne + 4, handler.Requests);
             Assert.Contains("page 2", vm.CommunityStatusText);
             Assert.DoesNotContain("retrying", vm.CommunityStatusText);
             Assert.Equal(string.Empty, vm.GlobalError);
-            // 50 first-page rows plus the appended page, not a restart.
-            Assert.Equal(100, vm.GlobalResults.Count);
+            // The retry lands on the new page instead of restarting at page 1.
+            Assert.Equal(50, vm.GlobalResults.Count);
         }
         finally
         {
@@ -491,7 +520,7 @@ public class AvatarViewModelBrowseTests
             TestHooks.PumpBrowseBackoff(vm);
             await WaitUntilIdle(vm);
 
-            Assert.Equal(afterFailure + 1, handler.Requests);
+            Assert.Equal(afterFailure + 2, handler.Requests);
             Assert.Contains("page 2", vm.CommunityStatusText);
         }
         finally
@@ -530,7 +559,7 @@ public class AvatarViewModelBrowseTests
             vm.IsBrowseTabActive = true;
             await WaitUntilIdle(vm);
 
-            Assert.Equal(afterFailure + 1, handler.Requests);
+            Assert.Equal(afterFailure + 2, handler.Requests);
             Assert.Contains("retrying in 60s", vm.CommunityStatusText);
         }
         finally
@@ -573,7 +602,7 @@ public class AvatarViewModelBrowseTests
             vm.IsBrowseTabActive = true;
             await WaitUntilIdle(vm);
 
-            Assert.Equal(afterFailure + 1, handler.Requests);
+            Assert.Equal(afterFailure + 2, handler.Requests);
             Assert.Contains("retrying in 60s", vm.CommunityStatusText);
         }
         finally
@@ -761,12 +790,12 @@ public class AvatarViewModelBrowseTests
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
             await WaitUntilIdle(vm);
-            Assert.Equal(1, handler.Requests);
+            Assert.Equal(2, handler.Requests);
 
             // An explicit refresh is the user asking: it ignores the cooldown.
             vm.RefreshBrowseCommand.Execute(null);
             await WaitUntilIdle(vm);
-            Assert.Equal(2, handler.Requests);
+            Assert.Equal(4, handler.Requests);
 
             handler.Html = false;
             vm.RefreshBrowseCommand.Execute(null);
@@ -775,7 +804,7 @@ public class AvatarViewModelBrowseTests
 
             // Recovery cleared the backoff, so a tab activation serves the cache.
             vm.BrowseCatalog();
-            Assert.Equal(3, handler.Requests);
+            Assert.Equal(6, handler.Requests);
             Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
         }
         finally
@@ -942,11 +971,11 @@ public class AvatarViewModelBrowseTests
             vm.NextGlobalPageCommand.Execute(null);
             await WaitUntilIdle(vm);
 
-            // Only the 29 genuinely new avatars count, and they extend the list.
+            // Only the 29 genuinely new avatars count, and the grid shows just them.
             Assert.Contains("avtr.icu 29", vm.CommunityStatusText);
             Assert.Contains("page 2", vm.CommunityStatusText);
-            Assert.Equal(79, vm.GlobalResults.Count);
-            Assert.Contains("79", vm.GlobalSummaryText);
+            Assert.Equal(29, vm.GlobalResults.Count);
+            Assert.Contains("Page 2", vm.GlobalSummaryText);
         }
         finally
         {
@@ -990,7 +1019,7 @@ public class AvatarViewModelBrowseTests
 
             Assert.Contains("avtr.icu 29", vm.CommunityStatusText);
             Assert.Contains("page 2", vm.CommunityStatusText);
-            Assert.Equal(79, vm.GlobalResults.Count);
+            Assert.Equal(29, vm.GlobalResults.Count);
 
             handler.Json = IdsJson(page3);
             vm.NextGlobalPageCommand.Execute(null);
@@ -999,8 +1028,8 @@ public class AvatarViewModelBrowseTests
             // Each page contributes only its new avatars, and the suffix keeps up.
             Assert.Contains("avtr.icu 20", vm.CommunityStatusText);
             Assert.Contains("page 3", vm.CommunityStatusText);
-            Assert.Equal(99, vm.GlobalResults.Count);
-            Assert.Contains("99", vm.GlobalSummaryText);
+            Assert.Equal(20, vm.GlobalResults.Count);
+            Assert.Contains("Page 3", vm.GlobalSummaryText);
         }
         finally
         {
@@ -1035,7 +1064,7 @@ public class AvatarViewModelBrowseTests
             Assert.True(vm.HasPreviousGlobal);
             Assert.Contains("avtr.icu 20", vm.CommunityStatusText);
             Assert.Contains("page 3", vm.CommunityStatusText);
-            Assert.Equal(99, vm.GlobalResults.Count);
+            Assert.Equal(20, vm.GlobalResults.Count);
             var requestsAfterLoad = handler.Requests;
             var tokenAtPage3 = vm.ResultsPageToken;
 
@@ -1043,7 +1072,7 @@ public class AvatarViewModelBrowseTests
             vm.PreviousGlobalPageCommand.Execute(null);
             Assert.Contains("avtr.icu 29", vm.CommunityStatusText);
             Assert.Contains("page 2", vm.CommunityStatusText);
-            Assert.Equal(79, vm.GlobalResults.Count);
+            Assert.Equal(29, vm.GlobalResults.Count);
             Assert.Equal(requestsAfterLoad, handler.Requests);
             Assert.True(vm.ResultsPageToken > tokenAtPage3);
 
@@ -1058,7 +1087,7 @@ public class AvatarViewModelBrowseTests
             var tokenAtPage1 = vm.ResultsPageToken;
             vm.NextGlobalPageCommand.Execute(null);
             Assert.Contains("page 2", vm.CommunityStatusText);
-            Assert.Equal(79, vm.GlobalResults.Count);
+            Assert.Equal(29, vm.GlobalResults.Count);
             Assert.Equal(requestsAfterLoad, handler.Requests);
 
             // Every page change bumps the token the view scrolls on, browse or search.
@@ -1084,7 +1113,7 @@ public class AvatarViewModelBrowseTests
     [Fact]
     public async Task FederatedSearch_ConcurrentProviderWrites_KeepEveryIndexResult()
     {
-        // Six indexes answer concurrently through one results map. Plain Dictionary
+        // Ten indexes answer concurrently through one results map. Plain Dictionary
         // writes would race here; the probe must end complete and consistent.
         var handler = new ToggleHandler { Html = false };
         TestHooks.UseCommunityHandler(handler);
@@ -1095,10 +1124,15 @@ public class AvatarViewModelBrowseTests
             {
                 var probe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-                var rows = await api.SearchAllCommunityAvatarsAsync("cat", indexResults: probe);
+                var partialRows = new List<Avatar>();
+                var rows = await api.SearchAllCommunityAvatarsAsync(
+                    "cat",
+                    indexResults: probe,
+                    onPartial: (_, partial) => partialRows.AddRange(partial));
 
                 Assert.NotEmpty(rows);
-                Assert.Equal(6, probe.Count); // four VRCX providers + avtr.icu + VRCNDb
+                Assert.Equal(rows.Count, partialRows.Count);
+                Assert.Equal(10, probe.Count); // eight VRCX providers + avtr.icu + VRCNDb
                 Assert.All(probe.Values, value => Assert.True(value >= 0));
             }
         }
@@ -1106,6 +1140,75 @@ public class AvatarViewModelBrowseTests
         {
             TestHooks.UseCommunityHandler(null);
         }
+    }
+
+    [Fact]
+    public async Task FederatedSearch_ProviderSelectionLimitsRequestedIndexes()
+    {
+        var handler = new ToggleHandler { Html = false };
+        TestHooks.UseCommunityHandler(handler);
+        try
+        {
+            var api = new VrcApiClient();
+            var probe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var rows = await api.SearchAllCommunityAvatarsAsync(
+                "cat",
+                indexResults: probe,
+                providers: new[] { "avtrDB" });
+
+            Assert.Equal(new[] { "avtrDB" }, probe.Keys);
+            Assert.All(rows, avatar => Assert.Equal("avtrDB", avatar.SourceName));
+            Assert.NotEmpty(rows);
+
+            var multiProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var multi = await api.SearchAllCommunityAvatarsAsync(
+                "cat",
+                indexResults: multiProbe,
+                providers: new[] { "avtrDB", "PAW" });
+
+            Assert.Equal(2, multiProbe.Count);
+            Assert.Contains("avtrDB", multiProbe.Keys);
+            Assert.Contains("PAW", multiProbe.Keys);
+            // Both fake providers return the same ids, so the merged grid keeps
+            // the first copy while the probe records that both were queried.
+            Assert.Contains(multi, avatar => avatar.SourceName == "avtrDB");
+
+            var requestsBeforeNone = handler.Requests;
+            var noneProbe = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var none = await api.SearchAllCommunityAvatarsAsync(
+                "cat",
+                indexResults: noneProbe,
+                providers: Array.Empty<string>());
+
+            Assert.Empty(none);
+            Assert.Empty(noneProbe);
+            Assert.Equal(requestsBeforeNone, handler.Requests);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public void ProviderFilter_DefaultsToAllAndSupportsSingleAndNone()
+    {
+        var vm = new AvatarViewModel(new VrcApiClient());
+
+        Assert.Equal(10, vm.ProviderFilterOptions.Count);
+        Assert.All(vm.ProviderFilterOptions, option => Assert.True(option.IsSelected));
+        Assert.Equal("All providers (10)", vm.ProviderFilterLabel);
+
+        vm.ProviderFilterOptions.Single(option => option.Name == "avtrDB").IsSelected = false;
+        Assert.Equal("9 providers", vm.ProviderFilterLabel);
+
+        vm.ProviderFilterOptions.Single(option => option.Name == "avtr.zip").IsSelected = false;
+        vm.SelectNoProvidersCommand.Execute(null);
+        Assert.Equal("No providers", vm.ProviderFilterLabel);
+        Assert.Contains("only VRChat", vm.ProviderFilterSummary);
+
+        vm.SelectAllProvidersCommand.Execute(null);
+        Assert.All(vm.ProviderFilterOptions, option => Assert.True(option.IsSelected));
     }
 
     [Fact]
@@ -1144,13 +1247,10 @@ public class AvatarViewModelBrowseTests
             vm.NextGlobalPageCommand.Execute(null);
             await WaitUntilIdle(vm);
 
-            // 30 new rows arrived but only 28 are public, and the total is visible-only.
-            Assert.Equal(76, vm.GlobalResults.Count);
+            // 30 new rows arrived but only 28 are public, and the page is visible-only.
+            Assert.Equal(28, vm.GlobalResults.Count);
             Assert.Contains("avtr.icu 28", vm.CommunityStatusText);
             Assert.Contains("page 2", vm.CommunityStatusText);
-
-            var cardsOnPage = vm.GlobalResults.Count - 48;
-            Assert.Equal(28, cardsOnPage);
         }
         finally
         {
@@ -1258,6 +1358,69 @@ public class AvatarViewModelBrowseTests
         Assert.Contains("VRChat 1", vm.CommunityStatusText);
         Assert.DoesNotContain("PAW", vm.CommunityStatusText);
         Assert.DoesNotContain("failed", vm.CommunityStatusText);
+    }
+
+    [Fact]
+    public async Task SearchResultDetailIsCompletedFromVrchat()
+    {
+        var community = new ToggleHandler
+        {
+            Html = false,
+            Json = """
+                [
+                  {
+                    "id": "avtr_search-detail",
+                    "name": "Sofia",
+                    "authorName": "Rhoost",
+                    "description": "Search index summary",
+                    "releaseStatus": "public",
+                    "platforms": ["standalonewindows"],
+                    "updated_at": "2026-10-18T12:35:39Z"
+                  }
+                ]
+                """
+        };
+        TestHooks.UseCommunityHandler(community);
+        try
+        {
+            using var api = new VrcApiClient(null, new AvatarDetailsHandler());
+            var vm = new AvatarViewModel(api);
+
+            vm.GlobalSearchTerm = "Sofia";
+            vm.GlobalSearchCommand.Execute(null);
+            await WaitUntilIdle(vm);
+
+            var row = Assert.Single(vm.GlobalResults);
+            Assert.Equal(default, row.CreatedAt);
+            Assert.Equal("PC", row.PlatformsText);
+
+            vm.OpenAvatarDetailsCommand.Execute(row.Id);
+            await WaitUntil(() => row.CreatedAt != default);
+
+            Assert.Same(row, vm.SelectedAvatar);
+            Assert.Equal("Full VRChat description", row.Description);
+            Assert.Equal(2026, row.CreatedAt.Year);
+            Assert.Equal(10, row.UpdatedAt.Month);
+            Assert.Equal("PC · Quest · iOS", row.PlatformsText);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        var deadline = Environment.TickCount64 + 5000;
+        while (!condition())
+        {
+            if (Environment.TickCount64 > deadline)
+            {
+                throw new TimeoutException("Timed out waiting for avatar details.");
+            }
+
+            await Task.Delay(20);
+        }
     }
 
 }

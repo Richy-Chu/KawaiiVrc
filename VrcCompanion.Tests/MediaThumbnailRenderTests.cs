@@ -340,7 +340,7 @@ public class MediaThumbnailRenderTests
 
     private static void AssertCacheLimit()
     {
-        Assert.Equal(64L * 1024 * 1024, ImageLoader.MemoryCacheLimitBytes);
+        Assert.Equal(24L * 1024 * 1024, ImageLoader.MemoryCacheLimitBytes);
         Assert.InRange(
             ImageLoader.Shared.MemoryCacheBytes,
             0,

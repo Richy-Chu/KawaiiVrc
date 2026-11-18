@@ -12,7 +12,8 @@ public sealed record NowPlayingInfo(
     string Artist,
     string Source,
     TimeSpan Position = default,
-    TimeSpan Duration = default)
+    TimeSpan Duration = default,
+    bool IsPlaying = true)
 {
     public bool HasArtist => !string.IsNullOrWhiteSpace(Artist);
 
@@ -25,15 +26,21 @@ public sealed record NowPlayingInfo(
         get
         {
             var source = Source.Length > 0 ? $" · {Source}" : string.Empty;
-            return $"♪ {DisplayText}{source}";
+            return $"{(IsPlaying ? "▶" : "⏸")} {DisplayText}{source}";
         }
     }
+
+    public string PlaybackIcon => IsPlaying ? "▶" : "⏸";
 
     /// <summary>
     /// Labels the media session source. Browser sessions are labelled by what
     /// they are playing (YouTube / Spotify) rather than "Chrome".
     /// </summary>
-    public static NowPlayingInfo? FromSession(string? appId, string? title, string? artist)
+    public static NowPlayingInfo? FromSession(
+        string? appId,
+        string? title,
+        string? artist,
+        bool isPlaying = true)
     {
         if (string.IsNullOrWhiteSpace(title))
         {
@@ -97,7 +104,11 @@ public sealed record NowPlayingInfo(
             return null;
         }
 
-        return new NowPlayingInfo(cleanTitle, (artist ?? string.Empty).Trim(), source);
+        return new NowPlayingInfo(
+            cleanTitle,
+            (artist ?? string.Empty).Trim(),
+            source,
+            IsPlaying: isPlaying);
     }
 
     private static (string Title, string Artist) NormaliseBrowserTitle(
@@ -213,16 +224,24 @@ public sealed class NowPlayingService
                 session = null;
             }
 
-            if (session is null ||
-                session.GetPlaybackInfo().PlaybackStatus !=
+            static bool IsVisibleSession(GlobalSystemMediaTransportControlsSession candidate) =>
+                !IsIgnoredSource(candidate.SourceAppUserModelId) &&
+                candidate.GetPlaybackInfo().PlaybackStatus is
+                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing or
+                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused;
+
+            if (session is null || session.GetPlaybackInfo().PlaybackStatus !=
                 GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
             {
                 session = manager
                     .GetSessions()
                     .FirstOrDefault(candidate =>
-                        !IsIgnoredSource(candidate.SourceAppUserModelId) &&
+                        IsVisibleSession(candidate) &&
                         candidate.GetPlaybackInfo().PlaybackStatus ==
-                        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing);
+                        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                    ?? (session is not null && IsVisibleSession(session)
+                        ? session
+                        : manager.GetSessions().FirstOrDefault(IsVisibleSession));
             }
 
             if (session is null)
@@ -231,10 +250,12 @@ public sealed class NowPlayingService
             }
 
             var properties = await session.TryGetMediaPropertiesAsync();
+            var playbackStatus = session.GetPlaybackInfo().PlaybackStatus;
             var info = NowPlayingInfo.FromSession(
                 session.SourceAppUserModelId,
                 properties?.Title,
-                properties?.Artist);
+                properties?.Artist,
+                playbackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing);
 
             // Browsers report the page's raw media title, which often has no
             // "YouTube"/"Spotify" marker. Their open tabs do, so use those to

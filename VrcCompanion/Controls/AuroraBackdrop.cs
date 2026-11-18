@@ -6,8 +6,8 @@ namespace VrcCompanion.Controls;
 
 /// <summary>
 /// Slow-moving aurora blobs and a subtle star field behind the whole app.
-/// Rendering is capped at 30 fps and stops completely when the window is
-/// minimized, so it stays decorative instead of expensive.
+/// Rendering is capped at 15 fps and stops completely when the window is
+/// minimized or inactive, so it stays decorative instead of expensive.
 /// </summary>
 public sealed class AuroraBackdrop : FrameworkElement
 {
@@ -40,6 +40,9 @@ public sealed class AuroraBackdrop : FrameworkElement
     public AuroraBackdrop()
     {
         IsHitTestVisible = false;
+        // The backdrop is soft gradients and tiny stars, so a half-resolution
+        // cache cuts fill-rate cost without a visible loss at normal sizes.
+        CacheMode = new BitmapCache { RenderAtScale = 0.5 };
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         IsVisibleChanged += OnIsVisibleChanged;
@@ -285,7 +288,7 @@ public sealed class AuroraBackdrop : FrameworkElement
     {
         var now = Stopwatch.GetTimestamp();
         var elapsed = now - _lastFrameTicks;
-        if (elapsed < Stopwatch.Frequency / 30)
+        if (elapsed < Stopwatch.Frequency / 15)
         {
             return;
         }
@@ -307,7 +310,7 @@ public sealed class AuroraBackdrop : FrameworkElement
     private static Star[] CreateStars()
     {
         var random = new Random(417);
-        var stars = new Star[90];
+        var stars = new Star[48];
         for (var i = 0; i < stars.Length; i++)
         {
             stars[i] = new Star
