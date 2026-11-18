@@ -1,6 +1,6 @@
-# Proves the feed-parity decisions without touching GitHub, by putting a stub gh on PATH and
-# running the real pack-release.ps1: a release that does not list releases.win.json is drift,
-# while a listed feed that will not download is a transport problem, not drift.
+# Proves the decisions that keep GitHub failures out of the drift issue, by driving the real
+# pack-release.ps1 against a stub gh on PATH: a release that does not list its feed is drift,
+# while a feed that will not download, or a chain listing that fails, is infrastructure.
 $ErrorActionPreference = "Stop"
 
 $releaseScript = Join-Path $PSScriptRoot "pack-release.ps1"
@@ -11,52 +11,92 @@ $shimDir = Join-Path ([System.IO.Path]::GetTempPath()) ("kawaiivrc-gh-stub-" + [
 New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
 
 function Write-GhStub([string]$Directory, [bool]$Windows) {
+    # Line endings are explicit: cmd.exe mis-parses these blocks with LF, and sh will not run
+    # a script whose first line ends in CRLF.
     if ($Windows) {
         $path = Join-Path $Directory "gh.cmd"
-        @'
-@echo off
-if /I "%1 %2"=="release list" (
-  echo v1.0.0
-  exit /b 0
-)
-if /I "%1 %2"=="release view" (
-  echo KawaiiVrc-1.0.0-full.nupkg
-  if "%HAS_FEED%"=="1" echo releases.win.json
-  exit /b 0
-)
-if /I "%1 %2"=="release download" (
-  echo download failed: connection reset 1>&2
-  exit /b 1
-)
-exit /b 0
-'@ | Set-Content -Path $path -Encoding Ascii
+        # Flat labels: exit /b inside nested if blocks does not report its code from cmd.exe.
+        $lines = @(
+            '@echo off',
+            'if /I "%1 %2"=="release list" goto release_list',
+            'if /I "%1 %2"=="release view" goto release_view',
+            'if /I "%1 %2"=="release download" goto release_download',
+            'goto done',
+            '',
+            ':release_list',
+            'if not "%GH_MODE%"=="chain-list-fails" goto release_list_ok',
+            'if not exist "%GH_STATE%" goto release_list_first',
+            'echo gh: rate limit exceeded 1>&2',
+            'exit /b 1',
+            '',
+            ':release_list_first',
+            'type nul > "%GH_STATE%"',
+            'exit /b 0',
+            '',
+            ':release_list_ok',
+            'echo v1.0.0',
+            'exit /b 0',
+            '',
+            ':release_view',
+            'echo KawaiiVrc-1.0.0-full.nupkg',
+            'if not "%GH_MODE%"=="missing-feed" echo releases.win.json',
+            'exit /b 0',
+            '',
+            ':release_download',
+            'echo download failed: connection reset 1>&2',
+            'exit /b 1',
+            '',
+            ':done',
+            'exit /b 0'
+        )
+        ($lines -join "`r`n") | Set-Content -Path $path -Encoding Ascii
         return
     }
 
     $path = Join-Path $Directory "gh"
-    @'
-#!/bin/sh
-case "$1 $2" in
-  "release list") echo v1.0.0; exit 0 ;;
-  "release view")
-    echo KawaiiVrc-1.0.0-full.nupkg
-    if [ "$HAS_FEED" = "1" ]; then echo releases.win.json; fi
-    exit 0 ;;
-  "release download") echo "download failed: connection reset" >&2; exit 1 ;;
-esac
-exit 0
-'@ | Set-Content -Path $path -Encoding Ascii
+    $lines = @(
+        '#!/bin/sh',
+        'case "$1 $2" in',
+        '  "release list")',
+        '    if [ "$GH_MODE" = "chain-list-fails" ]; then',
+        '      if [ -e "$GH_STATE" ]; then echo "gh: rate limit exceeded" >&2; exit 1; fi',
+        '      : > "$GH_STATE"',
+        '      exit 0',
+        '    fi',
+        '    echo v1.0.0',
+        '    exit 0 ;;',
+        '  "release view")',
+        '    echo KawaiiVrc-1.0.0-full.nupkg',
+        '    if [ "$GH_MODE" != "missing-feed" ]; then echo releases.win.json; fi',
+        '    exit 0 ;;',
+        '  "release download") echo "download failed: connection reset" >&2; exit 1 ;;',
+        'esac',
+        'exit 0'
+    )
+    ($lines -join "`n") | Set-Content -Path $path -Encoding Ascii
+
     # Set the bit through .NET rather than trusting an external chmod.
     $mode = [System.IO.UnixFileMode]'UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute'
     [System.IO.File]::SetUnixFileMode($path, $mode)
 }
 
+# Markers come from the plain messages, not the rendered error record: PowerShell wraps that
+# record with a gutter that ends up inside the text on Linux.
+$checks = @(
+    @{ Name = "feed asset missing"; Mode = "missing-feed"; Expected = 1; Marker = "has no feed asset" },
+    @{ Name = "listed feed will not download"; Mode = "feed-download-fails"; Expected = 3; Marker = "Could not download the feed" },
+    @{ Name = "chain listing fails"; Mode = "chain-list-fails"; Expected = 3; Marker = "Could not list releases for the chain check" }
+)
+
 $savedPath = $env:PATH
+$savedMode = $env:GH_MODE
+$savedState = $env:GH_STATE
 $failures = 0
 
 try {
     Write-GhStub -Directory $shimDir -Windows $onWindows
     $env:PATH = "$shimDir$([System.IO.Path]::PathSeparator)$savedPath"
+    $env:GH_STATE = Join-Path $shimDir "list-state"
 
     # If the stub is not what runs, the checks would silently exercise the real GitHub.
     $stubPath = Join-Path $shimDir $(if ($onWindows) { "gh.cmd" } else { "gh" })
@@ -72,17 +112,11 @@ try {
     }
     $arguments += @('-VerifyOnly', '-Version', '1.0.0', '-Repo', 'owner/repo')
 
-    # Markers come from the plain messages, not the rendered error record: PowerShell wraps
-    # that record with a gutter that ends up inside the text on Linux.
-    $checks = @(
-        @{ Name = "feed asset missing"; HasFeed = "0"; Expected = 1; Marker = "has no feed asset" },
-        @{ Name = "listed feed will not download"; HasFeed = "1"; Expected = 3; Marker = "Could not download the feed" }
-    )
-
     foreach ($check in $checks) {
-        $env:HAS_FEED = $check.HasFeed
+        $env:GH_MODE = $check.Mode
+        Remove-Item $env:GH_STATE -ErrorAction SilentlyContinue
 
-        # The failing case writes to stderr, which Windows PowerShell turns into a
+        # The failing cases write to stderr, which Windows PowerShell turns into a
         # terminating error when 2>&1 meets ErrorActionPreference = Stop.
         $previous = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
@@ -95,7 +129,8 @@ try {
         }
 
         if ($actual -ne $check.Expected) {
-            Write-Host ("{0}: exited {1}, expected {2}" -f $check.Name, $actual, $check.Expected)
+            Write-Host ("{0}: exited {1}, expected {2}. Output was:" -f $check.Name, $actual, $check.Expected)
+            $output | ForEach-Object { Write-Host "    $_" }
             $failures++
             continue
         }
@@ -112,7 +147,8 @@ try {
 }
 finally {
     $env:PATH = $savedPath
-    Remove-Item -Path Env:\HAS_FEED -ErrorAction SilentlyContinue
+    $env:GH_MODE = $savedMode
+    $env:GH_STATE = $savedState
     Remove-Item $shimDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 

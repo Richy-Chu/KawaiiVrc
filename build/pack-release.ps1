@@ -272,6 +272,12 @@ function Invoke-ChainVerification {
     }
 
     $list = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", "20", "--json", "tagName", "--jq", ".[].tagName")
+    if ($list.ExitCode -ne 0) {
+        # Without the list there is no chain to check, which is not release drift.
+        Write-Host "Could not list releases for the chain check on $Repo (gh exit $($list.ExitCode)); this is not release drift." -ForegroundColor Yellow
+        exit 3
+    }
+
     $versions = @($list.Output |
         ForEach-Object { "$_".Trim().TrimStart("v") } |
         Where-Object { $_ -match '^\d+\.\d+\.\d+(-[0-9A-Za-z.\-]+)?(\+[0-9A-Za-z.\-]+)?$' })
