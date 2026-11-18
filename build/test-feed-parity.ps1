@@ -98,7 +98,10 @@ try {
             continue
         }
 
-        if ("$($output -join "`n")" -notlike "*$($check.Marker)*") {
+        # PowerShell wraps long error text, inserting line breaks mid-sentence, so compare
+        # against a whitespace-collapsed copy without colour codes.
+        $text = (($output -join "`n") -replace '\x1b\[[0-9;]*m', '') -replace '\s+', ' '
+        if ($text -notlike "*$($check.Marker)*") {
             Write-Host ("{0}: output did not contain '{1}'. Output was:" -f $check.Name, $check.Marker)
             $output | ForEach-Object { Write-Host "    $_" }
             $failures++

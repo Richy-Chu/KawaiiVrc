@@ -39,7 +39,9 @@ foreach ($check in $checks) {
         continue
     }
 
-    if ($check.Marker -and ("$($output -join "`n")" -notlike "*$($check.Marker)*")) {
+    # Wrapped error text and colour codes would otherwise hide the marker.
+    $text = (($output -join "`n") -replace '\x1b\[[0-9;]*m', '') -replace '\s+', ' '
+    if ($check.Marker -and ($text -notlike "*$($check.Marker)*")) {
         Write-Host ("{0}: output did not contain '{1}'" -f $check.Name, $check.Marker)
         $failures++
     }
