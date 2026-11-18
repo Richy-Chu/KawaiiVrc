@@ -178,9 +178,33 @@ public class GroupMemberSearchTests
         vm.SearchMembersCommand.Execute(null);
         await SettleAsync(vm);
 
-        Assert.Contains("usr_a1b2c3", handler.MemberLookups);
+        // The partial id is resolved through the public user endpoint, which the group's
+        // membership endpoint would refuse on locked-down groups.
+        Assert.Contains("usr_a1b2c3", handler.UserLookups);
         Assert.Empty(vm.Members);
         Assert.Equal("No members match “a1b2c3” in this group.", vm.MembersSummary);
+    }
+
+    [Fact]
+    public async Task ForbiddenMembershipDetailsExplainsInsteadOfFailing()
+    {
+        using var handler = new GroupMemberTestHandler(total: 250) { ForbidMembershipDetails = true };
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
+        };
+        await SettleAsync(vm);
+
+        // A usr_ id copied from a friend's profile: VRChat answers the group's member
+        // lookup with 403, which must not become "Could not search this group's members".
+        vm.MemberSearchText = "usr_99";
+        vm.SearchMembersCommand.Execute(null);
+        await SettleAsync(vm);
+
+        Assert.Empty(vm.Members);
+        Assert.DoesNotContain("Could not search", vm.MembersSummary);
+        Assert.Contains("may not view this group's membership details", vm.MembersSummary);
     }
 
     private static async Task SettleAsync(GroupViewModel vm)

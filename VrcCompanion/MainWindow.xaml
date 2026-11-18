@@ -3388,7 +3388,8 @@
                             <ScrollViewer Grid.Row="1"
                                           VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled"
-                                          Padding="20,16,20,20">
+                                          Padding="20,16,20,20"
+                                          behaviors:ScrollViewerBehavior.PageToken="{Binding DataContext.GroupViewModel.MembersPageToken, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <StackPanel>
                                     <TextBlock Text="ABOUT" Style="{StaticResource FieldLabel}" />
                                     <TextBlock Text="{Binding Description}"
@@ -3482,27 +3483,43 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBox Text="{Binding DataContext.GroupViewModel.MemberSearchText, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
-                                                 Style="{StaticResource InputBox}"
-                                                 Tag="Search a display name or usr_ id..."
-                                                 AutomationProperties.AutomationId="GroupMemberSearchBox">
-                                            <TextBox.InputBindings>
-                                                <KeyBinding Key="Enter"
-                                                            Command="{Binding DataContext.GroupViewModel.SearchMembersCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
-                                            </TextBox.InputBindings>
-                                        </TextBox>
+                                        <Grid MinHeight="32">
+                                            <TextBox Text="{Binding DataContext.GroupViewModel.MemberSearchText, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                                                     Style="{StaticResource InputBox}"
+                                                     Padding="12,6"
+                                                     FontSize="11.5"
+                                                     MinHeight="32"
+                                                     AutomationProperties.AutomationId="GroupMemberSearchBox"
+                                                     AutomationProperties.Name="Search group members">
+                                                <TextBox.InputBindings>
+                                                    <KeyBinding Key="Enter"
+                                                                Command="{Binding DataContext.GroupViewModel.SearchMembersCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                </TextBox.InputBindings>
+                                            </TextBox>
+                                            <TextBlock Text="Search a display name, username or usr_ id…"
+                                                       Margin="13,0,0,0"
+                                                       FontSize="11.5"
+                                                       FontStyle="Italic"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       Opacity="0.75"
+                                                       VerticalAlignment="Center"
+                                                       IsHitTestVisible="False"
+                                                       Visibility="{Binding DataContext.GroupViewModel.HasMemberSearchText, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolToVis}}" />
+                                        </Grid>
                                         <Button Grid.Column="1"
                                                 Content="Search"
                                                 Style="{StaticResource SecondaryButton}"
-                                                Padding="10,5"
+                                                Padding="12,6"
                                                 FontSize="10.5"
+                                                MinHeight="32"
                                                 Margin="6,0,0,0"
                                                 Command="{Binding DataContext.GroupViewModel.SearchMembersCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                                         <Button Grid.Column="2"
                                                 Content="Clear"
                                                 Style="{StaticResource GhostButton}"
-                                                Padding="8,4"
+                                                Padding="10,6"
                                                 FontSize="10"
+                                                MinHeight="32"
                                                 Margin="4,0,0,0"
                                                 Command="{Binding DataContext.GroupViewModel.ClearMemberSearchCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                                     </Grid>
@@ -3518,46 +3535,71 @@
                                                         Style="{StaticResource GhostButton}"
                                                         HorizontalContentAlignment="Stretch"
                                                         Padding="0"
-                                                        Margin="0,0,0,5"
+                                                        Margin="0,0,0,4"
+                                                        AutomationProperties.Name="{Binding DisplayName}"
                                                         ToolTip="View this member's profile">
-                                                    <Border Background="{StaticResource InputBrush}"
-                                                            CornerRadius="8"
-                                                            Padding="8,6">
+                                                    <Border CornerRadius="9"
+                                                            BorderThickness="1"
+                                                            Padding="9,6">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="{StaticResource InputBrush}" />
+                                                                <Setter Property="BorderBrush" Value="Transparent" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Button}}" Value="True">
+                                                                        <Setter Property="Background" Value="#2A1E3B" />
+                                                                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
                                                         <Grid>
                                                             <Grid.ColumnDefinitions>
                                                                 <ColumnDefinition Width="Auto" />
                                                                 <ColumnDefinition Width="*" />
                                                                 <ColumnDefinition Width="Auto" />
                                                             </Grid.ColumnDefinitions>
-                                                            <Border Width="26" Height="26" CornerRadius="13"
-                                                                    Background="#1B2130" Margin="0,0,8,0">
+                                                            <Border Width="30" Height="30" CornerRadius="15"
+                                                                    Background="#1B2130" Margin="0,0,10,0">
                                                                 <Grid>
                                                                     <TextBlock Text="{Binding Initial}"
-                                                                               FontSize="11"
+                                                                               FontSize="12"
                                                                                FontWeight="SemiBold"
                                                                                Foreground="{StaticResource MutedBrush}"
                                                                                HorizontalAlignment="Center"
                                                                                VerticalAlignment="Center" />
                                                                     <controls:AsyncImage SourceUrl="{Binding AvatarUrl}"
-                                                                                         DecodeWidth="52"
-                                                                                         CornerRadius="13" />
+                                                                                         DecodeWidth="60"
+                                                                                         CornerRadius="15" />
                                                                 </Grid>
                                                             </Border>
                                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                                 <TextBlock Text="{Binding DisplayName}"
                                                                            FontSize="11.5"
+                                                                           FontWeight="SemiBold"
                                                                            Foreground="{StaticResource TextBrush}"
                                                                            TextTrimming="CharacterEllipsis" />
                                                                 <TextBlock Text="{Binding IdText}"
-                                                                           FontSize="9.5"
+                                                                           FontSize="9"
                                                                            Foreground="{StaticResource MutedBrush}"
-                                                                           TextTrimming="CharacterEllipsis" />
+                                                                           Opacity="0.85"
+                                                                           Margin="0,1,0,0"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           ToolTip="{Binding IdText}" />
                                                             </StackPanel>
-                                                            <TextBlock Grid.Column="2"
-                                                                       Text="Profile"
-                                                                       FontSize="10"
-                                                                       Foreground="{StaticResource MutedBrush}"
-                                                                       VerticalAlignment="Center" />
+                                                            <Border Grid.Column="2"
+                                                                    Background="#1A1430"
+                                                                    BorderBrush="{StaticResource BorderBrush}"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="7"
+                                                                    Padding="9,3"
+                                                                    Margin="10,0,0,0"
+                                                                    VerticalAlignment="Center">
+                                                                <TextBlock Text="Profile"
+                                                                           FontSize="9.5"
+                                                                           FontWeight="SemiBold"
+                                                                           Foreground="{StaticResource MutedBrush}" />
+                                                            </Border>
                                                         </Grid>
                                                     </Border>
                                                 </Button>

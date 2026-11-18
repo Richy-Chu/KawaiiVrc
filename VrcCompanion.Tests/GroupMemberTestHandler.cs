@@ -29,6 +29,14 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
 
     public List<string> MemberLookups { get; } = new();
 
+    public List<string> UserLookups { get; } = new();
+
+    /// <summary>Mimics groups whose membership details the account may not read (403).</summary>
+    public bool ForbidMembershipDetails { get; set; }
+
+    /// <summary>How many members the roster endpoint is willing to page through, if capped.</summary>
+    public int? Viewable { get; set; }
+
     public const string StrangerId = "usr_stranger";
     public const string StrangerName = "Stranger Danger";
     public const string StrangerUsername = "stranger";
@@ -45,12 +53,35 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
         {
             var text = ReadString(query, "query");
             Searches.Add(text);
+            if (ForbidMembershipDetails)
+            {
+                return Forbidden();
+            }
             var matches = Enumerable.Range(0, _total)
                 .Where(index => MemberName(index).Contains(text, StringComparison.OrdinalIgnoreCase))
                 .Take(100)
                 .Select(Member)
                 .ToArray();
             return Json(new { results = matches });
+        }
+
+        if (path.Contains("/users/", StringComparison.Ordinal))
+        {
+            var id = path[(path.LastIndexOf('/') + 1)..];
+            UserLookups.Add(id);
+            var index = Enumerable.Range(0, _total)
+                .FirstOrDefault(candidate => string.Equals($"usr_{candidate}", id, StringComparison.Ordinal));
+            if (index == 0 && !string.Equals(id, "usr_0", StringComparison.Ordinal))
+            {
+                return NotFound();
+            }
+
+            return Json(new
+            {
+                id = $"usr_{index}",
+                displayName = MemberName(index),
+                username = UserName(index)
+            });
         }
 
         if (path.EndsWith("/users", StringComparison.Ordinal))
@@ -97,14 +128,16 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
         {
             var id = path[(path.LastIndexOf('/') + 1)..];
             MemberLookups.Add(id);
+            if (ForbidMembershipDetails)
+            {
+                return Forbidden();
+            }
+
             var index = Enumerable.Range(0, _total)
                 .FirstOrDefault(candidate => string.Equals($"usr_{candidate}", id, StringComparison.Ordinal));
             if (index == 0 && !string.Equals(id, "usr_0", StringComparison.Ordinal))
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
-                {
-                    Content = new StringContent("{\"error\":{\"message\":\"Not Found\"}}", Encoding.UTF8, "application/json")
-                });
+                return NotFound();
             }
 
             return Json(Member(index));
@@ -115,6 +148,11 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
             var offset = ReadInt(query, "offset");
             var count = ReadInt(query, "n", fallback: 100);
             Offsets.Add(offset);
+            if (Viewable is int viewable && offset >= viewable)
+            {
+                return Json(Array.Empty<object>());
+            }
+
             var available = Math.Max(0, Math.Min(count, _total - offset));
             return Json(Enumerable.Range(offset, available).Select(Member).ToArray());
         }
@@ -140,6 +178,21 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
             currentAvatarThumbnailImageUrl = $"https://example.com/thumb-{index}.png"
         }
     };
+
+    private static Task<HttpResponseMessage> Forbidden()
+        => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent(
+                "{\"error\":{\"message\":\"You're not allowed to view membership details.\"}}",
+                Encoding.UTF8,
+                "application/json")
+        });
+
+    private static Task<HttpResponseMessage> NotFound()
+        => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+        {
+            Content = new StringContent("{\"error\":{\"message\":\"Not Found\"}}", Encoding.UTF8, "application/json")
+        });
 
     private static Task<HttpResponseMessage> Json(object payload)
         => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

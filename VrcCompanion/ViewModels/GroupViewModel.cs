@@ -34,8 +34,11 @@ public sealed class GroupViewModel : ViewModelBase
     private string _memberSearchText = string.Empty;
     private bool _isMemberSearchActive;
     private string? _lastMemberSearch;
-    private string _memberSearchStatus = string.Empty;
+    private string _membersStatus = string.Empty;
     private string _memberPageInput = "1";
+    private int _membersPageToken;
+    private int? _membersLastPageWithRows;
+    private bool _membersTruncated;
     private readonly Action<GroupMemberItem>? _openMemberProfile;
     private bool _isBusy;
     private string? _errorMessage;
@@ -214,6 +217,12 @@ public sealed class GroupViewModel : ViewModelBase
                 OnPropertyChanged(nameof(SelectedGroupUrl));
                 OnPropertyChanged(nameof(MembersSummary));
                 RaiseCommandStates();
+                _membersTruncated = false;
+                _membersLastPageWithRows = null;
+                _membersStatus = string.Empty;
+                _membersPage = 0;
+                Members = new ObservableCollection<GroupMemberItem>();
+                RaiseMemberListChanged();
                 Instances = new ObservableCollection<GroupInstance>();
                 OnPropertyChanged(nameof(NoInstances));
                 _ = LoadGroupMembersAsync();
@@ -535,6 +544,7 @@ public sealed class GroupViewModel : ViewModelBase
         {
             if (SetProperty(ref _memberSearchText, value))
             {
+                OnPropertyChanged(nameof(HasMemberSearchText));
                 SearchMembersCommand.RaiseCanExecuteChanged();
             }
         }
@@ -558,6 +568,9 @@ public sealed class GroupViewModel : ViewModelBase
 
     public bool IsMemberSearchActive => _isMemberSearchActive;
 
+    /// <summary>False while the search box is empty, so the popup can show its hint text.</summary>
+    public bool HasMemberSearchText => !string.IsNullOrWhiteSpace(MemberSearchText);
+
     public int MemberPageNumber => _membersPage + 1;
 
     public int MemberPageCount
@@ -565,9 +578,20 @@ public sealed class GroupViewModel : ViewModelBase
         get
         {
             var total = SelectedGroup?.MemberCount ?? 0;
-            return total <= 0 ? 1 : (total + MembersPageSize - 1) / MembersPageSize;
+            var pages = total <= 0 ? 1 : (total + MembersPageSize - 1) / MembersPageSize;
+            // VRChat answers some pages with an empty list even though the group reports
+            // more members, so the pager stops at the last page that actually had rows.
+            if (_membersTruncated && _membersLastPageWithRows is { } lastPage)
+            {
+                pages = Math.Min(pages, lastPage + 1);
+            }
+
+            return Math.Max(1, pages);
         }
     }
+
+    /// <summary>Bumped on every loaded page; the popup scrolls to the top when it changes.</summary>
+    public int MembersPageToken => _membersPageToken;
 
     public string MembersPageText => IsMemberSearchActive ? string.Empty : $"Page {MemberPageNumber} of {MemberPageCount}";
 
@@ -586,10 +610,10 @@ public sealed class GroupViewModel : ViewModelBase
     public bool CanGoToNextMembersPage => !IsMemberSearchActive
         && !IsLoadingMembers
         && Members.Count > 0
-        && (SelectedGroup?.MemberCount ?? 0) > MemberPageNumber * MembersPageSize;
+        && _membersPage + 1 < MemberPageCount;
 
-    public string MembersSummary => _memberSearchStatus.Length > 0
-        ? _memberSearchStatus
+    public string MembersSummary => _membersStatus.Length > 0
+        ? _membersStatus
         : DescribeMembers(
             Members.Count,
             SelectedGroup?.MemberCount ?? 0,
@@ -769,7 +793,7 @@ public sealed class GroupViewModel : ViewModelBase
         _membersPage = 0;
         _isMemberSearchActive = false;
         _lastMemberSearch = null;
-        _memberSearchStatus = string.Empty;
+        _membersStatus = string.Empty;
         MemberSearchText = string.Empty;
         MemberPageInput = "1";
         Instances = new ObservableCollection<GroupInstance>();
@@ -1150,6 +1174,11 @@ public sealed class GroupViewModel : ViewModelBase
         IsBusy = true;
         ErrorMessage = null;
         IsLoadingMembers = true;
+        if (page == 0)
+        {
+            _membersTruncated = false;
+            _membersLastPageWithRows = null;
+        }
 
         try
         {
@@ -1159,12 +1188,42 @@ public sealed class GroupViewModel : ViewModelBase
                 return;
             }
 
+            var expected = (SelectedGroup?.MemberCount ?? 0) - page * MembersPageSize;
+            if (members.Count == 0 && expected > 0)
+            {
+                // VRChat reports the members are there but sends none back. Large groups
+                // only expose their first few hundred members, so keep the page that did
+                // load and say why nothing further arrives instead of blanking the list
+                // and leaving a pager that still promises hundreds of pages.
+                if (_membersLastPageWithRows is { } lastPage && page == lastPage + 1)
+                {
+                    MarkRosterLimit();
+                }
+                else
+                {
+                    _membersStatus = string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"VRChat returned no members for page {page + 1:N0}.");
+                }
+
+                RaiseMemberListChanged();
+                return;
+            }
+
             _membersPage = page;
+            _membersLastPageWithRows = page;
+            _membersPageToken++;
             _isMemberSearchActive = false;
             _lastMemberSearch = null;
-            _memberSearchStatus = string.Empty;
+            _membersStatus = string.Empty;
             SetMemberRows(members.Select(member => new GroupMemberItem(member, _openMemberProfile)).ToList());
             RaiseMemberListChanged();
+        }
+        catch (VrcApiException ex) when (ex.StatusCode is 401 or 403 && _membersLastPageWithRows is not null)
+        {
+            // VRChat answers deeper pages of a big roster with "You're not allowed to view
+            // membership details"; that is a limit on the roster, not a broken request.
+            MarkRosterLimit();
         }
         catch (VrcApiException ex)
         {
@@ -1189,6 +1248,28 @@ public sealed class GroupViewModel : ViewModelBase
             IsBusy = false;
             RaiseCommandStates();
         }
+    }
+
+    /// <summary>
+    /// Stops the pager at the last page that had rows and says why nothing further loads:
+    /// VRChat reports the full member count but only serves the first few hundred members.
+    /// </summary>
+    private void MarkRosterLimit()
+    {
+        if (_membersLastPageWithRows is not { } lastPage)
+        {
+            return;
+        }
+
+        _membersTruncated = true;
+        _membersStatus = DescribeMembers(
+            Members.Count,
+            SelectedGroup?.MemberCount ?? 0,
+            false,
+            _membersPage) +
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $" — VRChat only returns the first {(lastPage + 1) * MembersPageSize:N0} members of this group to your account.");
     }
 
     /// <summary>
@@ -1220,7 +1301,7 @@ public sealed class GroupViewModel : ViewModelBase
         _membersPage = 0;
         _isMemberSearchActive = true;
         _lastMemberSearch = query;
-        _memberSearchStatus = string.Empty;
+        _membersStatus = string.Empty;
         RaiseMemberListChanged();
 
         try
@@ -1232,24 +1313,24 @@ public sealed class GroupViewModel : ViewModelBase
             }
 
             SetMemberRows(result.Members.Select(member => new GroupMemberItem(member, _openMemberProfile)).ToList());
-            _memberSearchStatus = result.Status;
+            _membersStatus = result.Status;
         }
         catch (VrcApiException ex)
         {
-            _memberSearchStatus = $"Could not search this group's members: {ex.Message}";
+            _membersStatus = $"Could not search this group's members: {ex.Message}";
         }
         catch (HttpRequestException)
         {
-            _memberSearchStatus = "Could not reach VRChat to search this group's members.";
+            _membersStatus = "Could not reach VRChat to search this group's members.";
         }
         catch (TaskCanceledException)
         {
-            _memberSearchStatus = "The member search timed out. Try again.";
+            _membersStatus = "The member search timed out. Try again.";
         }
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
-            _memberSearchStatus = "Could not search this group's members.";
+            _membersStatus = "Could not search this group's members.";
         }
         finally
         {
@@ -1261,43 +1342,43 @@ public sealed class GroupViewModel : ViewModelBase
 
     private sealed record MemberSearchResult(IReadOnlyList<GroupMember> Members, string Status);
 
+    private sealed record MemberNameSearch(IReadOnlyList<GroupMember> Members, bool Forbidden);
+
     /// <summary>How many resolved accounts the fallback checks against the roster.</summary>
     private const int MaxUserSearchChecks = 5;
 
     /// <summary>
-    /// Display-name match first, then username or partial user id. The fallback resolves the
-    /// query to real VRChat accounts and asks the group for each one, so a member whose
-    /// display name differs from their username is still found.
+    /// Finds members for a query. Display names go through VRChat's member search; a miss is
+    /// resolved as a username or user id through the public user endpoints and then matched
+    /// against the roster by account id. The single-member endpoint is only a shortcut: on
+    /// groups where this account may not read membership details it answers 403, which used
+    /// to fail the whole search with "You're not allowed to view membership details."
     /// </summary>
     private async Task<MemberSearchResult> FindMembersAsync(string groupId, string query)
     {
-        if (query.StartsWith("usr_", StringComparison.OrdinalIgnoreCase))
+        var byName = await SearchMembersByNameAsync(groupId, query);
+        if (byName.Members.Count > 0)
         {
-            var member = await _api.GetGroupMemberAsync(groupId, query);
-            return member is null
-                ? new MemberSearchResult(Array.Empty<GroupMember>(), string.Empty)
-                : new MemberSearchResult(new[] { member }, string.Empty);
-        }
-
-        var byName = await _api.SearchGroupMembersAsync(groupId, query);
-        if (byName.Count > 0)
-        {
-            return new MemberSearchResult(byName, string.Empty);
+            return new MemberSearchResult(byName.Members, string.Empty);
         }
 
         var candidates = await ResolveUserCandidatesAsync(query);
         var found = new List<GroupMember>();
         VrcUser? firstResolved = null;
-        foreach (var (userId, user) in candidates)
+        foreach (var user in candidates)
         {
             firstResolved ??= user;
-            var member = await _api.GetGroupMemberAsync(groupId, userId);
-            if (member is null)
+            foreach (var member in await FindMemberRowsAsync(groupId, user))
             {
-                continue;
+                if (found.All(existing => !string.Equals(
+                        existing.EffectiveUserId,
+                        member.EffectiveUserId,
+                        StringComparison.OrdinalIgnoreCase)))
+                {
+                    found.Add(member);
+                }
             }
 
-            found.Add(member);
             if (found.Count >= MaxUserSearchChecks)
             {
                 break;
@@ -1317,33 +1398,113 @@ public sealed class GroupViewModel : ViewModelBase
                     "matched by username or user ID"));
         }
 
+        if (firstResolved is not null)
+        {
+            return new MemberSearchResult(
+                Array.Empty<GroupMember>(),
+                byName.Forbidden
+                    ? $"“{DescribeUser(firstResolved)}” is on VRChat, but this account may not view this group's membership details."
+                    : $"“{DescribeUser(firstResolved)}” is not a member of this group.");
+        }
+
         return new MemberSearchResult(
             Array.Empty<GroupMember>(),
-            firstResolved is null
-                ? string.Empty
-                : $"“{DescribeUser(firstResolved)}” is not a member of this group.");
+            byName.Forbidden
+                ? "VRChat does not let this account search this group's members. Open the group on vrchat.com to browse the roster."
+                : string.Empty);
     }
 
-    /// <summary>VRChat user ids the query could mean, best guess first.</summary>
-    private async Task<IReadOnlyList<(string UserId, VrcUser? User)>> ResolveUserCandidatesAsync(string query)
+    /// <summary>
+    /// Display-name search that reports the membership-details wall instead of throwing, so a
+    /// blocked search still explains itself.
+    /// </summary>
+    private async Task<MemberNameSearch> SearchMembersByNameAsync(string groupId, string query)
     {
-        var candidates = new List<(string UserId, VrcUser? User)>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        // A user id pasted without its usr_ prefix is still worth one lookup.
-        if (LooksLikeUserId(query) && seen.Add("usr_" + query))
+        var text = query.Trim().TrimStart('@');
+        if (text.Length < 3)
         {
-            candidates.Add(("usr_" + query, null));
+            return new MemberNameSearch(Array.Empty<GroupMember>(), false);
         }
 
         try
         {
-            var users = await _api.SearchUserListAsync(query, MaxUserSearchChecks);
-            foreach (var user in users)
+            return new MemberNameSearch(await _api.SearchGroupMembersAsync(groupId, text), false);
+        }
+        catch (VrcApiException ex) when (ex.StatusCode is 401 or 403)
+        {
+            return new MemberNameSearch(Array.Empty<GroupMember>(), true);
+        }
+    }
+
+    /// <summary>Roster rows for one VRChat account: the exact member lookup, then a name search.</summary>
+    private async Task<IReadOnlyList<GroupMember>> FindMemberRowsAsync(string groupId, VrcUser user)
+    {
+        var direct = await TryGetGroupMemberAsync(groupId, user.Id);
+        if (direct is not null)
+        {
+            return new[] { direct };
+        }
+
+        var name = !string.IsNullOrWhiteSpace(user.DisplayName) ? user.DisplayName : user.Username;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return Array.Empty<GroupMember>();
+        }
+
+        var results = (await SearchMembersByNameAsync(groupId, name)).Members;
+        return results
+            .Where(member =>
+                string.Equals(member.EffectiveUserId, user.Id, StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(user.Username) &&
+                 string.Equals(member.User?.Username, user.Username, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+    }
+
+    /// <summary>The single-member lookup, treating the group's 401/403 as "not readable".</summary>
+    private async Task<GroupMember?> TryGetGroupMemberAsync(string groupId, string userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _api.GetGroupMemberAsync(groupId, userId);
+        }
+        catch (VrcApiException ex) when (ex.StatusCode is 401 or 403 or 404)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>VRChat accounts the query could mean, best guess first.</summary>
+    private async Task<IReadOnlyList<VrcUser>> ResolveUserCandidatesAsync(string query)
+    {
+        var candidates = new List<VrcUser>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // A user id copied from a profile is read through the public user endpoint, which
+        // every account may use, rather than the group's membership endpoint.
+        var userId = query.StartsWith("usr_", StringComparison.OrdinalIgnoreCase)
+            ? query
+            : LooksLikeUserId(query) ? "usr_" + query : null;
+        if (userId is not null)
+        {
+            var user = await TryGetUserAsync(userId);
+            if (user is not null && seen.Add(user.Id))
+            {
+                candidates.Add(user);
+            }
+        }
+
+        try
+        {
+            foreach (var user in await _api.SearchUserListAsync(query.TrimStart('@'), MaxUserSearchChecks))
             {
                 if (!string.IsNullOrWhiteSpace(user.Id) && seen.Add(user.Id))
                 {
-                    candidates.Add((user.Id, user));
+                    candidates.Add(user);
                 }
             }
         }
@@ -1354,6 +1515,19 @@ public sealed class GroupViewModel : ViewModelBase
         }
 
         return candidates;
+    }
+
+    private async Task<VrcUser?> TryGetUserAsync(string userId)
+    {
+        try
+        {
+            return await _api.GetUserAsync(userId);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            return null;
+        }
     }
 
     /// <summary>True for text shaped like a user id, with or without the usr_ prefix.</summary>
@@ -1375,7 +1549,7 @@ public sealed class GroupViewModel : ViewModelBase
     private async Task ClearMemberSearchAsync()
     {
         MemberSearchText = string.Empty;
-        _memberSearchStatus = string.Empty;
+        _membersStatus = string.Empty;
         if (SelectedGroup is null)
         {
             return;
@@ -1385,9 +1559,9 @@ public sealed class GroupViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Swaps the roster rows in place. Replacing the whole collection empties the list for
-    /// a moment, which collapses its height and snaps the popup back to the top; updating
-    /// row by row keeps the scroll position when Next, Previous or a jump loads a page.
+    /// Swaps the roster rows in place. Rebuilding the collection empties the list for a
+    /// frame and makes the popup flicker, so rows are replaced one by one and the page
+    /// token scrolls the popup to the top once the new page is in place.
     /// </summary>
     private void SetMemberRows(IReadOnlyList<GroupMemberItem> rows)
     {
@@ -1420,6 +1594,7 @@ public sealed class GroupViewModel : ViewModelBase
         OnPropertyChanged(nameof(MembersSummary));
         OnPropertyChanged(nameof(MembersPageText));
         OnPropertyChanged(nameof(MembersPageCountText));
+        OnPropertyChanged(nameof(MembersPageToken));
         OnPropertyChanged(nameof(MemberPageNumber));
         OnPropertyChanged(nameof(MemberPageCount));
         OnPropertyChanged(nameof(IsMemberSearchActive));

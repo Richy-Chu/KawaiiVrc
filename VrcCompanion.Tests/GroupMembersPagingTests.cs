@@ -168,7 +168,7 @@ public class GroupMembersPagingTests
     }
 
     [Fact]
-    public async Task NextKeepsTheSameCollectionSoThePopupStaysScrolled()
+    public async Task NextBumpsThePageTokenSoThePopupScrollsToTheTop()
     {
         using var handler = new GroupMemberTestHandler(total: 250);
         using var api = new VrcApiClient(null, handler);
@@ -178,15 +178,44 @@ public class GroupMembersPagingTests
         };
         await SettleAsync(vm);
         var firstPage = vm.Members;
+        var firstToken = vm.MembersPageToken;
 
         vm.NextMembersPageCommand.Execute(null);
         await SettleAsync(vm);
 
-        // Swapping the collection empties the list for a frame and snaps the popup to
-        // the top, so the same collection is updated row by row instead.
+        // The popup scrolls to the top whenever this token changes, so a new page is
+        // read from its first member instead of from wherever the pager was left.
+        Assert.True(vm.MembersPageToken > firstToken);
         Assert.Same(firstPage, vm.Members);
         Assert.Equal(100, vm.Members.Count);
         Assert.Equal("Member 0100", vm.Members[0].DisplayName);
+    }
+
+    [Fact]
+    public async Task EmptyPagesStopThePagerAtWhatVrchatReturns()
+    {
+        using var handler = new GroupMemberTestHandler(total: 56789) { Viewable = 300 };
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 56789 }
+        };
+        await SettleAsync(vm);
+
+        vm.NextMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+        vm.NextMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+        Assert.Equal("Page 3 of 568", vm.MembersPageText);
+
+        // VRChat keeps saying there are 56,789 members but sends nothing past 300.
+        vm.NextMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+
+        Assert.Equal(100, vm.Members.Count);
+        Assert.Equal("Page 3 of 3", vm.MembersPageText);
+        Assert.False(vm.CanGoToNextMembersPage);
+        Assert.Contains("VRChat only returns the first 300 members", vm.MembersSummary);
     }
 
     private static async Task SettleAsync(GroupViewModel vm)
