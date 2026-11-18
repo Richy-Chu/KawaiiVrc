@@ -116,6 +116,73 @@ public class GroupMemberSearchTests
         Assert.Equal(string.Empty, vm.MemberSearchText);
     }
 
+    [Fact]
+    public async Task UsernameFallsBackToVrchatUserSearchAndMembership()
+    {
+        using var handler = new GroupMemberTestHandler(total: 250);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
+        };
+        await SettleAsync(vm);
+
+        // "member42" is the account username: their display name is "Member 0042",
+        // which the display-name search cannot match.
+        vm.MemberSearchText = "member42";
+        vm.SearchMembersCommand.Execute(null);
+        await SettleAsync(vm);
+
+        Assert.Single(vm.Members);
+        Assert.Equal("usr_42", vm.Members[0].UserId);
+        Assert.Equal("Member 0042", vm.Members[0].DisplayName);
+        Assert.Equal(
+            "1 member matches “member42” — matched by username or user ID",
+            vm.MembersSummary);
+        Assert.Contains("usr_42", handler.MemberLookups);
+    }
+
+    [Fact]
+    public async Task UsernameOutsideTheGroupSaysTheyAreNotAMember()
+    {
+        using var handler = new GroupMemberTestHandler(total: 250);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
+        };
+        await SettleAsync(vm);
+
+        vm.MemberSearchText = "stranger";
+        vm.SearchMembersCommand.Execute(null);
+        await SettleAsync(vm);
+
+        Assert.Empty(vm.Members);
+        Assert.Equal(
+            "“Stranger Danger (@stranger)” is not a member of this group.",
+            vm.MembersSummary);
+    }
+
+    [Fact]
+    public async Task PartialUserIdIsTriedAsAUserId()
+    {
+        using var handler = new GroupMemberTestHandler(total: 250);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
+        };
+        await SettleAsync(vm);
+
+        vm.MemberSearchText = "a1b2c3";
+        vm.SearchMembersCommand.Execute(null);
+        await SettleAsync(vm);
+
+        Assert.Contains("usr_a1b2c3", handler.MemberLookups);
+        Assert.Empty(vm.Members);
+        Assert.Equal("No members match “a1b2c3” in this group.", vm.MembersSummary);
+    }
+
     private static async Task SettleAsync(GroupViewModel vm)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);

@@ -25,6 +25,16 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
 
     public List<string> Searches { get; } = new();
 
+    public List<string> UserSearches { get; } = new();
+
+    public List<string> MemberLookups { get; } = new();
+
+    public const string StrangerId = "usr_stranger";
+    public const string StrangerName = "Stranger Danger";
+    public const string StrangerUsername = "stranger";
+
+    public static string UserName(int index) => $"member{index}";
+
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
@@ -43,9 +53,50 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
             return Json(new { results = matches });
         }
 
+        if (path.EndsWith("/users", StringComparison.Ordinal))
+        {
+            var text = ReadString(query, "search");
+            UserSearches.Add(text);
+            var users = new List<object>();
+            foreach (var index in Enumerable.Range(0, _total))
+            {
+                if (users.Count >= 5)
+                {
+                    break;
+                }
+
+                if (UserName(index).Contains(text, StringComparison.OrdinalIgnoreCase) ||
+                    MemberName(index).Contains(text, StringComparison.OrdinalIgnoreCase))
+                {
+                    users.Add(new
+                    {
+                        id = $"usr_{index}",
+                        displayName = MemberName(index),
+                        username = UserName(index)
+                    });
+                }
+            }
+
+            // A real VRChat account that simply is not in this group, so the fallback can
+            // prove it checked membership instead of giving up on the name search.
+            if (StrangerName.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+                StrangerUsername.Contains(text, StringComparison.OrdinalIgnoreCase))
+            {
+                users.Add(new
+                {
+                    id = StrangerId,
+                    displayName = StrangerName,
+                    username = StrangerUsername
+                });
+            }
+
+            return Json(users);
+        }
+
         if (path.Contains("/members/", StringComparison.Ordinal))
         {
             var id = path[(path.LastIndexOf('/') + 1)..];
+            MemberLookups.Add(id);
             var index = Enumerable.Range(0, _total)
                 .FirstOrDefault(candidate => string.Equals($"usr_{candidate}", id, StringComparison.Ordinal));
             if (index == 0 && !string.Equals(id, "usr_0", StringComparison.Ordinal))

@@ -52,4 +52,16 @@ public class GroupMembersSummaryTests
         => Assert.Equal(
             "No members match “bob” in this group.",
             GroupViewModel.DescribeMembers(0, 27812, false, 0, searchQuery: "bob"));
+
+    [Fact]
+    public void SearchInFlightSaysItIsSearching()
+        => Assert.Equal(
+            "Searching for “bob”…",
+            GroupViewModel.DescribeMembers(100, 27812, true, 0, searchQuery: "bob"));
+
+    [Fact]
+    public void SearchMatchCanSayHowItMatched()
+        => Assert.Equal(
+            "1 member matches “bob” — matched by username or user ID",
+            GroupViewModel.DescribeMembers(1, 27812, false, 0, "bob", "matched by username or user ID"));
 }

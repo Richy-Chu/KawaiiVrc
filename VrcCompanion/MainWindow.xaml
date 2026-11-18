@@ -3567,20 +3567,51 @@
                                     <StackPanel Orientation="Horizontal"
                                                 Margin="0,6,0,0"
                                                 Visibility="{Binding DataContext.GroupViewModel.IsMemberSearchActive, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolToVis}}">
+                                        <Button Content="First"
+                                                Style="{StaticResource SecondaryButton}"
+                                                Padding="9,5"
+                                                FontSize="10.5"
+                                                ToolTip="Go to the first page"
+                                                Command="{Binding DataContext.GroupViewModel.FirstMembersPageCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                                         <Button Content="Previous"
                                                 Style="{StaticResource SecondaryButton}"
-                                                Padding="10,5"
+                                                Padding="9,5"
                                                 FontSize="10.5"
+                                                Margin="4,0,0,0"
                                                 Command="{Binding DataContext.GroupViewModel.PreviousMembersPageCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
-                                        <TextBlock Text="{Binding DataContext.GroupViewModel.MembersPageText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        <TextBox Text="{Binding DataContext.GroupViewModel.MemberPageInput, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                                                 Style="{StaticResource InputBox}"
+                                                 Width="46"
+                                                 Padding="6,4"
+                                                 Margin="8,0,0,0"
+                                                 FontSize="10.5"
+                                                 TextAlignment="Center"
+                                                 VerticalContentAlignment="Center"
+                                                 AutomationProperties.AutomationId="GroupMemberPageBox"
+                                                 AutomationProperties.Name="Member page number"
+                                                 AutomationProperties.HelpText="{Binding DataContext.GroupViewModel.MembersPageText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                 ToolTip="Type a page number and press Enter">
+                                            <TextBox.InputBindings>
+                                                <KeyBinding Key="Enter"
+                                                            Command="{Binding DataContext.GroupViewModel.JumpToMembersPageCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                            </TextBox.InputBindings>
+                                        </TextBox>
+                                        <TextBlock Text="{Binding DataContext.GroupViewModel.MembersPageCountText, RelativeSource={RelativeSource AncestorType=Window}}"
                                                    Style="{StaticResource MutedText}"
                                                    VerticalAlignment="Center"
-                                                   Margin="10,0" />
+                                                   Margin="6,0,8,0" />
                                         <Button Content="Next"
                                                 Style="{StaticResource SecondaryButton}"
-                                                Padding="10,5"
+                                                Padding="9,5"
                                                 FontSize="10.5"
                                                 Command="{Binding DataContext.GroupViewModel.NextMembersPageCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                        <Button Content="Last"
+                                                Style="{StaticResource SecondaryButton}"
+                                                Padding="9,5"
+                                                FontSize="10.5"
+                                                Margin="4,0,0,0"
+                                                ToolTip="Go to the last page"
+                                                Command="{Binding DataContext.GroupViewModel.LastMembersPageCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                                     </StackPanel>
                                 </StackPanel>
                             </ScrollViewer>

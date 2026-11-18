@@ -103,6 +103,92 @@ public class GroupMembersPagingTests
         Assert.Equal("Showing 1–3 of 3 members", vm.MembersSummary);
     }
 
+    [Fact]
+    public async Task TypedPageNumberJumpsStraightToThatPage()
+    {
+        using var handler = new GroupMemberTestHandler(total: 56900);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 56900 }
+        };
+        await SettleAsync(vm);
+
+        vm.MemberPageInput = "500";
+        Assert.True(vm.JumpToMembersPageCommand.CanExecute(null));
+        vm.JumpToMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+
+        Assert.Equal("Page 500 of 569", vm.MembersPageText);
+        Assert.Equal("500", vm.MemberPageInput);
+        Assert.Equal("Showing 49,901–50,000 of 56,900 members", vm.MembersSummary);
+        Assert.Equal(new[] { 0, 49900 }, handler.Offsets);
+    }
+
+    [Fact]
+    public async Task FirstAndLastReachTheEndsOfTheRoster()
+    {
+        using var handler = new GroupMemberTestHandler(total: 56900);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 56900 }
+        };
+        await SettleAsync(vm);
+
+        vm.LastMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+        Assert.Equal("Page 569 of 569", vm.MembersPageText);
+        Assert.False(vm.CanGoToNextMembersPage);
+
+        vm.FirstMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+        Assert.Equal("Page 1 of 569", vm.MembersPageText);
+        Assert.False(vm.CanGoToPreviousMembersPage);
+        Assert.Equal(new[] { 0, 56800, 0 }, handler.Offsets);
+    }
+
+    [Fact]
+    public async Task OutOfRangePageNumberClampsToTheLastPage()
+    {
+        using var handler = new GroupMemberTestHandler(total: 56900);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 56900 }
+        };
+        await SettleAsync(vm);
+
+        vm.MemberPageInput = "9999";
+        vm.JumpToMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+
+        Assert.Equal("Page 569 of 569", vm.MembersPageText);
+        Assert.Equal(new[] { 0, 56800 }, handler.Offsets);
+    }
+
+    [Fact]
+    public async Task NextKeepsTheSameCollectionSoThePopupStaysScrolled()
+    {
+        using var handler = new GroupMemberTestHandler(total: 250);
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
+        };
+        await SettleAsync(vm);
+        var firstPage = vm.Members;
+
+        vm.NextMembersPageCommand.Execute(null);
+        await SettleAsync(vm);
+
+        // Swapping the collection empties the list for a frame and snaps the popup to
+        // the top, so the same collection is updated row by row instead.
+        Assert.Same(firstPage, vm.Members);
+        Assert.Equal(100, vm.Members.Count);
+        Assert.Equal("Member 0100", vm.Members[0].DisplayName);
+    }
+
     private static async Task SettleAsync(GroupViewModel vm)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);
