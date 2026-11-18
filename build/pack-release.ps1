@@ -60,6 +60,20 @@
 .PARAMETER SkipFetch
     Skips downloading previous releases, so the new release is built without a delta.
 
+.PARAMETER VerifyFrom
+    Release to update from when checking the delta chain. Defaults to the release two
+    versions back, so the check always covers a skipped version.
+
+.PARAMETER SkipVerify
+    Skips the post-publish checks: feed/asset parity and the delta chain proof.
+
+.PARAMETER VerifyOnly
+    Runs only the post-publish checks against the published releases, without building,
+    packing or uploading. Useful after the fact or for a scheduled check.
+
+.PARAMETER AllowDirty
+    Publishes even though the working tree has uncommitted changes.
+
 .NOTES
     The repository comes from <AssemblyMetadata Include="UpdateRepository" ...> in
     VrcCompanion.csproj, so the updater and this script always agree.
@@ -75,12 +89,20 @@ param(
     [switch]$FrameworkDependent,
     [switch]$SkipPublish,
     [switch]$SkipUpload,
-    [switch]$SkipFetch
+    [switch]$SkipFetch,
+    [string]$VerifyFrom,
+    [switch]$SkipVerify,
+    [switch]$VerifyOnly,
+    [switch]$AllowDirty
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
+
+# Version ordering must handle prereleases (1.0.0-beta), which [version] rejects.
+. (Join-Path $PSScriptRoot "semver.ps1")
+
 $project = Join-Path $root "VrcCompanion\VrcCompanion.csproj"
 $publishDir = Join-Path $root "artifacts\publish"
 $releasesDir = Join-Path $root "artifacts\releases"
@@ -128,6 +150,141 @@ function Get-CsprojValue([string]$Pattern) {
     return $match.Matches[0].Groups[1].Value
 }
 
+# A published release is a promise: the tag names a commit that contains the built code,
+# and the feed it serves can be resolved. Check both before anything is uploaded.
+function Assert-ReleasePreconditions {
+    $projectVersion = Get-CsprojValue '<Version>([^<]+)</Version>'
+    if ($projectVersion -ne $Version) {
+        throw "VrcCompanion.csproj is at $projectVersion but the release is $Version. Bump <Version> first so the tag matches the build."
+    }
+
+    if ($AllowDirty) {
+        Write-Host "  Working tree check skipped (-AllowDirty)." -ForegroundColor Yellow
+        return
+    }
+
+    $status = Invoke-NativeCapture "git" @("status", "--porcelain")
+    $dirty = @($status.Output | Where-Object { "$_".Trim() })
+    if ($status.ExitCode -ne 0) {
+        throw "git status failed; cannot confirm the tree is clean."
+    }
+
+    if ($dirty.Count -gt 0) {
+        throw ("Working tree has uncommitted changes; commit or stash before publishing:" +
+            [Environment]::NewLine + ($dirty -join [Environment]::NewLine) +
+            [Environment]::NewLine + "Use -AllowDirty to override.")
+    }
+
+    $upstream = Invoke-NativeCapture "git" @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    if ($upstream.ExitCode -ne 0) {
+        Write-Host "  No upstream branch; skipping the push check." -ForegroundColor DarkGray
+        return
+    }
+
+    $ahead = Invoke-NativeCapture "git" @("rev-list", "--count", "@{u}..HEAD")
+    $count = "$($ahead.Output)".Trim()
+    if ($ahead.ExitCode -ne 0 -or $count -ne "0") {
+        throw "HEAD has $count commit(s) that are not pushed; the release would tag code GitHub does not have."
+    }
+}
+
+# Velopack merges the feeds of the last ten releases, so a release whose assets are not
+# exactly what its own feed lists breaks chaining for everyone who skipped a version.
+function Assert-ReleaseAssetsMatchFeeds {
+    $list = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", "20", "--json", "tagName", "--jq", ".[].tagName")
+    if ($list.ExitCode -ne 0 -or -not $list.Output) {
+        Write-Host "  Could not list releases; skipping the feed/asset check." -ForegroundColor DarkGray
+        return
+    }
+
+    $failures = New-Object System.Collections.Generic.List[string]
+    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("kawaiivrc-feed-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+    try {
+        foreach ($tag in $list.Output) {
+            $tag = "$tag".Trim()
+            if (-not $tag) { continue }
+
+            $assetOutput = Invoke-NativeCapture "gh" @("release", "view", $tag, "--repo", $Repo, "--json", "assets", "--jq", ".assets[].name")
+            $assets = @($assetOutput.Output | ForEach-Object { "$_".Trim() } | Where-Object { $_ -like "*.nupkg" } | Sort-Object)
+
+            $download = Invoke-NativeCapture "gh" @("release", "download", $tag, "--repo", $Repo, "--pattern", "releases.win.json", "--dir", $scratch, "--clobber")
+            if ($download.ExitCode -ne 0) {
+                Write-Host "  $tag has no feed; skipped." -ForegroundColor DarkGray
+                continue
+            }
+
+            $feed = Get-Content (Join-Path $scratch "releases.win.json") -Raw | ConvertFrom-Json
+            $feedNames = @($feed.Assets | ForEach-Object { $_.FileName } | Where-Object { $_ -like "*.nupkg" } | Sort-Object)
+
+            $diff = Compare-Object -ReferenceObject $feedNames -DifferenceObject $assets
+            if ($diff) {
+                $missing = ($diff | Where-Object { $_.SideIndicator -eq "<=" } | ForEach-Object { $_.InputObject }) -join ", "
+                $extra = ($diff | Where-Object { $_.SideIndicator -eq "=>" } | ForEach-Object { $_.InputObject }) -join ", "
+                $failures.Add("$tag : feed lists [$missing], release also hosts [$extra]")
+            }
+            else {
+                Write-Host "  $tag : $(@($feedNames).Count) nupkg(s) match the feed." -ForegroundColor DarkGray
+            }
+        }
+    }
+    finally {
+        Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($failures.Count -gt 0) {
+        throw ("Release assets do not match their feeds:" + [Environment]::NewLine + ($failures -join [Environment]::NewLine))
+    }
+}
+
+function Invoke-ChainVerification([string]$TargetVersion) {
+    $verifier = Join-Path $PSScriptRoot "ReleaseVerifier\ReleaseVerifier.csproj"
+    if (-not (Test-Path $verifier)) {
+        throw "build/ReleaseVerifier/ReleaseVerifier.csproj is missing; cannot verify the delta chain."
+    }
+
+    $list = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", "20", "--json", "tagName", "--jq", ".[].tagName")
+    $versions = @($list.Output |
+        ForEach-Object { "$_".Trim().TrimStart("v") } |
+        Where-Object { $_ -match '^\d+\.\d+\.\d+(-[0-9A-Za-z.\-]+)?(\+[0-9A-Za-z.\-]+)?$' })
+    $versions = @(Sort-Semver $versions)
+
+    $prior = @($versions | Where-Object { (Compare-Semver $_ $TargetVersion) -lt 0 })
+    $baseVersion = if ($VerifyFrom) { $VerifyFrom.TrimStart("v") } else { $null }
+    if ($baseVersion) {
+        if ($baseVersion -notin $versions) { throw "-VerifyFrom $baseVersion is not a published release." }
+    }
+    elseif ($prior.Count -ge 2) {
+        # Two releases back guarantees the check covers chaining across a skipped version.
+        $baseVersion = $prior[1]
+    }
+    elseif ($prior.Count -eq 1) {
+        $baseVersion = $prior[0]
+    }
+    else {
+        Write-Host "  No older release to update from; skipping the chain check." -ForegroundColor DarkGray
+        return
+    }
+
+    if ((Compare-Semver $baseVersion $TargetVersion) -ge 0) {
+        throw "-VerifyFrom $baseVersion must be older than $TargetVersion."
+    }
+
+    $expected = @($versions | Where-Object {
+        (Compare-Semver $_ $baseVersion) -gt 0 -and (Compare-Semver $_ $TargetVersion) -le 0
+    }).Count
+
+    Write-Host "Verifying $baseVersion -> $TargetVersion through $expected delta(s) on $Repo..." -ForegroundColor Cyan
+    $verifyExit = Invoke-Native "dotnet" @(
+        "run", "--project", $verifier, "-c", "Release", "--",
+        "--repo", $Repo, "--from", $baseVersion, "--target", $TargetVersion, "--expect", "$expected")
+    if ($verifyExit -ne 0) {
+        throw "Delta chain verification failed: $baseVersion -> $TargetVersion."
+    }
+
+    Write-Host "Chain verified: $baseVersion -> $TargetVersion applies deltas only." -ForegroundColor Green
+}
+
 if (-not $Version) {
     $Version = Get-CsprojValue '<Version>([^<]+)</Version>'
 }
@@ -147,6 +304,16 @@ if (-not $Repo) {
 
 if (-not $Repo) {
     throw "No repository given. Pass -Repo owner/name."
+}
+
+if ($VerifyOnly) {
+    Assert-ReleaseAssetsMatchFeeds
+    Invoke-ChainVerification -TargetVersion $Version
+    return
+}
+
+if (-not $SkipUpload) {
+    Assert-ReleasePreconditions
 }
 
 Write-Host "KawaiiVrc $Version  ->  $Repo" -ForegroundColor Cyan
@@ -285,5 +452,11 @@ if ($releaseExit -ne 0) { throw "gh release create failed with exit code $releas
 
 Write-Host ""
 Write-Host "Published $tag to $Repo." -ForegroundColor Green
+
+if (-not $SkipVerify) {
+    Assert-ReleaseAssetsMatchFeeds
+    Invoke-ChainVerification -TargetVersion $Version
+}
+
 Write-Host "Anyone on an installed build will see the update popup within a few minutes." -ForegroundColor Green
 Write-Host "Reminder: copies installed before the first Velopack release must run the Setup.exe in $releasesDir once by hand." -ForegroundColor Yellow
