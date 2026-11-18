@@ -9,10 +9,24 @@ namespace VrcCompanion.Services;
 internal static class LifecycleLog
 {
     private static readonly object Sync = new();
-    private static readonly string LogPath = Path.Combine(
+    private static readonly string DefaultPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "VrcCompanion",
         "lifecycle.log");
+
+    private static string? _path;
+
+    /// <summary>
+    /// Sends later entries to <paramref name="path"/> instead of the user's log. The
+    /// test assembly points this at a temp file so test runs stay out of the real one.
+    /// </summary>
+    public static void RedirectTo(string path)
+    {
+        lock (Sync)
+        {
+            _path = path;
+        }
+    }
 
     public static void Write(string message)
     {
@@ -20,9 +34,10 @@ internal static class LifecycleLog
         {
             lock (Sync)
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+                var path = _path ?? DefaultPath;
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 File.AppendAllText(
-                    LogPath,
+                    path,
                     $"[{DateTimeOffset.Now:O}] pid={Environment.ProcessId} {message}{Environment.NewLine}");
             }
         }
