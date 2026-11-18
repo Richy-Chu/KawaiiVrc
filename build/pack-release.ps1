@@ -179,13 +179,25 @@ function Test-ReleaseReadiness {
 
     $upstream = Invoke-NativeCapture "git" @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     if ($upstream.ExitCode -ne 0) {
+        # Only git saying there is no upstream is a skip. A repository git cannot read
+        # would otherwise pass as "nothing to push" and publish untagged code.
+        $upstreamText = (($upstream.Output | ForEach-Object { "$_" }) -join " ") -replace '\s+', ' '
+        if ($upstreamText -notmatch '(?i)no upstream configured') {
+            throw "Could not check the upstream branch (git exit $($upstream.ExitCode)): $upstreamText"
+        }
+
         Write-Host "  No upstream branch; skipping the push check." -ForegroundColor DarkGray
         return
     }
 
     $ahead = Invoke-NativeCapture "git" @("rev-list", "--count", "@{u}..HEAD")
     $count = "$($ahead.Output)".Trim()
-    if ($ahead.ExitCode -ne 0 -or $count -ne "0") {
+    if ($ahead.ExitCode -ne 0 -or $count -notmatch '^\d+$') {
+        # A failed count is not zero commits, and it is not unpushed commits either.
+        throw "Could not count unpushed commits (git exit $($ahead.ExitCode)): $count"
+    }
+
+    if ($count -ne "0") {
         throw "HEAD has $count commit(s) that are not pushed; the release would tag code GitHub does not have."
     }
 }

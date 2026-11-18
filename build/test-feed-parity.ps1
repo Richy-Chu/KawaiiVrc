@@ -4,7 +4,8 @@
 # or download that fails, and a tag check that errors are infrastructure or a refused build,
 # never a silent skip or a full-only release. A tag that already exists is refused for reuse,
 # and -SkipPublish packs the build already in artifacts/publish, so a sentinel left there
-# proves the run did not clear it.
+# proves the run did not clear it. A stub git makes the readiness checks answer for
+# themselves: only git's own "no upstream configured" may skip the push check.
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -151,8 +152,63 @@ function Write-VpkStub([string]$Directory, [bool]$Windows) {
     }
 }
 
+# Readiness reads git three ways: the dirty check, the upstream lookup and the unpushed
+# count. The publish cases force the version to match the csproj so those checks run.
+function Write-GitStub([string]$Directory, [bool]$Windows) {
+    if ($Windows) {
+        Write-Stub -Path (Join-Path $Directory "git.cmd") -NewLine "`r`n" -Lines @(
+            '@echo off',
+            'if /I "%1"=="status" exit /b 0',
+            'if /I "%1"=="rev-parse" goto rev_parse',
+            'if /I "%1"=="rev-list" goto rev_list',
+            'exit /b 0',
+            '',
+            ':rev_parse',
+            'if "%GIT_MODE%"=="upstream-error" goto upstream_error',
+            'if "%GIT_MODE%"=="no-upstream" goto no_upstream',
+            'echo origin/master',
+            'exit /b 0',
+            '',
+            ':no_upstream',
+            'echo fatal: no upstream configured for branch ''master'' 1>&2',
+            'exit /b 128',
+            '',
+            ':upstream_error',
+            'echo fatal: unable to read repository 1>&2',
+            'exit /b 128',
+            '',
+            ':rev_list',
+            'if "%GIT_MODE%"=="count-error" goto count_error',
+            'echo 0',
+            'exit /b 0',
+            '',
+            ':count_error',
+            'echo fatal: bad revision 1>&2',
+            'exit /b 128'
+        )
+        return
+    }
+
+    Write-Stub -Path (Join-Path $Directory "git") -NewLine "`n" -Lines @(
+        '#!/bin/sh',
+        'case "$1" in',
+        '  status) exit 0 ;;',
+        '  rev-parse)',
+        '    if [ "$GIT_MODE" = "no-upstream" ]; then echo "fatal: no upstream configured for branch master" >&2; exit 128; fi',
+        '    if [ "$GIT_MODE" = "upstream-error" ]; then echo "fatal: unable to read repository" >&2; exit 128; fi',
+        '    echo origin/master; exit 0 ;;',
+        '  rev-list)',
+        '    if [ "$GIT_MODE" = "count-error" ]; then echo "fatal: bad revision" >&2; exit 128; fi',
+        '    echo 0; exit 0 ;;',
+        'esac',
+        'exit 0'
+    )
+}
+
 $verifyArguments = @('-VerifyOnly', '-Version', '1.0.0', '-Repo', 'owner/repo')
 $publishArguments = @('-Version', $projectVersion, '-Repo', 'owner/repo', '-SkipPublish', '-AllowDirty', '-SkipVerify')
+# Same, without -AllowDirty, so the readiness checks run against the stub git.
+$readyArguments = @('-Version', $projectVersion, '-Repo', 'owner/repo', '-SkipPublish', '-SkipVerify')
 $fetchArguments = @('-Version', '1.0.0', '-Repo', 'owner/repo', '-SkipPublish', '-SkipUpload', '-SkipVerify')
 
 # Markers come from the plain messages, not the rendered error record: PowerShell wraps that
@@ -165,7 +221,11 @@ $checks = @(
     @{ Name = "delta-base download fails"; Mode = "base-download-fails"; Expected = 1; Marker = "refusing to build a delta from an incomplete base"; Arguments = $fetchArguments },
     @{ Name = "tag check errors"; Mode = "view-error"; Expected = 1; Marker = "Could not check whether v$projectVersion exists"; Arguments = $publishArguments },
     @{ Name = "absent tag publishes"; Mode = "view-absent"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $publishArguments },
-    @{ Name = "existing tag is refused"; Mode = "view-exists"; Expected = 1; Marker = "already exists on owner/repo. Bump the version instead of reusing a tag."; Arguments = $publishArguments }
+    @{ Name = "existing tag is refused"; Mode = "view-exists"; Expected = 1; Marker = "already exists on owner/repo. Bump the version instead of reusing a tag."; Arguments = $publishArguments },
+    @{ Name = "upstream check errors"; Mode = "view-absent"; GitMode = "upstream-error"; Expected = 1; Marker = "Could not check the upstream branch"; Arguments = $readyArguments },
+    @{ Name = "unpushed count errors"; Mode = "view-absent"; GitMode = "count-error"; Expected = 1; Marker = "Could not count unpushed commits"; Arguments = $readyArguments },
+    @{ Name = "no upstream still publishes"; Mode = "view-absent"; GitMode = "no-upstream"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments },
+    @{ Name = "clean tree publishes"; Mode = "view-absent"; GitMode = "clean"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments }
 )
 
 $savedPath = $env:PATH
@@ -173,11 +233,13 @@ $savedMode = $env:GH_MODE
 $savedState = $env:GH_STATE
 $savedOutDir = $env:VPK_OUT_DIR
 $savedVpkVersion = $env:VPK_VERSION
+$savedGitMode = $env:GIT_MODE
 $failures = 0
 
 try {
     Write-GhStub -Directory $shimDir -Windows $onWindows
     Write-VpkStub -Directory $shimDir -Windows $onWindows
+    Write-GitStub -Directory $shimDir -Windows $onWindows
     $env:PATH = "$shimDir$([System.IO.Path]::PathSeparator)$savedPath"
     $env:GH_STATE = Join-Path $shimDir "list-state"
     $env:VPK_OUT_DIR = $releasesDir
@@ -187,6 +249,10 @@ try {
     $stubPath = Join-Path $shimDir $(if ($onWindows) { "gh.cmd" } else { "gh" })
     $resolved = (Get-Command gh -ErrorAction SilentlyContinue).Source
     if ($resolved -ne $stubPath) { throw "gh resolves to '$resolved' instead of the stub at '$stubPath'." }
+
+    $gitStubPath = Join-Path $shimDir $(if ($onWindows) { "git.cmd" } else { "git" })
+    $resolvedGit = (Get-Command git -ErrorAction SilentlyContinue).Source
+    if ($resolvedGit -ne $gitStubPath) { throw "git resolves to '$resolvedGit' instead of the stub at '$gitStubPath'." }
 
     $shell = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
     $fileArguments = if ($onWindows) {
@@ -198,6 +264,7 @@ try {
 
     foreach ($check in $checks) {
         $env:GH_MODE = $check.Mode
+        $env:GIT_MODE = $check.GitMode
         Remove-Item $env:GH_STATE -ErrorAction SilentlyContinue
 
         # The failing cases write to stderr, which Windows PowerShell turns into a
@@ -240,6 +307,7 @@ finally {
     $env:GH_STATE = $savedState
     $env:VPK_OUT_DIR = $savedOutDir
     $env:VPK_VERSION = $savedVpkVersion
+    $env:GIT_MODE = $savedGitMode
     Remove-Item $shimDir -Recurse -Force -ErrorAction SilentlyContinue
 
     # The publish cases pack into artifacts/releases; leave nothing of the stub's behind.
