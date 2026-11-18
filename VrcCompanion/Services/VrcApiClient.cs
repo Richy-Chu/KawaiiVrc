@@ -3252,13 +3252,15 @@ public sealed class VrcApiClient : IDisposable
         _myGroupsCache = null;
     }
 
+    /// <summary>One page of members; VRChat returns at most 100 per request, so pass offset to continue.</summary>
     public async Task<IReadOnlyList<GroupMember>> GetGroupMembersAsync(
         string groupId,
+        int offset = 0,
         CancellationToken cancellationToken = default)
     {
         var body = await SendApiAsync(
             HttpMethod.Get,
-            $"groups/{Uri.EscapeDataString(groupId)}/members?n=100&offset=0",
+            $"groups/{Uri.EscapeDataString(groupId)}/members?n=100&offset={Math.Max(0, offset)}",
             null,
             cancellationToken);
         return DeserializeList<GroupMember>(body);

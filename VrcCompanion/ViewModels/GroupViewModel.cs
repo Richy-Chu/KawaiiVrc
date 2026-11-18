@@ -30,6 +30,9 @@ public sealed class GroupViewModel : ViewModelBase
     private Group? _selectedGroup;
     private ObservableCollection<GroupMember> _members = new();
     private bool _isLoadingMembers;
+    private bool _membersExhausted;
+
+    private const int MembersPageSize = 100;
     private bool _isBusy;
     private string? _errorMessage;
     private string _createName = string.Empty;
@@ -75,6 +78,7 @@ public sealed class GroupViewModel : ViewModelBase
         CloseCreateDialogCommand = Track(new RelayCommand(() => ShowCreateDialog = false));
         CloseGroupDetailsCommand = Track(new RelayCommand(() => SelectedGroup = null));
         RefreshMembersCommand = Track(new AsyncRelayCommand(LoadGroupMembersAsync, () => SelectedGroup is not null && !IsBusy));
+        LoadMoreMembersCommand = Track(new AsyncRelayCommand(LoadMoreGroupMembersAsync, () => CanLoadMoreMembers));
         OpenSelectedGroupCommand = Track(new RelayCommand(OpenSelectedGroupInBrowser, () => SelectedGroup is not null));
         OpenGroupCommand = Track(new RelayCommand<Group>(group => SelectedGroup = group, group => group is not null));
         SearchGroupsCommand = Track(new AsyncRelayCommand(
@@ -500,18 +504,28 @@ public sealed class GroupViewModel : ViewModelBase
             if (SetProperty(ref _isLoadingMembers, value))
             {
                 OnPropertyChanged(nameof(MembersSummary));
+                OnPropertyChanged(nameof(HasMoreMembers));
+                OnPropertyChanged(nameof(CanLoadMoreMembers));
+                RaiseCommandStates();
             }
         }
     }
 
     /// <summary>
-    /// The popup lists one page of members: VRChat's endpoint takes n=100 and does not
-    /// page further here, so say how many of the group's total are actually shown.
+    /// The popup shows one page of members at a time: VRChat's endpoint returns at most 100
+    /// per request, so say how many of the group's total are on screen.
     /// </summary>
     public string MembersSummary => DescribeMembers(
         Members.Count,
         SelectedGroup?.MemberCount ?? 0,
         IsLoadingMembers);
+
+    /// <summary>There is at least one more page behind the roster already on screen.</summary>
+    public bool HasMoreMembers => !_membersExhausted
+        && Members.Count > 0
+        && (SelectedGroup?.MemberCount ?? 0) > Members.Count;
+
+    public bool CanLoadMoreMembers => HasMoreMembers && !IsLoadingMembers;
 
     internal static string DescribeMembers(int loaded, int total, bool isLoading)
     {
@@ -529,13 +543,15 @@ public sealed class GroupViewModel : ViewModelBase
         {
             return string.Create(
                 CultureInfo.InvariantCulture,
-                $"Showing {loaded:N0} of {total:N0} members — VRChat returns 100 per request.");
+                $"Showing {loaded:N0} of {total:N0} members — Load more fetches the next 100.");
         }
 
         return loaded == 1 ? "1 member loaded" : $"{loaded} members loaded";
     }
 
     public RelayCommand CloseGroupDetailsCommand { get; }
+
+    public AsyncRelayCommand LoadMoreMembersCommand { get; }
 
     public AsyncRelayCommand RefreshMembersCommand { get; }
 
@@ -966,20 +982,65 @@ public sealed class GroupViewModel : ViewModelBase
         }
     }
 
-    private async Task LoadGroupMembersAsync()
+    private Task LoadGroupMembersAsync()
     {
         if (SelectedGroup is null)
-            return;
+        {
+            return Task.CompletedTask;
+        }
 
+        return FetchGroupMembersAsync(reset: true);
+    }
+
+    private Task LoadMoreGroupMembersAsync() => SelectedGroup is null
+        ? Task.CompletedTask
+        : FetchGroupMembersAsync(reset: false);
+
+    /// <summary>
+    /// Pulls one page of members. The endpoint pages with n=100 and offset, so the first
+    /// load starts at 0 and Load more continues past the rows already shown. A page shorter
+    /// than 100 means the roster is exhausted, even if the cached member count disagrees.
+    /// </summary>
+    private async Task FetchGroupMembersAsync(bool reset)
+    {
+        if (SelectedGroup is not { } group)
+        {
+            return;
+        }
+
+        var groupId = group.EffectiveId;
+        var offset = reset ? 0 : Members.Count;
         IsBusy = true;
         ErrorMessage = null;
         IsLoadingMembers = true;
 
         try
         {
-            var members = await _api.GetGroupMembersAsync(SelectedGroup.EffectiveId);
-            Members = new ObservableCollection<GroupMember>(members.OrderBy(m => m.UserName));
+            var page = await _api.GetGroupMembersAsync(groupId, offset);
+            if (SelectedGroup?.EffectiveId != groupId)
+            {
+                return;
+            }
+
+            _membersExhausted = page.Count < MembersPageSize;
+
+            var merged = reset ? new List<GroupMember>() : Members.ToList();
+            var seen = merged
+                .Select(member => member.UserId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var member in page)
+            {
+                if (seen.Add(member.UserId))
+                {
+                    merged.Add(member);
+                }
+            }
+
+            Members = new ObservableCollection<GroupMember>(
+                merged.OrderBy(member => member.UserName, StringComparer.CurrentCultureIgnoreCase));
             OnPropertyChanged(nameof(MembersSummary));
+            OnPropertyChanged(nameof(HasMoreMembers));
+            OnPropertyChanged(nameof(CanLoadMoreMembers));
         }
         catch (VrcApiException ex)
         {
@@ -1002,6 +1063,7 @@ public sealed class GroupViewModel : ViewModelBase
         {
             IsLoadingMembers = false;
             IsBusy = false;
+            RaiseCommandStates();
         }
     }
 

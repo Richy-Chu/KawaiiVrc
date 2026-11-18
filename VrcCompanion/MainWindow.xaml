@@ -3496,6 +3496,15 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
+                                    <Button Content="Load more members"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="12,6"
+                                            FontSize="11"
+                                            HorizontalAlignment="Left"
+                                            Margin="0,4,0,0"
+                                            Visibility="{Binding DataContext.GroupViewModel.HasMoreMembers, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"
+                                            Command="{Binding DataContext.GroupViewModel.LoadMoreMembersCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            ToolTip="Fetch the next page of members" />
                                 </StackPanel>
                             </ScrollViewer>
                         </Grid>

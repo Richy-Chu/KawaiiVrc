@@ -241,6 +241,21 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     private static readonly Lazy<Task<CoreWebView2Environment>> SharedEnvironment =
         new(CreateSharedEnvironmentAsync);
 
+    /// <summary>Tests point the browser profile at a temp folder instead of the user's.</summary>
+    internal static string? UserDataFolderOverride { get; set; }
+
+    /// <summary>
+    /// Cookies, logins and site storage live in WebView2's user data folder. Left at its
+    /// default that folder sits next to the executable, which is the build output locally
+    /// and a new versioned folder with every Velopack update — so Discord and the other
+    /// tabs asked for a fresh sign-in after each build. Keep one profile in the app's own
+    /// data folder so sessions survive rebuilds and updates.
+    /// </summary>
+    internal static string ResolveUserDataFolder(string? overridePath, string localAppData)
+        => !string.IsNullOrWhiteSpace(overridePath)
+            ? overridePath!
+            : Path.Combine(localAppData, "VrcCompanion", "Browser");
+
     private IEmbeddedBrowserHost? _viewModel;
     private Task? _initialization;
     private string? _pendingUrl;
@@ -634,7 +649,21 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     private static async Task<CoreWebView2Environment> CreateSharedEnvironmentAsync()
     {
         var options = new CoreWebView2EnvironmentOptions(BrowserArguments);
-        return await CoreWebView2Environment.CreateAsync(null, null, options);
+        var folder = ResolveUserDataFolder(
+            UserDataFolderOverride,
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        try
+        {
+            Directory.CreateDirectory(folder);
+        }
+        catch (Exception ex)
+        {
+            // The browser can still fall back to its default folder rather than fail outright.
+            Debug.WriteLine(ex);
+            folder = null!;
+        }
+
+        return await CoreWebView2Environment.CreateAsync(null, folder, options);
     }
 
     // Collapsed tabs and a minimized window keep their page alive while Chromium

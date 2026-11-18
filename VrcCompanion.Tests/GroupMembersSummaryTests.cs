@@ -4,16 +4,16 @@ using Xunit;
 namespace VrcCompanion.Tests;
 
 /// <summary>
-/// The group popup shows one page of members, because VRChat's members endpoint takes n=100
-/// and this page does not paginate. The summary has to say that instead of implying the
-/// group only has the 100 members on screen.
+/// The group popup shows one page of members, because VRChat's members endpoint returns at
+/// most 100 per request. The summary has to say that instead of implying the group only has
+/// the 100 members on screen, and point at the Load more button that continues the roster.
 /// </summary>
 public class GroupMembersSummaryTests
 {
     [Fact]
     public void OnePageOfABigGroupSaysWhatIsShown()
         => Assert.Equal(
-            "Showing 100 of 27,812 members — VRChat returns 100 per request.",
+            "Showing 100 of 27,812 members — Load more fetches the next 100.",
             GroupViewModel.DescribeMembers(loaded: 100, total: 27812, isLoading: false));
 
     [Fact]
