@@ -1657,6 +1657,8 @@ public sealed class ModerationEntryRow : ViewModelBase
 
     public string UserId { get; }
 
+    public string IdText => UserId;
+
     public string DisplayName { get; }
 
     public string AvatarUrl { get; }
