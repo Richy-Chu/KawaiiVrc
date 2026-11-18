@@ -37,6 +37,9 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
     /// <summary>How many members the roster endpoint is willing to page through, if capped.</summary>
     public int? Viewable { get; set; }
 
+    /// <summary>Membership lookups answer without a nested user object, like the real API.</summary>
+    public bool BareMemberLookups { get; set; }
+
     public const string StrangerId = "usr_stranger";
     public const string StrangerName = "Stranger Danger";
     public const string StrangerUsername = "stranger";
@@ -80,7 +83,9 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
             {
                 id = $"usr_{index}",
                 displayName = MemberName(index),
-                username = UserName(index)
+                username = UserName(index),
+                currentAvatarThumbnailImageUrl = $"https://example.com/user-{index}.png",
+                iconUrl = $"https://example.com/icon-{index}.png"
             });
         }
 
@@ -138,6 +143,18 @@ internal sealed class GroupMemberTestHandler : HttpMessageHandler
             if (index == 0 && !string.Equals(id, "usr_0", StringComparison.Ordinal))
             {
                 return NotFound();
+            }
+
+            if (BareMemberLookups)
+            {
+                return Json(new
+                {
+                    id = $"gmem_{index}",
+                    groupId = "grp_1",
+                    userId = $"usr_{index}",
+                    membershipStatus = "member",
+                    joinedAt = "2024-01-01T00:00:00Z"
+                });
             }
 
             return Json(Member(index));

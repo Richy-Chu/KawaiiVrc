@@ -2427,7 +2427,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         GroupViewModel = new GroupViewModel(
             _api,
             OpenLaunchChooser,
-            openMemberProfile: member => OpenUserProfile(member.UserId, member.DisplayName, member.AvatarUrl));
+            openMemberProfile: member => OpenUserProfile(member.UserId, member.DisplayName, member.AvatarUrl),
+            openUserProfile: OpenUserProfile);
         ActivityFeedViewModel = new ActivityFeedViewModel(_api, ActivityStore.Shared);
         ActivityFeedViewModel.HistoryLoaded += LoadFriendChangesFromHistory;
         ActivityFeedViewModel.FilterChanged += RememberActivityFilter;

@@ -3152,9 +3152,11 @@ public sealed class VrcApiClient : IDisposable
         string groupId,
         CancellationToken cancellationToken = default)
     {
+        // includeRoles brings the role definitions and myMember.permissions along, which is
+        // what tells the moderation panel what this account may do on the group.
         var body = await SendApiAsync(
             HttpMethod.Get,
-            $"groups/{Uri.EscapeDataString(groupId)}",
+            $"groups/{Uri.EscapeDataString(groupId)}?includeRoles=true",
             null,
             cancellationToken);
         return Deserialize<Group>(body);
@@ -3302,6 +3304,183 @@ public sealed class VrcApiClient : IDisposable
         {
             return null;
         }
+    }
+
+    // ------------------------------------------------------ group moderation
+
+    private static string GroupModerationPath(string groupId, string suffix)
+        => $"groups/{Uri.EscapeDataString(groupId)}/{suffix}";
+
+    /// <summary>Banned accounts of a group (needs group-bans-manage).</summary>
+    public async Task<IReadOnlyList<GroupRosterEntry>> GetGroupBansAsync(
+        string groupId,
+        int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            GroupModerationPath(groupId, $"bans?n=100&offset={Math.Max(0, offset)}"),
+            null,
+            cancellationToken);
+        return DeserializeList<GroupRosterEntry>(body);
+    }
+
+    public async Task BanGroupMemberAsync(
+        string groupId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(new { userId });
+        await SendApiAsync(HttpMethod.Post, GroupModerationPath(groupId, "bans"), content, cancellationToken);
+    }
+
+    public async Task UnbanGroupMemberAsync(
+        string groupId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        await SendApiAsync(
+            HttpMethod.Delete,
+            GroupModerationPath(groupId, $"bans/{Uri.EscapeDataString(userId)}"),
+            null,
+            cancellationToken);
+    }
+
+    /// <summary>Removes a member from the group; the same call unblocks or declines an invite.</summary>
+    public async Task KickGroupMemberAsync(
+        string groupId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        await SendApiAsync(
+            HttpMethod.Delete,
+            GroupModerationPath(groupId, $"members/{Uri.EscapeDataString(userId)}"),
+            null,
+            cancellationToken);
+        _myGroupsCache = null;
+    }
+
+    public async Task AddGroupMemberRoleAsync(
+        string groupId,
+        string userId,
+        string roleId,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(new { });
+        await SendApiAsync(
+            HttpMethod.Put,
+            GroupModerationPath(groupId, $"members/{Uri.EscapeDataString(userId)}/roles/{Uri.EscapeDataString(roleId)}"),
+            content,
+            cancellationToken);
+    }
+
+    public async Task RemoveGroupMemberRoleAsync(
+        string groupId,
+        string userId,
+        string roleId,
+        CancellationToken cancellationToken = default)
+    {
+        await SendApiAsync(
+            HttpMethod.Delete,
+            GroupModerationPath(groupId, $"members/{Uri.EscapeDataString(userId)}/roles/{Uri.EscapeDataString(roleId)}"),
+            null,
+            cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<GroupRole>> GetGroupRolesAsync(
+        string groupId,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            GroupModerationPath(groupId, "roles"),
+            null,
+            cancellationToken);
+        return DeserializeList<GroupRole>(body);
+    }
+
+    /// <summary>Join requests waiting for a moderator (needs group-members-manage).</summary>
+    public async Task<IReadOnlyList<GroupRosterEntry>> GetGroupJoinRequestsAsync(
+        string groupId,
+        int offset = 0,
+        bool blocked = false,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            GroupModerationPath(
+                groupId,
+                $"requests?n=100&offset={Math.Max(0, offset)}&blocked={(blocked ? "true" : "false")}"),
+            null,
+            cancellationToken);
+        return DeserializeList<GroupRosterEntry>(body);
+    }
+
+    /// <summary>Accepts or rejects one join request; block also bars future requests.</summary>
+    public async Task RespondGroupJoinRequestAsync(
+        string groupId,
+        string userId,
+        bool accept,
+        bool block = false,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(block
+            ? new { action = accept ? "accept" : "reject", block = true }
+            : (object)new { action = accept ? "accept" : "reject" });
+        await SendApiAsync(
+            HttpMethod.Put,
+            GroupModerationPath(groupId, $"requests/{Uri.EscapeDataString(userId)}"),
+            content,
+            cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<GroupRosterEntry>> GetGroupInvitesAsync(
+        string groupId,
+        int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            GroupModerationPath(groupId, $"invites?n=100&offset={Math.Max(0, offset)}"),
+            null,
+            cancellationToken);
+        return DeserializeList<GroupRosterEntry>(body);
+    }
+
+    public async Task InviteToGroupAsync(
+        string groupId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent.Create(new { userId, confirmOverrideBlock = false });
+        await SendApiAsync(HttpMethod.Post, GroupModerationPath(groupId, "invites"), content, cancellationToken);
+    }
+
+    public async Task DeleteGroupInviteAsync(
+        string groupId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        await SendApiAsync(
+            HttpMethod.Delete,
+            GroupModerationPath(groupId, $"invites/{Uri.EscapeDataString(userId)}"),
+            null,
+            cancellationToken);
+    }
+
+    /// <summary>Recent audit entries (needs group-audit-view).</summary>
+    public async Task<IReadOnlyList<GroupAuditEntry>> GetGroupAuditLogsAsync(
+        string groupId,
+        int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            GroupModerationPath(groupId, $"auditLogs?n=100&offset={Math.Max(0, offset)}"),
+            null,
+            cancellationToken);
+        var wrapped = Deserialize<GroupAuditEntry.AuditLogResponse>(body);
+        return wrapped?.Results ?? DeserializeList<GroupAuditEntry>(body);
     }
 
     public async Task<Group?> CreateGroupAsync(

@@ -74,10 +74,29 @@ public sealed class GroupViewModel : ViewModelBase
         VrcApiClient api,
         Action<string, string>? openLaunchChooser = null,
         Func<string, bool>? openUrl = null,
-        Action<GroupMemberItem>? openMemberProfile = null)
+        Action<GroupMemberItem>? openMemberProfile = null,
+        Action<string, string, string>? openUserProfile = null)
     {
         _api = api;
         _openMemberProfile = openMemberProfile;
+        Moderation = new GroupModerationViewModel(api)
+        {
+            // Moderation rows only carry strings, so a profile opens from the ids directly;
+            // when no opener was supplied the member-row callback is reused.
+            OpenProfileRequested = openUserProfile ?? ((userId, name, avatarUrl) =>
+                _openMemberProfile?.Invoke(new GroupMemberItem(
+                    new GroupMember
+                    {
+                        UserId = userId,
+                        User = new GroupMember.GroupMemberUser
+                        {
+                            Id = userId,
+                            DisplayName = name,
+                            CurrentAvatarThumbnailImageUrl = avatarUrl
+                        }
+                    },
+                    _openMemberProfile)))
+        };
         _openLaunchChooser = openLaunchChooser;
         _openUrl = openUrl ?? (url => LaunchService.OpenUrl(url));
 
@@ -97,6 +116,8 @@ public sealed class GroupViewModel : ViewModelBase
             () => { _ = ClearMemberSearchAsync(); },
             () => SelectedGroup is not null || IsMemberSearchActive));
         OpenSelectedGroupCommand = Track(new RelayCommand(OpenSelectedGroupInBrowser, () => SelectedGroup is not null));
+        OpenGroupModerationCommand = Track(new AsyncRelayCommand(OpenGroupModerationAsync, () => SelectedGroup is not null && !IsBusy));
+        CloseGroupModerationCommand = Track(new RelayCommand(CloseGroupModeration, () => Moderation.IsOpen));
         OpenGroupCommand = Track(new RelayCommand<Group>(group => SelectedGroup = group, group => group is not null));
         SearchGroupsCommand = Track(new AsyncRelayCommand(
             SearchGroupsAsync,
@@ -213,6 +234,12 @@ public sealed class GroupViewModel : ViewModelBase
         {
             if (SetProperty(ref _selectedGroup, value))
             {
+                if (Moderation.IsOpen)
+                {
+                    Moderation.Close();
+                }
+
+                OnPropertyChanged(nameof(IsGroupModerationOpen));
                 OnPropertyChanged(nameof(IsGroupDetailsOpen));
                 OnPropertyChanged(nameof(SelectedGroupUrl));
                 OnPropertyChanged(nameof(MembersSummary));
@@ -686,6 +713,15 @@ public sealed class GroupViewModel : ViewModelBase
 
     public RelayCommand OpenSelectedGroupCommand { get; }
 
+    /// <summary>Member moderation tools for the selected group (kick, ban, roles, requests…).</summary>
+    public GroupModerationViewModel Moderation { get; }
+
+    public bool IsGroupModerationOpen => Moderation.IsOpen;
+
+    public AsyncRelayCommand OpenGroupModerationCommand { get; }
+
+    public RelayCommand CloseGroupModerationCommand { get; }
+
     public RelayCommand<Group> OpenGroupCommand { get; }
 
     public AsyncRelayCommand SearchGroupsCommand { get; }
@@ -693,6 +729,63 @@ public sealed class GroupViewModel : ViewModelBase
     public AsyncRelayCommand<Group> OpenDiscoveredGroupCommand { get; }
 
     public RelayCommand OpenSelectedGroupInfoCommand { get; }
+
+    /// <summary>
+    /// Opens the moderation tools. The group is re-read with includeRoles so myMember.permissions
+    /// and the role definitions are current — those decide which tools are usable.
+    /// </summary>
+    private async Task OpenGroupModerationAsync()
+    {
+        if (SelectedGroup is not { } group)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        ErrorMessage = null;
+        try
+        {
+            var info = await _api.GetGroupAsync(group.EffectiveId);
+            if (info is null)
+            {
+                ErrorMessage = "That VRChat group could not be found.";
+                return;
+            }
+
+            Moderation.Open(info);
+            // The moderation panel starts at the top of the popup, like a new member page.
+            _membersPageToken++;
+            OnPropertyChanged(nameof(MembersPageToken));
+            OnPropertyChanged(nameof(IsGroupModerationOpen));
+        }
+        catch (VrcApiException ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            ErrorMessage = "Could not reach VRChat to load this group.";
+        }
+        catch (TaskCanceledException)
+        {
+            ErrorMessage = "The group request timed out. Try again.";
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            ErrorMessage = "Could not load this group's moderation tools.";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void CloseGroupModeration()
+    {
+        Moderation.Close();
+        OnPropertyChanged(nameof(IsGroupModerationOpen));
+    }
 
     private void OpenSelectedGroupInBrowser()
     {
@@ -802,6 +895,8 @@ public sealed class GroupViewModel : ViewModelBase
         IsLeaveGroupConfirmOpen = false;
         GroupInfoInstances = new ObservableCollection<GroupInstance>();
         GroupInstancesHidden = false;
+        Moderation.Close();
+        OnPropertyChanged(nameof(IsGroupModerationOpen));
         GroupDiscoveryQuery = string.Empty;
         GroupSearchResults = new ObservableCollection<Group>();
         GroupSearchMessage = string.Empty;
@@ -1442,7 +1537,9 @@ public sealed class GroupViewModel : ViewModelBase
         var direct = await TryGetGroupMemberAsync(groupId, user.Id);
         if (direct is not null)
         {
-            return new[] { direct };
+            // The membership record carries no name or avatar of its own; fill it from the
+            // user we resolved so the row is not a bare id with an initial.
+            return new[] { WithResolvedUser(direct, user) };
         }
 
         var name = !string.IsNullOrWhiteSpace(user.DisplayName) ? user.DisplayName : user.Username;
@@ -1515,6 +1612,26 @@ public sealed class GroupViewModel : ViewModelBase
         }
 
         return candidates;
+    }
+
+    /// <summary>Copies the resolved account's name and avatar onto a membership record.</summary>
+    private static GroupMember WithResolvedUser(GroupMember member, VrcUser user)
+    {
+        if (member.User is not null)
+        {
+            return member;
+        }
+
+        member.User = new GroupMember.GroupMemberUser
+        {
+            Id = user.Id,
+            DisplayName = user.DisplayName,
+            Username = user.Username,
+            IconUrl = user.IconUrl ?? string.Empty,
+            ThumbnailUrl = user.ProfilePicOverrideThumbnail ?? string.Empty,
+            CurrentAvatarThumbnailImageUrl = user.CurrentAvatarThumbnailImageUrl ?? string.Empty
+        };
+        return member;
     }
 
     private async Task<VrcUser?> TryGetUserAsync(string userId)

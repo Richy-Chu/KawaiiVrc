@@ -58,6 +58,27 @@ public class GroupMemberSearchTests
     }
 
     [Fact]
+    public async Task UserIdSearchFillsNameAndAvatarFromTheResolvedAccount()
+    {
+        using var handler = new GroupMemberTestHandler(total: 250) { BareMemberLookups = true };
+        using var api = new VrcApiClient(null, handler);
+        var vm = new GroupViewModel(api)
+        {
+            SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
+        };
+        await SettleAsync(vm);
+
+        vm.MemberSearchText = "usr_42";
+        vm.SearchMembersCommand.Execute(null);
+        await SettleAsync(vm);
+
+        // The membership record has no user object of its own; the resolved account fills it.
+        var member = Assert.Single(vm.Members);
+        Assert.Equal("Member 0042", member.DisplayName);
+        Assert.EndsWith("user-42.png", member.AvatarUrl);
+    }
+
+    [Fact]
     public async Task UnknownUserIdReportsNoMatch()
     {
         using var handler = new GroupMemberTestHandler(total: 10);

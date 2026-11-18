@@ -142,6 +142,17 @@ public sealed class GroupMember
     [JsonPropertyName("membershipStatus")]
     public string MembershipStatus { get; set; } = string.Empty;
 
+    /// <summary>The account's permissions when this is the group's myMember object.</summary>
+    [JsonPropertyName("permissions")]
+    public List<string> Permissions { get; set; } = new();
+
+    /// <summary>Roles attached to the member, used to assign and remove roles.</summary>
+    [JsonPropertyName("roleIds")]
+    public List<string> RoleIds { get; set; } = new();
+
+    [JsonPropertyName("requestCreatedAt")]
+    public DateTimeOffset RequestCreatedAt { get; set; }
+
     public string EffectiveUserId => !string.IsNullOrWhiteSpace(UserId)
         ? UserId
         : User?.Id ?? string.Empty;
@@ -218,5 +229,107 @@ public sealed class GroupMember
     {
         [JsonPropertyName("results")]
         public List<GroupMember> Results { get; set; } = new();
+    }
+}
+
+/// <summary>
+/// A banned account, a join request or a sent invite. VRChat reuses the member shape for
+/// all three, so one model covers the moderation lists.
+/// </summary>
+public sealed class GroupRosterEntry
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("groupId")]
+    public string GroupId { get; set; } = string.Empty;
+
+    [JsonPropertyName("userId")]
+    public string UserId { get; set; } = string.Empty;
+
+    [JsonPropertyName("user")]
+    public GroupMember.GroupMemberUser? User { get; set; }
+
+    [JsonPropertyName("membershipStatus")]
+    public string MembershipStatus { get; set; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; set; } = string.Empty;
+
+    [JsonPropertyName("createdAt")]
+    public DateTimeOffset CreatedAt { get; set; }
+
+    [JsonPropertyName("requestCreatedAt")]
+    public DateTimeOffset RequestCreatedAt { get; set; }
+
+    [JsonPropertyName("actorDisplayName")]
+    public string ActorDisplayName { get; set; } = string.Empty;
+
+    public string EffectiveUserId => !string.IsNullOrWhiteSpace(UserId)
+        ? UserId
+        : User?.Id ?? string.Empty;
+
+    public string EffectiveUserName
+    {
+        get
+        {
+            foreach (var name in new[] { User?.DisplayName, User?.Username })
+            {
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    return name!;
+                }
+            }
+
+            return string.Empty;
+        }
+    }
+
+    public string EffectiveAvatarUrl
+    {
+        get
+        {
+            foreach (var url in new[] { User?.CurrentAvatarThumbnailImageUrl, User?.ThumbnailUrl, User?.IconUrl })
+            {
+                if (!string.IsNullOrWhiteSpace(url))
+                {
+                    return url!;
+                }
+            }
+
+            return string.Empty;
+        }
+    }
+}
+
+/// <summary>One entry of a group's audit log.</summary>
+public sealed class GroupAuditEntry
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("created_at")]
+    public DateTimeOffset CreatedAt { get; set; }
+
+    [JsonPropertyName("actorId")]
+    public string ActorId { get; set; } = string.Empty;
+
+    [JsonPropertyName("actorDisplayName")]
+    public string ActorDisplayName { get; set; } = string.Empty;
+
+    [JsonPropertyName("targetId")]
+    public string TargetId { get; set; } = string.Empty;
+
+    [JsonPropertyName("eventType")]
+    public string EventType { get; set; } = string.Empty;
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+
+    /// <summary>Audit logs wrap their array in a results object, unlike most group endpoints.</summary>
+    public sealed class AuditLogResponse
+    {
+        [JsonPropertyName("results")]
+        public List<GroupAuditEntry> Results { get; set; } = new();
     }
 }
