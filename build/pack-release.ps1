@@ -512,6 +512,15 @@ if ($view.ExitCode -eq 0) {
     throw "Release $tag already exists on $Repo. Bump the version instead of reusing a tag."
 }
 
+# gh answers "release not found" both for an absent tag and for a repository it cannot
+# read, so its message cannot tell the two apart. Ask about the repository itself before
+# treating the tag as free, or a typo in -Repo publishes into nothing.
+$repoView = Invoke-NativeCapture "gh" @("repo", "view", $Repo, "--json", "nameWithOwner")
+if ($repoView.ExitCode -ne 0) {
+    $repoText = (($repoView.Output | ForEach-Object { "$_" }) -join " ") -replace '\s+', ' '
+    throw "Could not read $Repo (gh exit $($repoView.ExitCode)), so whether $tag exists is unknown: $repoText"
+}
+
 # Only "not found" means the tag is free. A rate limit or auth error reads the same way to
 # a bare exit-code check, which would send the release on to gh release create.
 $viewText = (($view.Output | ForEach-Object { "$_" }) -join " ") -replace '\s+', ' '

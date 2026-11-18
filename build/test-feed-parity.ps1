@@ -6,7 +6,8 @@
 # and -SkipPublish packs the build already in artifacts/publish, so a sentinel left there
 # proves the run did not clear it. A stub git makes the readiness checks answer for
 # themselves: only git's own "no upstream configured" may skip the push check, and a dirty
-# or unreadable tree must stop the release.
+# or unreadable tree must stop the release, and a repository gh cannot read is not an
+# absent tag.
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -53,6 +54,7 @@ function Write-GhStub([string]$Directory, [bool]$Windows) {
             'if /I "%1 %2"=="release list" goto release_list',
             'if /I "%1 %2"=="release view" goto release_view',
             'if /I "%1 %2"=="release download" goto release_download',
+            'if /I "%1 %2"=="repo view" goto repo_view',
             'goto done',
             '',
             ':release_list',
@@ -72,6 +74,7 @@ function Write-GhStub([string]$Directory, [bool]$Windows) {
             ':release_view',
             'if "%GH_MODE%"=="view-error" goto rate_limit',
             'if "%GH_MODE%"=="view-absent" goto absent',
+            'if "%GH_MODE%"=="repo-unreadable" goto absent',
             'echo KawaiiVrc-1.0.0-full.nupkg',
             'if not "%GH_MODE%"=="missing-feed" echo releases.win.json',
             'exit /b 0',
@@ -91,6 +94,14 @@ function Write-GhStub([string]$Directory, [bool]$Windows) {
             '',
             ':absent',
             'echo release not found 1>&2',
+            'exit /b 1',
+            '',
+            ':repo_view',
+            'if "%GH_MODE%"=="repo-unreadable" goto repo_missing',
+            'exit /b 0',
+            '',
+            ':repo_missing',
+            'echo gh: could not resolve to a repository 1>&2',
             'exit /b 1',
             '',
             ':fail',
@@ -117,13 +128,17 @@ function Write-GhStub([string]$Directory, [bool]$Windows) {
         '    exit 0 ;;',
         '  "release view")',
         '    if [ "$GH_MODE" = "view-error" ]; then echo "gh: API rate limit exceeded" >&2; exit 1; fi',
-        '    if [ "$GH_MODE" = "view-absent" ]; then echo "release not found" >&2; exit 1; fi',
+        '    if [ "$GH_MODE" = "view-absent" ] || [ "$GH_MODE" = "repo-unreadable" ]; then',
+        '      echo "release not found" >&2; exit 1; fi',
         '    echo KawaiiVrc-1.0.0-full.nupkg',
         '    if [ "$GH_MODE" != "missing-feed" ]; then echo releases.win.json; fi',
         '    exit 0 ;;',
         '  "release download")',
         '    if [ "$GH_MODE" = "feed-download-fails" ] || [ "$GH_MODE" = "base-download-fails" ]; then',
         '      echo "download failed: connection reset" >&2; exit 1; fi',
+        '    exit 0 ;;',
+        '  "repo view")',
+        '    if [ "$GH_MODE" = "repo-unreadable" ]; then echo "gh: could not resolve to a repository" >&2; exit 1; fi',
         '    exit 0 ;;',
         'esac',
         'exit 0'
@@ -244,7 +259,8 @@ $checks = @(
     @{ Name = "no upstream still publishes"; Mode = "view-absent"; GitMode = "no-upstream"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments },
     @{ Name = "clean tree publishes"; Mode = "view-absent"; GitMode = "clean"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments },
     @{ Name = "dirty tree is refused"; Mode = "view-absent"; GitMode = "dirty"; Expected = 1; Marker = "Working tree has uncommitted changes"; Arguments = $readyArguments },
-    @{ Name = "status check errors"; Mode = "view-absent"; GitMode = "status-error"; Expected = 1; Marker = "git status failed"; Arguments = $readyArguments }
+    @{ Name = "status check errors"; Mode = "view-absent"; GitMode = "status-error"; Expected = 1; Marker = "git status failed"; Arguments = $readyArguments },
+    @{ Name = "unreadable repo is not an absent tag"; Mode = "repo-unreadable"; Expected = 1; Marker = "Could not read owner/repo"; Arguments = $publishArguments }
 )
 
 $savedPath = $env:PATH
