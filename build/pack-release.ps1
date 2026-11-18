@@ -410,7 +410,15 @@ if (-not $SkipPublish) {
 if (-not $SkipFetch) {
     Write-Host "Fetching the last $HistoryDepth releases for delta updates..." -ForegroundColor Cyan
     $releaseList = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", $HistoryDepth, "--json", "tagName", "--jq", ".[].tagName")
-    if ($releaseList.ExitCode -ne 0 -or -not $releaseList.Output) {
+    if ($releaseList.ExitCode -ne 0) {
+        # A failed listing is not an empty one: packing anyway silently ships a full-only
+        # release where a delta was expected.
+        throw ("Could not list previous releases on $Repo (gh exit $($releaseList.ExitCode)); " +
+            "refusing to build a release without its delta base. Re-run when GitHub is reachable, " +
+            "or pass -SkipFetch to accept a full-only release.")
+    }
+
+    if (-not $releaseList.Output) {
         Write-Host "  No previous releases found; this will be a full-only release." -ForegroundColor DarkGray
     }
     else {

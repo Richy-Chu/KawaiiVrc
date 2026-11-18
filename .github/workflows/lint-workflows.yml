@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File build/test-feed-parity.ps1
 
+      - name: Test drift reporting
+        shell: pwsh
+        run: pwsh -NoProfile -File build/test-drift-report.ps1
+
   actionlint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
