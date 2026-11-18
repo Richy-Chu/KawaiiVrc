@@ -8,9 +8,11 @@ A kawaii unofficial Windows desktop companion for [VRChat](https://vrchat.com), 
 
 A small, privacy-redacted preview. Account details are blurred; no friend or account names are shown.
 
-| Worlds and quick join | KawaiiChatbox |
+| Worlds, search, and quick join | KawaiiChatbox |
 | --- | --- |
 | ![Worlds, search, and quick join](docs/screenshots/worlds.jpg) | ![Chatbox status and provider pipeline](docs/screenshots/chatbox.jpg) |
+| **Avatar Search** | **Settings, About, and update checks** |
+| ![Avatar Search with public avatar results and wear actions](docs/screenshots/avatar-search.jpg) | ![Settings with the About card and update status](docs/screenshots/settings.jpg) |
 
 ## Current state
 
