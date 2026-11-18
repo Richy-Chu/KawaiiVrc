@@ -27,7 +27,7 @@ param(
     [string]$NotesFile,
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
-    [int]$HistoryDepth = 3,
+    [int]$HistoryDepth = 1,
     [switch]$FrameworkDependent,
     [switch]$SkipPublish,
     [switch]$SkipUpload,
@@ -137,9 +137,9 @@ if (-not $SkipPublish) {
     if ($publishExit -ne 0) { throw "dotnet publish failed with exit code $publishExit." }
 }
 
-# Velopack builds one delta per older package it can see, so a user who skipped
-# a release still downloads a small patch instead of the full package. Pull the
-# nupkgs for the last few releases into the output folder before packing.
+# vpk needs the packages it builds deltas against, so pull the previous release in
+# before packing. Chaining across several skipped versions works because every
+# release's feed lists its own delta and adds it to the merged feed the client reads.
 if (-not $SkipFetch) {
     Write-Host "Fetching the last $HistoryDepth releases for delta updates..." -ForegroundColor Cyan
     $releaseList = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", $HistoryDepth, "--json", "tagName", "--jq", ".[].tagName")
@@ -182,12 +182,21 @@ Write-Host "Packing..." -ForegroundColor Cyan
 $packExit = Invoke-Native "vpk" $packArgs
 if ($packExit -ne 0) { throw "vpk pack failed with exit code $packExit." }
 
+# vpk writes every package in the output directory into the feed (old fulls included).
+# Velopack merges the feeds of the last ten releases when checking for updates, so a
+# package listed by several releases is downloaded several times at once and the
+# parallel patcher races on the same file. Keep each release's feed to its own version.
+$feedPath = Join-Path $releasesDir "releases.win.json"
+$feed = Get-Content $feedPath -Raw | ConvertFrom-Json
+$feed.Assets = @($feed.Assets | Where-Object { $_.Version -eq $Version })
+$feed | ConvertTo-Json -Depth 6 -Compress | Set-Content $feedPath -NoNewline
+Write-Host "Feed trimmed to $Version only." -ForegroundColor DarkGray
+
 $assets = Get-ChildItem $releasesDir -File | Where-Object {
     ($_.Extension -in @(".exe", ".nupkg", ".json", ".zip") -or $_.Name -eq "RELEASES") -and
-    # Old full packages are only inputs for delta generation, so they stay local. Old
-    # deltas are uploaded: Velopack looks up every package in the latest release, and a
-    # client that skipped versions needs each patch to chain from its installed one.
-    -not ($_.Name -like "*-full.nupkg" -and $_.Name -notlike "*$Version*")
+    # Older packages are only delta inputs, and Velopack resolves each release's own
+    # packages from that release, so only this version's nupkgs need uploading.
+    -not ($_.Name -like "*.nupkg" -and $_.Name -notlike "*$Version*")
 }
 
 if (-not $assets) { throw "vpk produced no release assets in $releasesDir." }
