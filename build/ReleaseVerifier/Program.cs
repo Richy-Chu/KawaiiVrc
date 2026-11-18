@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Net;
 using System.Text.RegularExpressions;
 using Velopack;
 using Velopack.Locators;
@@ -15,6 +16,15 @@ for (var i = 0; i < args.Length; i++)
 {
     if (!args[i].StartsWith("--", StringComparison.Ordinal) || i + 1 >= args.Length) { continue; }
     options[args[i][2..]] = args[++i];
+}
+
+// Diagnostic used by build/test-exit-codes.ps1: reports which exit code an HTTP status maps
+// to, without contacting GitHub.
+if (options.TryGetValue("classify-status", out var rawStatus) && int.TryParse(rawStatus, out var simulatedStatus))
+{
+    var mapped = ExitCodeFor(new HttpRequestException("simulated", null, (HttpStatusCode)simulatedStatus));
+    Console.WriteLine($"status {simulatedStatus} -> exit {mapped}");
+    return mapped;
 }
 
 string Required(string name)
@@ -45,6 +55,20 @@ Directory.CreateDirectory(content);
 var basePackageName = $"{appId}-{baseVersion}-full.nupkg";
 var basePackagePath = Path.Combine(packages, basePackageName);
 
+// Resolve the patcher before downloading: without it nothing can be verified, and there is
+// no point fetching the whole base package first.
+string updateExeSource;
+try
+{
+    updateExeSource = ResolveUpdateExe(options);
+}
+catch (FileNotFoundException ex)
+{
+    // The patcher is part of the tooling, not the release, so nothing was verified.
+    Console.WriteLine($"INFRASTRUCTURE: {ex.Message}");
+    return 3;
+}
+
 try
 {
     using (var http = new HttpClient())
@@ -67,8 +91,7 @@ try
         await response.Content.CopyToAsync(file);
     }
 
-    var updateExeSource = ResolveUpdateExe(options);
-    var updateExe = Path.Combine(root, "Update.exe");
+        var updateExe = Path.Combine(root, "Update.exe");
     File.Copy(updateExeSource, updateExe, overwrite: true);
     Console.WriteLine($"update {updateExeSource}");
 

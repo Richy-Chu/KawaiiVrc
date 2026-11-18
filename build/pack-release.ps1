@@ -194,8 +194,14 @@ function Test-ReleaseReadiness {
 # exactly what its own feed lists breaks chaining for everyone who skipped a version.
 function Test-ReleaseFeedParity {
     $list = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", "20", "--json", "tagName", "--jq", ".[].tagName")
-    if ($list.ExitCode -ne 0 -or -not $list.Output) {
-        Write-Host "  Could not list releases; skipping the feed/asset check." -ForegroundColor DarkGray
+    if ($list.ExitCode -ne 0) {
+        # Not being able to read the releases says nothing about them.
+        Write-Host "Could not list releases on $Repo (gh exit $($list.ExitCode)); this is not release drift." -ForegroundColor Yellow
+        exit 3
+    }
+
+    if (-not $list.Output) {
+        Write-Host "  No releases to compare against their feeds." -ForegroundColor DarkGray
         return
     }
 
@@ -208,12 +214,24 @@ function Test-ReleaseFeedParity {
             if (-not $tag) { continue }
 
             $assetOutput = Invoke-NativeCapture "gh" @("release", "view", $tag, "--repo", $Repo, "--json", "assets", "--jq", ".assets[].name")
+            if ($assetOutput.ExitCode -ne 0) {
+                Write-Host "Could not read the assets of $tag (gh exit $($assetOutput.ExitCode)); this is not release drift." -ForegroundColor Yellow
+                exit 3
+            }
+
             $assets = @($assetOutput.Output | ForEach-Object { "$_".Trim() } | Where-Object { $_ -like "*.nupkg" } | Sort-Object)
 
             $download = Invoke-NativeCapture "gh" @("release", "download", $tag, "--repo", $Repo, "--pattern", "releases.win.json", "--dir", $scratch, "--clobber")
             if ($download.ExitCode -ne 0) {
-                Write-Host "  $tag has no feed; skipped." -ForegroundColor DarkGray
-                continue
+                # A release that has no feed is drift; failing to fetch one is not.
+                if ("$($download.Output)" -match '404|Not Found') {
+                    Write-Host "  $tag has no feed." -ForegroundColor Yellow
+                    $failures.Add("$tag : releases.win.json is missing")
+                    continue
+                }
+
+                Write-Host "Could not download the feed of $tag (gh exit $($download.ExitCode)); this is not release drift." -ForegroundColor Yellow
+                exit 3
             }
 
             $feed = Get-Content (Join-Path $scratch "releases.win.json") -Raw | ConvertFrom-Json
@@ -247,7 +265,8 @@ function Invoke-ChainVerification {
 
     $verifier = Join-Path $PSScriptRoot "ReleaseVerifier\ReleaseVerifier.csproj"
     if (-not (Test-Path $verifier)) {
-        throw "build/ReleaseVerifier/ReleaseVerifier.csproj is missing; cannot verify the delta chain."
+        Write-Host "build/ReleaseVerifier/ReleaseVerifier.csproj is missing, so the check cannot run. That is not release drift." -ForegroundColor Yellow
+        exit 3
     }
 
     $list = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", "20", "--json", "tagName", "--jq", ".[].tagName")
@@ -281,9 +300,23 @@ function Invoke-ChainVerification {
         (Compare-Semver $_ $baseVersion) -gt 0 -and (Compare-Semver $_ $TargetVersion) -le 0
     }).Count
 
+    # Build separately from the run: a compile error means the check never ran, and dotnet
+    # would otherwise report it with the same exit code as a failed verification.
+    $buildExit = Invoke-Native "dotnet" @("build", $verifier, "-c", "Release", "--nologo", "-v", "quiet")
+    if ($buildExit -ne 0) {
+        Write-Host "build/ReleaseVerifier could not be built (exit $buildExit), so the check never ran. That is not release drift." -ForegroundColor Yellow
+        exit 3
+    }
+
+    $verifierDll = @(Get-ChildItem (Join-Path $PSScriptRoot "ReleaseVerifier\bin\Release\*\ReleaseVerifier.dll") -File | Select-Object -First 1)
+    if (-not $verifierDll) {
+        Write-Host "ReleaseVerifier.dll was not produced by the build, so the check never ran. That is not release drift." -ForegroundColor Yellow
+        exit 3
+    }
+
     Write-Host "Verifying $baseVersion -> $TargetVersion through $expected delta(s) on $Repo..." -ForegroundColor Cyan
     $verifyExit = Invoke-Native "dotnet" @(
-        "run", "--project", $verifier, "-c", "Release", "--",
+        $verifierDll.FullName,
         "--repo", $Repo, "--from", $baseVersion, "--target", $TargetVersion, "--expect", "$expected")
 
     # Exit code 3 means GitHub refused or never answered, which is not release drift and

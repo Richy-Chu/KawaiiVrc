@@ -11,18 +11,36 @@ on:
       - "build/hooks/**"
       - "build/*.ps1"
       - "build/*.psd1"
+      - "build/ReleaseVerifier/**"
   pull_request:
     paths:
       - ".github/workflows/**"
       - "build/hooks/**"
       - "build/*.ps1"
       - "build/*.psd1"
+      - "build/ReleaseVerifier/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  verifier:
+    # The classification decides whether a failure opens a drift issue, so test it without
+    # needing GitHub.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Test verifier exit-code classification
+        shell: pwsh
+        run: pwsh -NoProfile -File build/test-exit-codes.ps1
+
   actionlint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
