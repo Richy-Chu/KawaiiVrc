@@ -10,6 +10,15 @@ $label = "release-verification"
 if (-not $repo) { throw "REPO is not set." }
 if (-not $runUrl) { throw "RUN_URL is not set." }
 
+# A rate limit or network failure says nothing about the releases, so leave the issue state
+# alone and surface it as an infrastructure warning instead.
+$failureKind = "$($env:FAILURE_KIND)".Trim()
+if ($outcome -eq "failure" -and $failureKind -eq "infrastructure") {
+    Write-Host "::warning::Release verification could not reach GitHub (rate limit, auth or network). Not reported as release drift."
+    Write-Host "Left the drift issue untouched: $runUrl"
+    exit 0
+}
+
 # Idempotent: creates the label on the first run and leaves it alone after that.
 gh label create $label --repo $repo --description "Automated release feed and delta chain checks" --color "BFD4F2" --force | Out-Null
 

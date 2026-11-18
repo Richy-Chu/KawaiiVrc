@@ -285,6 +285,14 @@ function Invoke-ChainVerification {
     $verifyExit = Invoke-Native "dotnet" @(
         "run", "--project", $verifier, "-c", "Release", "--",
         "--repo", $Repo, "--from", $baseVersion, "--target", $TargetVersion, "--expect", "$expected")
+
+    # Exit code 3 means GitHub refused or never answered, which is not release drift and
+    # must not be reported as such. The caller turns this into an infrastructure failure.
+    if ($verifyExit -eq 3) {
+        Write-Host "The chain check could not reach GitHub (rate limit, auth or network); this is not release drift." -ForegroundColor Yellow
+        exit 3
+    }
+
     if ($verifyExit -ne 0) {
         throw "Delta chain verification failed: $baseVersion -> $TargetVersion."
     }

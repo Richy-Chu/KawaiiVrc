@@ -2,6 +2,13 @@
 # pack-release.ps1. The workflow passes REPO and the optional inputs through its env: block.
 $ErrorActionPreference = "Stop"
 
+# Records why the check failed, so an unreachable GitHub is not reported as release drift.
+function Write-FailureKind([string]$Kind) {
+    if ($env:GITHUB_OUTPUT) {
+        Add-Content -Path $env:GITHUB_OUTPUT -Value "failureKind=$Kind"
+    }
+}
+
 $repo = $env:REPO
 $version = "$($env:INPUT_VERSION)".Trim()
 $from = "$($env:INPUT_FROM)".Trim()
@@ -12,6 +19,11 @@ if (-not $repo) { throw "REPO is not set." }
 # prepared, so default to what is actually on GitHub.
 if (-not $version) {
     $version = @(gh release list --repo $repo --limit 1 --json tagName --jq ".[].tagName") -join ""
+    $ghExit = $LASTEXITCODE
+    if ($ghExit -ne 0) {
+        Write-FailureKind "infrastructure"
+        throw "Could not list releases on $repo (gh exit $ghExit); this is not release drift."
+    }
     $version = $version.Trim() -replace "^v", ""
 }
 if (-not $version) { throw "No release to verify on $repo." }
@@ -24,4 +36,9 @@ $arguments = @(
 if ($from) { $arguments += @("-VerifyFrom", $from) }
 
 pwsh @arguments
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$exit = $LASTEXITCODE
+if ($exit -ne 0) {
+    # 3 is passed up by pack-release.ps1 when GitHub refused or never answered.
+    if ($exit -eq 3) { Write-FailureKind "infrastructure" } else { Write-FailureKind "drift" }
+    exit $exit
+}

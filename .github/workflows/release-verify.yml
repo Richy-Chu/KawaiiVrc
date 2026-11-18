@@ -67,6 +67,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OUTCOME: ${{ steps.verify.outcome }}
+          # "infrastructure" when GitHub refused the check, so no drift issue is opened.
+          FAILURE_KIND: ${{ steps.verify.outputs.failureKind }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: pwsh -NoProfile -File build/report-drift.ps1

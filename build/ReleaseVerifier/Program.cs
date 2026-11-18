@@ -7,7 +7,8 @@ using Velopack.Sources;
 
 // Proves that an install of an older release updates to the target release using delta
 // packages only, resolved from GitHub the same way the app's updater resolves them.
-// Exit codes: 0 verified, 1 verification failed, 2 bad arguments.
+// Exit codes: 0 verified, 1 verification failed, 2 bad arguments, 3 could not reach GitHub
+// (rate limit, auth or transport), which says nothing about the release itself.
 
 var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 for (var i = 0; i < args.Length; i++)
@@ -54,8 +55,12 @@ try
         using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode)
         {
-            Console.WriteLine($"FAIL: base package download returned {(int)response.StatusCode}.");
-            return 1;
+            var status = (int)response.StatusCode;
+            var transport = status is 401 or 403 or 408 or 429 || status >= 500;
+            Console.WriteLine(transport
+                ? $"FAIL: base package download returned {status}; GitHub refused the request, not release drift."
+                : $"FAIL: base package download returned {status}.");
+            return transport ? 3 : 1;
         }
 
         await using var file = File.Create(basePackagePath);
@@ -135,7 +140,26 @@ try
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"FAIL: {ex.GetType().Name}: {ex.Message}");
+    var exitCode = ExitCodeFor(ex);
+    Console.WriteLine(exitCode == 3
+        ? $"INFRASTRUCTURE: {ex.GetType().Name}: {ex.Message}"
+        : $"FAIL: {ex.GetType().Name}: {ex.Message}");
+    return exitCode;
+}
+
+// An auth, rate-limit, server or transport failure says nothing about the releases, so it
+// gets its own exit code instead of looking like drift.
+static int ExitCodeFor(Exception ex)
+{
+    if (ex is TaskCanceledException) { return 3; }
+    if (ex is HttpRequestException { StatusCode: null }) { return 3; }
+
+    if (ex is HttpRequestException { StatusCode: { } status })
+    {
+        var code = (int)status;
+        if (code is 401 or 403 or 408 or 429 || code >= 500) { return 3; }
+    }
+
     return 1;
 }
 
