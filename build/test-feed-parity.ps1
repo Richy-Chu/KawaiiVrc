@@ -260,7 +260,7 @@ $checks = @(
     @{ Name = "clean tree publishes"; Mode = "view-absent"; GitMode = "clean"; Expected = 0; Marker = "Published v$projectVersion to"; Arguments = $readyArguments },
     @{ Name = "dirty tree is refused"; Mode = "view-absent"; GitMode = "dirty"; Expected = 1; Marker = "Working tree has uncommitted changes"; Arguments = $readyArguments },
     @{ Name = "status check errors"; Mode = "view-absent"; GitMode = "status-error"; Expected = 1; Marker = "git status failed"; Arguments = $readyArguments },
-    @{ Name = "unreadable repo is not an absent tag"; Mode = "repo-unreadable"; Expected = 1; Marker = "Could not read owner/repo"; Arguments = $publishArguments }
+    @{ Name = "unreadable repo refused before the build"; Mode = "repo-unreadable"; Expected = 1; Marker = "Could not read owner/repo"; Arguments = $publishArguments }
 )
 
 $savedPath = $env:PATH

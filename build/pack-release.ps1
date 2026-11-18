@@ -160,6 +160,19 @@ function Test-ReleaseReadiness {
         throw "VrcCompanion.csproj is at $projectVersion but the release is $Version. Bump <Version> first so the tag matches the build."
     }
 
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "GitHub CLI (gh) is required to publish. Re-run with -SkipUpload to pack only."
+    }
+
+    # gh answers "release not found" both for an absent tag and for a repository it cannot
+    # read, so prove the repository is readable before spending a build on it. -AllowDirty
+    # covers the working tree only, so this check sits above it.
+    $repoView = Invoke-NativeCapture "gh" @("repo", "view", $Repo, "--json", "nameWithOwner")
+    if ($repoView.ExitCode -ne 0) {
+        $repoText = (($repoView.Output | ForEach-Object { "$_" }) -join " ") -replace '\s+', ' '
+        throw "Could not read $Repo (gh exit $($repoView.ExitCode)); refusing to build a release for it: $repoText"
+    }
+
     if ($AllowDirty) {
         Write-Host "  Working tree check skipped (-AllowDirty)." -ForegroundColor Yellow
         return
@@ -502,23 +515,10 @@ if ($SkipUpload) {
     return
 }
 
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-    throw "GitHub CLI (gh) is required to publish. Re-run with -SkipUpload to pack only."
-}
-
 $tag = "v$Version"
 $view = Invoke-NativeCapture "gh" @("release", "view", $tag, "--repo", $Repo)
 if ($view.ExitCode -eq 0) {
     throw "Release $tag already exists on $Repo. Bump the version instead of reusing a tag."
-}
-
-# gh answers "release not found" both for an absent tag and for a repository it cannot
-# read, so its message cannot tell the two apart. Ask about the repository itself before
-# treating the tag as free, or a typo in -Repo publishes into nothing.
-$repoView = Invoke-NativeCapture "gh" @("repo", "view", $Repo, "--json", "nameWithOwner")
-if ($repoView.ExitCode -ne 0) {
-    $repoText = (($repoView.Output | ForEach-Object { "$_" }) -join " ") -replace '\s+', ' '
-    throw "Could not read $Repo (gh exit $($repoView.ExitCode)), so whether $tag exists is unknown: $repoText"
 }
 
 # Only "not found" means the tag is free. A rate limit or auth error reads the same way to
