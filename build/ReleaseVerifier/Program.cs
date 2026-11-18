@@ -37,15 +37,6 @@ if (options.TryGetValue("classify-status", out var rawStatus) && int.TryParse(ra
     return mapped;
 }
 
-// Diagnostic used by build/test-exit-codes.ps1: proves a missing patcher maps to the
-// infrastructure code, using a scratch search root so no real files on the machine move.
-if (options.ContainsKey("classify-missing-update-exe"))
-{
-    var scratch = Path.Combine(Path.GetTempPath(), "kawaiivrc-no-update-exe");
-    Directory.CreateDirectory(scratch);
-    return TryResolvePatcher(options, scratch, out _) ? 0 : 3;
-}
-
 string Required(string name)
 {
     if (options.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value)) { return value; }
@@ -76,7 +67,7 @@ var basePackagePath = Path.Combine(packages, basePackageName);
 
 // Resolve the patcher before downloading: without it nothing can be verified, and there is
 // no point fetching the whole base package first.
-if (!TryResolvePatcher(options, searchRoot: null, out var updateExeSource)) { return 3; }
+if (!TryResolvePatcher(options, out var updateExeSource)) { return 3; }
 
 try
 {
@@ -89,7 +80,7 @@ try
         if (!response.IsSuccessStatusCode)
         {
             var status = (int)response.StatusCode;
-            var transport = status is 401 or 403 or 408 or 429 || status >= 500;
+            var transport = IsTransport(status);
             Console.WriteLine(transport
                 ? $"FAIL: base package download returned {status}; GitHub refused the request, not release drift."
                 : $"FAIL: base package download returned {status}.");
@@ -100,7 +91,7 @@ try
         await response.Content.CopyToAsync(file);
     }
 
-        var updateExe = Path.Combine(root, "Update.exe");
+    var updateExe = Path.Combine(root, "Update.exe");
     File.Copy(updateExeSource, updateExe, overwrite: true);
     Console.WriteLine($"update {updateExeSource}");
 
@@ -181,45 +172,30 @@ catch (Exception ex)
 
 // An auth, rate-limit, server or transport failure says nothing about the releases, so it
 // gets its own exit code instead of looking like drift.
-static int ExitCodeFor(Exception ex)
+static int ExitCodeFor(Exception ex) => ex switch
 {
-    if (ex is TaskCanceledException) { return 3; }
-    if (ex is HttpRequestException { StatusCode: null }) { return 3; }
+    TaskCanceledException => 3,
+    HttpRequestException { StatusCode: null } => 3,
+    HttpRequestException { StatusCode: { } status } when IsTransport((int)status) => 3,
+    _ => 1
+};
 
-    if (ex is HttpRequestException { StatusCode: { } status })
-    {
-        var code = (int)status;
-        if (code is 401 or 403 or 408 or 429 || code >= 500) { return 3; }
-    }
+static bool IsTransport(int status) => status is 401 or 403 or 408 or 429 || status >= 500;
 
-    return 1;
-}
-
-// Packages carry only app files; Update.exe ships with the vpk tool (vendor/update.exe)
-// and is also installed next to an installed app. Either copy can drive the patcher.
-static string ResolveUpdateExe(Dictionary<string, string> options, string? searchRoot = null)
+// Packages carry only app files; Update.exe ships with the vpk tool (vendor/update.exe) and
+// is also installed next to an installed app.
+static string ResolveUpdateExe(Dictionary<string, string> options)
 {
-    if (options.TryGetValue("update-exe", out var given) && File.Exists(given)) { return given; }
-
-    // A search root replaces the real lookup, so the missing-tool path can be exercised
-    // without moving files that belong to the machine.
-    if (searchRoot is not null)
+    if (options.TryGetValue("update-exe", out var given))
     {
-        var candidate = Path.Combine(searchRoot, "Update.exe");
-        if (File.Exists(candidate)) { return candidate; }
-        throw NoPatcher();
+        // An explicit path that is not there is a mistake, not a reason to fall back to
+        // whichever other copy happens to be installed.
+        if (!File.Exists(given)) { throw NoPatcher(); }
+        return given;
     }
 
-    var store = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "tools", ".store", "vpk");
-    if (Directory.Exists(store))
-    {
-        var vendored = Directory
-            .GetFiles(store, "update.exe", SearchOption.AllDirectories)
-            .OrderByDescending(path => path)
-            .FirstOrDefault();
-        if (vendored is not null) { return vendored; }
-    }
+    var vendored = VendoredUpdateExe();
+    if (vendored is not null) { return vendored; }
 
     var installed = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KawaiiVrc", "Update.exe");
@@ -228,16 +204,28 @@ static string ResolveUpdateExe(Dictionary<string, string> options, string? searc
     throw NoPatcher();
 }
 
+static string? VendoredUpdateExe()
+{
+    var store = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "tools", ".store", "vpk");
+    if (!Directory.Exists(store)) { return null; }
+
+    return Directory
+        .GetFiles(store, "update.exe", SearchOption.AllDirectories)
+        .OrderByDescending(path => path)
+        .FirstOrDefault();
+}
+
 static FileNotFoundException NoPatcher() => new(
     "No Update.exe found. Install the vpk tool (dotnet tool install -g vpk) or pass --update-exe <path>.");
 
-// A missing patcher is a tooling problem, so it reports the infrastructure exit code and
-// the callers never mistake it for a failed verification.
-static bool TryResolvePatcher(Dictionary<string, string> options, string? searchRoot, out string source)
+// A missing patcher is a tooling problem, so it reports the infrastructure exit code and the
+// caller never mistakes it for a failed verification.
+static bool TryResolvePatcher(Dictionary<string, string> options, out string source)
 {
     try
     {
-        source = ResolveUpdateExe(options, searchRoot);
+        source = ResolveUpdateExe(options);
         return true;
     }
     catch (FileNotFoundException ex)
