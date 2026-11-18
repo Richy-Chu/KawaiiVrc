@@ -72,9 +72,11 @@ try {
     }
     $arguments += @('-VerifyOnly', '-Version', '1.0.0', '-Repo', 'owner/repo')
 
+    # Markers come from the plain messages, not the rendered error record: PowerShell wraps
+    # that record with a gutter that ends up inside the text on Linux.
     $checks = @(
-        @{ Name = "feed asset missing"; HasFeed = "0"; Expected = 1; Marker = "releases.win.json is missing" },
-        @{ Name = "listed feed will not download"; HasFeed = "1"; Expected = 3; Marker = "not release drift" }
+        @{ Name = "feed asset missing"; HasFeed = "0"; Expected = 1; Marker = "has no feed asset" },
+        @{ Name = "listed feed will not download"; HasFeed = "1"; Expected = 3; Marker = "Could not download the feed" }
     )
 
     foreach ($check in $checks) {
