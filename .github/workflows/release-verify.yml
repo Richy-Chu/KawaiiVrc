@@ -21,6 +21,8 @@ on:
 
 permissions:
   contents: read
+  # Opening and closing the drift issue; nothing here writes to code, tags or releases.
+  issues: write
 
 concurrency:
   group: release-verification
@@ -48,9 +50,19 @@ jobs:
           $projects = @("VrcCompanion/VrcCompanion.csproj", "build/ReleaseVerifier/ReleaseVerifier.csproj")
           $versions = @($projects | ForEach-Object {
             if (-not (Test-Path $_)) { throw "Missing project file: $_" }
-            $match = Select-String -Path $_ -Pattern 'Include="Velopack"\s+Version="([^"]+)"' | Select-Object -First 1
-            if (-not $match) { throw "No Velopack PackageReference found in $_." }
-            $match.Matches[0].Groups[1].Value
+            # Read the project as XML so attribute, child-element and multi-line forms all work.
+            $doc = [xml](Get-Content -Raw $_)
+            $reference = $null
+            foreach ($group in @($doc.Project.ItemGroup)) {
+              foreach ($item in @($group.PackageReference)) {
+                if ($item -and $item.Include -eq "Velopack") { $reference = $item; break }
+              }
+              if ($reference) { break }
+            }
+
+            if (-not $reference) { throw "No Velopack PackageReference found in $_." }
+            if (-not $reference.Version) { throw "Velopack in $_ has no Version." }
+            "$($reference.Version)".Trim()
           })
 
           # A patcher older than the Velopack package would test a different delta path
@@ -66,6 +78,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "vpk $version could not be installed." }
 
       - name: Verify feeds and delta chain
+        id: verify
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -90,3 +103,52 @@ jobs:
 
           pwsh @arguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Drift is only visible in the Actions tab otherwise, so a failure leaves a standing
+      # issue that the next passing run closes. Runs even when the check above failed.
+      - name: Report drift as an issue
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTCOME: ${{ steps.verify.outcome }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # env: values reach the script as environment variables, not PowerShell variables.
+          $repo = $env:REPO
+          $runUrl = $env:RUN_URL
+          $outcome = $env:OUTCOME
+          $label = "release-verification"
+
+          # Idempotent: creates the label on the first run and leaves it alone after that.
+          gh label create $label --repo $repo --description "Automated release feed and delta chain checks" --color "BFD4F2" --force | Out-Null
+
+          $open = @(gh issue list --repo $repo --label $label --state open --json number --jq ".[0].number") -join ""
+          $open = $open.Trim()
+
+          if ($outcome -eq "failure") {
+            $body = @(
+              "The release verification failed: $runUrl",
+              "",
+              "It checks that every release's nupkgs match its own feed and that an install two releases back still reaches the latest release through delta patches only.",
+              "",
+              "Fix the release assets, then re-run it from the Actions tab: Release verification -> Run workflow."
+            ) -join "`n"
+
+            if ($open) {
+              gh issue comment $open --repo $repo --body "Still failing: $runUrl"
+              Write-Host "Commented on issue #$open."
+            }
+            else {
+              $created = gh issue create --repo $repo --title "Release verification is failing" --label $label --body $body
+              Write-Host "Opened issue $created."
+            }
+          }
+          elseif ($open) {
+            gh issue close $open --repo $repo --comment "Passing again: $runUrl"
+            Write-Host "Closed issue #$open."
+          }
+          else {
+            Write-Host "Verification passed and no open drift issue."
+          }
