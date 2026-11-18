@@ -27,9 +27,11 @@ param(
     [string]$NotesFile,
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
+    [int]$HistoryDepth = 3,
     [switch]$FrameworkDependent,
     [switch]$SkipPublish,
-    [switch]$SkipUpload
+    [switch]$SkipUpload,
+    [switch]$SkipFetch
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +55,23 @@ function Invoke-Native {
     try {
         & $Exe @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
         return $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
+function Invoke-NativeCapture {
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = @(& $Exe @Arguments 2>&1)
+        return [pscustomobject]@{ Output = $output; ExitCode = $LASTEXITCODE }
     }
     finally {
         $ErrorActionPreference = $previous
@@ -118,13 +137,24 @@ if (-not $SkipPublish) {
     if ($publishExit -ne 0) { throw "dotnet publish failed with exit code $publishExit." }
 }
 
-# Velopack only builds delta packages when it can see the previous release's nupkg,
-# so pull the last release's packages into the output folder first.
-if (-not $SkipUpload) {
-    Write-Host "Fetching the previous release packages for delta updates..." -ForegroundColor Cyan
-    $downloadExit = Invoke-Native "gh" @("release", "download", "--repo", $Repo, "--pattern", "*.nupkg", "--dir", $releasesDir)
-    if ($downloadExit -ne 0) {
-        Write-Host "  No previous release found; this will be a full-only release." -ForegroundColor DarkGray
+# Velopack builds one delta per older package it can see, so a user who skipped
+# a release still downloads a small patch instead of the full package. Pull the
+# nupkgs for the last few releases into the output folder before packing.
+if (-not $SkipFetch) {
+    Write-Host "Fetching the last $HistoryDepth releases for delta updates..." -ForegroundColor Cyan
+    $releaseList = Invoke-NativeCapture "gh" @("release", "list", "--repo", $Repo, "--limit", $HistoryDepth, "--json", "tagName", "--jq", ".[].tagName")
+    if ($releaseList.ExitCode -ne 0 -or -not $releaseList.Output) {
+        Write-Host "  No previous releases found; this will be a full-only release." -ForegroundColor DarkGray
+    }
+    else {
+        foreach ($tag in $releaseList.Output) {
+            $tag = "$tag".Trim()
+            if ($tag -notmatch '^v?\d') { continue }
+            $downloadExit = Invoke-Native "gh" @("release", "download", $tag, "--repo", $Repo, "--pattern", "*.nupkg", "--dir", $releasesDir, "--skip-existing")
+            if ($downloadExit -ne 0) {
+                Write-Host "  Could not fetch $tag packages; older versions will get the full download." -ForegroundColor DarkGray
+            }
+        }
     }
 }
 
@@ -154,8 +184,10 @@ if ($packExit -ne 0) { throw "vpk pack failed with exit code $packExit." }
 
 $assets = Get-ChildItem $releasesDir -File | Where-Object {
     ($_.Extension -in @(".exe", ".nupkg", ".json", ".zip") -or $_.Name -eq "RELEASES") -and
-    # Older nupkgs are downloaded for deltas only; uploading them would bloat every release.
-    ($_.Extension -ne ".nupkg" -or $_.Name -like "*$Version*")
+    # Old full packages are only inputs for delta generation, so they stay local. Old
+    # deltas are uploaded: Velopack looks up every package in the latest release, and a
+    # client that skipped versions needs each patch to chain from its installed one.
+    -not ($_.Name -like "*-full.nupkg" -and $_.Name -notlike "*$Version*")
 }
 
 if (-not $assets) { throw "vpk produced no release assets in $releasesDir." }
