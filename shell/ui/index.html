@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KawaiiVrc · Rust shell</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="dot"></span>
+        <div>
+          <h1>KawaiiVrc <span>Rust shell</span></h1>
+          <p id="account">reading your local data…</p>
+        </div>
+      </div>
+      <div class="chips" id="chips"></div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="activity">Activity</button>
+      <button class="tab" data-tab="instances">Instance history</button>
+      <input id="search" type="search" placeholder="Filter activity…" autocomplete="off" />
+    </nav>
+
+    <main>
+      <section id="activity" class="pane active">
+        <div id="activity-list" class="list"></div>
+      </section>
+      <section id="instances" class="pane">
+        <div id="instance-list" class="list"></div>
+      </section>
+    </main>
+
+    <footer id="status">Connecting to the Rust core…</footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
