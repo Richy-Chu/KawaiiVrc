@@ -398,6 +398,10 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                 {
                     return "Loading world…";
                 }
+
+                // The picture knows its players but not where it was taken;
+                // the folder name ("VRChat") is not a world, so do not show it.
+                return "Unknown world";
             }
 
             return _selectedMedia?.WorldName ?? string.Empty;
@@ -538,6 +542,28 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private VrcPhotoMetadata? MetadataForViewer(MediaItem item)
     {
         var own = item.EmbeddedMetadata;
+
+        // VRCX sometimes writes the players but an empty world (it did not know
+        // where you were yet). The world is in the neighbouring shots, so fill
+        // that in while keeping this picture's own roster.
+        if (own is { HasWorld: false })
+        {
+            var worldOnly = FindNearbyWorld(item);
+            if (worldOnly is not null)
+            {
+                own = new VrcPhotoMetadata
+                {
+                    WorldId = worldOnly.WorldId,
+                    WorldName = worldOnly.WorldName,
+                    InstanceId = own.InstanceId.Length > 0 ? own.InstanceId : worldOnly.InstanceId,
+                    AuthorId = string.IsNullOrWhiteSpace(own.AuthorId) ? worldOnly.AuthorId : own.AuthorId,
+                    AuthorName = string.IsNullOrWhiteSpace(own.AuthorName) ? worldOnly.AuthorName : own.AuthorName,
+                    TakenAt = own.TakenAt ?? worldOnly.TakenAt,
+                    Players = own.Players
+                };
+            }
+        }
+
         if (own is { HasPlayers: true } && !string.IsNullOrWhiteSpace(own.InstanceId))
         {
             return own;
@@ -601,6 +627,29 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                     .Take(48),
                 own)
             : null;
+    }
+
+    /// <summary>The nearest shot of the same session that knows its world.</summary>
+    private VrcPhotoMetadata? FindNearbyWorld(MediaItem item)
+    {
+        var folder = Path.GetDirectoryName(item.Path);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return null;
+        }
+
+        var candidates = _allItems
+            .Where(other =>
+                !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
+                string.Equals(Path.GetDirectoryName(other.Path), folder, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
+            .ToList();
+
+        // Nearest in time first, within the same session day.
+        return candidates
+            .Where(other => Math.Abs((other.TakenAt - item.TakenAt).TotalHours) <= 6)
+            .Select(other => other.EmbeddedMetadata)
+            .FirstOrDefault(metadata => metadata is { HasWorld: true });
     }
 
     private static VrcPhotoMetadata? ClosestWithPlayers(IEnumerable<MediaItem> candidates, VrcPhotoMetadata? own)
@@ -918,7 +967,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         {
             items = items.Where(item =>
                 string.Equals(
-                    WorldKeyFor(item.Context?.WorldId, item.DisplayWorldName),
+                    WorldKeyFor(item.Context?.WorldId, WorldLabelOf(item)),
                     _worldFilterKey,
                     StringComparison.OrdinalIgnoreCase));
         }
@@ -1017,12 +1066,13 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         PeopleFilters.Clear();
 
         foreach (var group in _allItems
-                     .Where(item => item.Context is not null)
-                     .GroupBy(item => WorldKeyFor(item.Context!.WorldId, item.DisplayWorldName))
+                     .Where(item => item.Context is { HasWorld: true } or { HasWorldName: true } ||
+                                    !string.Equals(item.WorldName, "VRChat", StringComparison.OrdinalIgnoreCase))
+                     .GroupBy(item => WorldKeyFor(item.Context?.WorldId, WorldLabelOf(item)))
                      .Select(group => new
                      {
                          Key = group.Key,
-                         Label = group.Select(item => item.DisplayWorldName)
+                         Label = group.Select(WorldLabelOf)
                              .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? "Unknown world",
                          ImageUrl = group.Select(item => item.Context?.WorldThumbnailUrl ?? string.Empty)
                              .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url)) ?? string.Empty,
@@ -1165,6 +1215,23 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         }
 
         ApplyFilters();
+    }
+
+    /// <summary>
+    /// The log knows the world id before the API knows its name, and pictures
+    /// kept in a per-world folder can use that folder. "VRChat" is the default
+    /// folder, not a world, so it must not become a filter entry.
+    /// </summary>
+    private static string WorldLabelOf(MediaItem item)
+    {
+        if (item.Context is { HasWorldName: true } context)
+        {
+            return context.WorldName;
+        }
+
+        return string.Equals(item.WorldName, "VRChat", StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : item.WorldName;
     }
 
     private static string WorldKeyFor(string? worldId, string? worldName) =>

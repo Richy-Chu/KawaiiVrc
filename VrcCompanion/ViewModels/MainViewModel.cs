@@ -513,8 +513,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OpenMediaWorldCommand = Track(new AsyncRelayCommand<MediaContext>(
             context => OpenContinuityWorldAsync(context.WorldId),
             context => context is { HasWorld: true } && !IsBusy));
-        OpenMediaSessionCommand = Track(new RelayCommand<MediaContext>(
-            OpenMediaSession,
+        OpenMediaSessionCommand = Track(new AsyncRelayCommand<MediaContext>(
+            OpenMediaSessionAsync,
             context => context is { CanOpenSessionView: true }));
         OpenMediaGroupCommand = Track(new RelayCommand<MediaContext>(
             OpenMediaGroup,
@@ -2391,7 +2391,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public AsyncRelayCommand<MediaContext> OpenMediaWorldCommand { get; }
 
-    public RelayCommand<MediaContext> OpenMediaSessionCommand { get; }
+    public AsyncRelayCommand<MediaContext> OpenMediaSessionCommand { get; }
 
     public RelayCommand<MediaContext> OpenMediaGroupCommand { get; }
     public RelayCommand CloseFriendDetailCommand { get; }
@@ -5789,7 +5789,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             user.CurrentAvatarImageUrl,
             256) ?? string.Empty;
 
-    private void OpenMediaSession(MediaContext? context)
+    private async Task OpenMediaSessionAsync(MediaContext? context)
     {
         if (context is null || InstanceHistoryViewModel is null || !context.CanOpenSessionView)
         {
@@ -5801,6 +5801,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             InstanceHistoryViewModel.ShowSession(context.SessionId, context.Location, context.JoinedAt);
             return;
+        }
+
+        // The card draws the world's name, thumbnail and creator, so fetch them
+        // first instead of opening a card with a bare name.
+        if (context.HasWorld && !context.HasWorldThumbnail)
+        {
+            var info = await FetchMediaWorldAsync(context.WorldId);
+            if (info is not null)
+            {
+                context.ApplyWorldInfo(info.Name, info.ThumbnailUrl, info.AuthorName);
+            }
         }
 
         // The picture carried the world, instance and roster itself; show that

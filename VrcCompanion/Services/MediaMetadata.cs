@@ -275,11 +275,14 @@ public sealed class MediaContext
             JoinedAt = JoinedAt,
             LeftAt = LeftAt ?? LastSeenAt,
             LastSeenAt = LastSeenAt,
+            OwnerId = string.Empty,
+            OwnerName = WorldAuthorName,
             Players = People
                 .Select(person => new InstanceHistoryPlayer
                 {
                     UserId = person.UserId,
-                    DisplayName = person.DisplayName
+                    DisplayName = person.DisplayName,
+                    AvatarUrl = person.AvatarUrl
                 })
                 .ToList()
         };

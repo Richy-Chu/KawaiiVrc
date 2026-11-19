@@ -304,6 +304,68 @@ public class PhotoMetadataTests
     }
 
     [Fact]
+    public async Task PhotoWithPlayersButNoWorldBorrowsTheNeighboursWorld()
+    {
+        // VRCX writes an empty world when it did not know the instance yet.
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        const string emptyWorldJson = """
+{"application":"VRCX","version":1,"author":{"id":"usr_a","displayName":"Aya"},"world":{"name":"","id":"","instanceId":""},"players":[{"id":"usr_a","displayName":"Aya"},{"id":"usr_b","displayName":"Bob"}]}
+""";
+        var noWorld = Path.Combine(root, "VRChat_2026-08-02_15-36-47.768_1920x1080.png");
+        File.WriteAllBytes(noWorld, BuildPng(("Description", emptyWorldJson)));
+        var withWorld = Path.Combine(root, "VRChat_2026-08-02_15-36-20.000_1920x1080.png");
+        File.WriteAllBytes(withWorld, BuildPng(("XML:com.adobe.xmp", Xmp)));
+
+        var picture = new MediaItem(noWorld, "VRChat", new DateTime(2026, 8, 2, 15, 36, 47));
+        var neighbour = new MediaItem(withWorld, "VRChat", new DateTime(2026, 8, 2, 15, 36, 20));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · August 2026", "VRChat", new DateTime(2026, 8, 1), new[] { picture, neighbour })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"));
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(picture);
+
+        Assert.Equal("Anthro Heat Lockers and Sauna", viewModel.ViewerWorldName);
+        Assert.Equal(new[] { "Aya", "Bob" }, viewModel.ViewerPeople.Select(person => person.DisplayName));
+        Assert.True(viewModel.CanOpenViewerSession);
+    }
+
+    [Fact]
+    public async Task WorldlessPhotoShowsUnknownWorldAndNoVRChatWorldOption()
+    {
+        var path = WritePng(
+            "worldless",
+            "Description",
+            """
+{"application":"VRCX","version":1,"author":{"id":"usr_a","displayName":"Aya"},"world":{"name":"","id":"","instanceId":""},"players":[{"id":"usr_a","displayName":"Aya"}]}
+""");
+        var item = new MediaItem(path, "VRChat", new DateTime(2026, 8, 2, 15, 36, 47));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat", "VRChat", new DateTime(2026, 8, 1), new[] { item })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            Path.GetDirectoryName(path),
+            (_, _) => groups,
+            cachePath: Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".json"));
+
+        await viewModel.LoadAsync(force: true);
+        await viewModel.PhotoContextsTask;
+        viewModel.OpenViewer(item);
+
+        Assert.Equal("Unknown world", viewModel.ViewerWorldName);
+        Assert.False(viewModel.CanOpenViewerWorld);
+        Assert.DoesNotContain(viewModel.WorldFilterOptions, option => option.Label == "VRChat");
+        Assert.True(viewModel.HasViewerPeople);
+    }
+
+    [Fact]
     public void ReadsLegacyMetadataStoredAfterThePixels()
     {
         // LFS and ScreenshotManager put their text chunk after the image data;
