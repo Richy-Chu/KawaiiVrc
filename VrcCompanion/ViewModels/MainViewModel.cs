@@ -350,7 +350,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Pictures are matched to the sessions recorded for the signed-in
         // account, so the Media viewer can show the real world and players.
         MediaViewModel.HistoryProvider = () => CurrentUser is { } user
-            ? _instanceHistoryStore.ForAccount(user.Id)
+            ? BuildMediaHistory(user.Id)
             : Array.Empty<InstanceHistoryEntry>();
         // Group instances name their group; unknown ones are fetched once the
         // picture is open so the viewer does not guess.
@@ -2519,9 +2519,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             WorldRequested = worldId => _ = OpenContinuityWorldAsync(worldId),
             PersonAvatarRequested = ContinuityViewModel.RequestAvatar
         };
-        // Warm the durable local history in the background so the first visit
-        // already has real rows instead of an empty placeholder.
-        _ = ContinuityViewModel.EnsureLoadedAsync();
+        // Continuity is not warmed here: its first load imports VRCX-0 by hand
+        // (thousands of players) and that made the app stutter on launch. The
+        // section loads itself when it is opened, and the persisted store is
+        // still readable by the Media page without that import.
         InstanceViewModel = new InstanceViewModel(_api, _images, _logPlayerService);
         InstanceViewModel.PlayerAvatarChanged += (previous, current) =>
         {
@@ -5797,7 +5798,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         ProfileZIndex = 30;
-        if (context.HasSession)
+        // A row imported from VRCX-0/VRCX/VRCNext lives in the Continuity store,
+        // not in our own log database, so the history popup cannot look it up by
+        // id and would open empty. It carries the whole row instead.
+        var imported = context.SessionId.StartsWith("continuity:", StringComparison.Ordinal);
+        if (context.HasSession && !imported)
         {
             InstanceHistoryViewModel.ShowSession(context.SessionId, context.Location, context.JoinedAt);
             return;
@@ -5818,6 +5823,70 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // as a session card even though no log row exists for it.
         InstanceHistoryViewModel.ShowPhotoSession(context.ToHistoryEntry());
     }
+
+    /// <summary>
+    /// The media library matches pictures against every local history source,
+    /// not just this app's own log: VRCX-0, VRCX and VRCNext rows are imported
+    /// into Continuity, so a picture from 2024 still finds its world and roster.
+    /// </summary>
+    private IReadOnlyList<InstanceHistoryEntry> BuildMediaHistory(string accountUserId)
+    {
+        var entries = _instanceHistoryStore.ForAccount(accountUserId).ToList();
+        var sessions = ContinuityViewModel?.GetSessionsForAccount(accountUserId);
+        if (sessions is null || sessions.Count == 0)
+        {
+            return entries;
+        }
+
+        var seen = new HashSet<string>(
+            entries.Select(entry => MediaSessionKey(entry.WorldId, entry.JoinedAt)),
+            StringComparer.Ordinal);
+        foreach (var session in sessions)
+        {
+            if (string.IsNullOrWhiteSpace(session.WorldId) ||
+                !seen.Add(MediaSessionKey(session.WorldId, session.JoinedAt)))
+            {
+                continue;
+            }
+
+            entries.Add(new InstanceHistoryEntry
+            {
+                Id = "continuity:" + session.Id,
+                AccountUserId = session.AccountUserId,
+                Location = session.Location,
+                WorldId = session.WorldId,
+                InstanceId = LaunchService.GetInstanceIdFromLocation(session.Location) ?? string.Empty,
+                WorldName = session.WorldName,
+                WorldThumbnailUrl = session.WorldThumbnailUrl,
+                WorldAuthorName = session.WorldAuthorName,
+                JoinedAt = session.JoinedAt,
+                LeftAt = session.LeftAt,
+                LastSeenAt = session.LeftAt ?? session.JoinedAt,
+                Players = session.People
+                    .Select(person => new InstanceHistoryPlayer
+                    {
+                        UserId = person.UserId,
+                        DisplayName = person.DisplayName,
+                        AvatarUrl = person.AvatarUrl,
+                        Visits = new List<InstanceHistoryVisit>
+                        {
+                            new()
+                            {
+                                JoinedAt = person.JoinedAt,
+                                LeftAt = person.LeftAt,
+                                LastSeenAt = person.LeftAt ?? person.JoinedAt
+                            }
+                        }
+                    })
+                    .ToList()
+            });
+        }
+
+        return entries;
+    }
+
+    private static string MediaSessionKey(string worldId, DateTimeOffset joinedAt)
+        => string.Concat(worldId ?? string.Empty, "|", joinedAt.ToLocalTime().ToString("yyyyMMddHHmm"));
 
     private void OpenContinuitySession(ContinuitySessionItem session)
     {

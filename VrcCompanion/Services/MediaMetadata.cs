@@ -17,12 +17,20 @@ public sealed class MediaPersonItem : ViewModels.ViewModelBase
     private string _displayName;
     private string _avatarUrl;
 
-    public MediaPersonItem(string userId, string displayName, string avatarUrl, bool isSelf)
+    public MediaPersonItem(
+        string userId,
+        string displayName,
+        string avatarUrl,
+        bool isSelf,
+        DateTimeOffset? joinedAt = null,
+        DateTimeOffset? leftAt = null)
     {
         UserId = userId ?? string.Empty;
         _displayName = string.IsNullOrWhiteSpace(displayName) ? "Unknown player" : displayName.Trim();
         _avatarUrl = avatarUrl ?? string.Empty;
         IsSelf = isSelf;
+        JoinedAt = joinedAt;
+        LeftAt = leftAt;
     }
 
     public string UserId { get; }
@@ -32,6 +40,11 @@ public sealed class MediaPersonItem : ViewModels.ViewModelBase
     public string AvatarUrl => _avatarUrl;
 
     public bool IsSelf { get; }
+
+    /// <summary>When this person was seen in the session the picture belongs to.</summary>
+    public DateTimeOffset? JoinedAt { get; }
+
+    public DateTimeOffset? LeftAt { get; }
 
     public bool HasUserId => !string.IsNullOrWhiteSpace(UserId);
 
@@ -278,11 +291,24 @@ public sealed class MediaContext
             OwnerId = string.Empty,
             OwnerName = WorldAuthorName,
             Players = People
-                .Select(person => new InstanceHistoryPlayer
+                .Select(person =>
                 {
-                    UserId = person.UserId,
-                    DisplayName = person.DisplayName,
-                    AvatarUrl = person.AvatarUrl
+                    var player = new InstanceHistoryPlayer
+                    {
+                        UserId = person.UserId,
+                        DisplayName = person.DisplayName,
+                        AvatarUrl = person.AvatarUrl
+                    };
+                    if (person.JoinedAt is { } joined)
+                    {
+                        player.Visits.Add(new InstanceHistoryVisit
+                        {
+                            JoinedAt = joined,
+                            LeftAt = person.LeftAt,
+                            LastSeenAt = person.LeftAt ?? joined
+                        });
+                    }
+                    return player;
                 })
                 .ToList()
         };
@@ -416,7 +442,9 @@ public static class MediaMetadataResolver
                 player.UserId,
                 player.DisplayName,
                 player.AvatarUrl,
-                string.Equals(player.UserId, accountUserId, StringComparison.Ordinal)));
+                string.Equals(player.UserId, accountUserId, StringComparison.Ordinal),
+                player.FirstJoinedAt == DateTimeOffset.MinValue ? null : player.FirstJoinedAt,
+                player.LastLeftAt));
         }
 
         var (accessLabel, groupId) = InstanceAccessOf(session);

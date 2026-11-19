@@ -6459,7 +6459,6 @@
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
                                                         <Button Grid.Column="0"
-                                                                Style="{StaticResource GhostButton}"
                                                                 Padding="6"
                                                                 HorizontalContentAlignment="Left"
                                                                 Cursor="Hand"
@@ -6467,6 +6466,17 @@
                                                                 Command="{Binding DataContext.OpenMediaPersonCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                 CommandParameter="{Binding}"
                                                                 IsEnabled="{Binding HasUserId}">
+                                                            <Button.Style>
+                                                                <!-- A name VRCX saved without an id cannot open a
+                                                                     profile, but it must not look greyed out. -->
+                                                                <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                                                    <Style.Triggers>
+                                                                        <Trigger Property="IsEnabled" Value="False">
+                                                                            <Setter Property="Opacity" Value="1" />
+                                                                        </Trigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Button.Style>
                                                             <StackPanel Orientation="Horizontal">
                                                                 <Border Width="30" Height="30"
                                                                         CornerRadius="15"

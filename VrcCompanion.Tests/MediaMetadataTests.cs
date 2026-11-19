@@ -66,6 +66,32 @@ public class MediaMetadataTests
     }
 
     [Fact]
+    public void HistoryRowKeepsEachPlayersVisitTimes()
+    {
+        var session = Session("s1", JapanId, "Japan Street", 10, 12);
+        session.Players.Single(player => player.DisplayName == "Alice").Visits.Add(
+            new InstanceHistoryVisit
+            {
+                JoinedAt = Local(2025, 6, 2, 10, 5),
+                LeftAt = Local(2025, 6, 2, 11, 30),
+                LastSeenAt = Local(2025, 6, 2, 11, 30)
+            });
+
+        var context = MediaMetadataResolver.FindContext(
+            Picture("times.png", 11, 0).TakenAt,
+            new[] { session },
+            AccountId)!;
+
+        var visit = context.ToHistoryEntry().Players
+            .Single(player => player.DisplayName == "Alice")
+            .Visits
+            .Single();
+
+        Assert.Equal(Local(2025, 6, 2, 10, 5), visit.JoinedAt);
+        Assert.Equal(Local(2025, 6, 2, 11, 30), visit.LeftAt);
+    }
+
+    [Fact]
     public void SessionListOnlyKeepsPlayersWhoWereThereForThePicture()
     {
         var session = Session("s1", JapanId, "Japan Street", 20, 23);

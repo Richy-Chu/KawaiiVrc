@@ -756,6 +756,15 @@ public sealed class ContinuityViewModel : ViewModelBase
     }
 
     /// <summary>Used by Context when a session card is opened from another view.</summary>
+    /// <summary>
+    /// Every session known from any local source (VRCX-0, VRCX, VRCNext and our
+    /// own log), for views that only have a world and a timestamp to match on.
+    /// </summary>
+    public IReadOnlyList<ContinuitySession> GetSessionsForAccount(string accountUserId, int limit = 5000)
+        => string.IsNullOrWhiteSpace(accountUserId)
+            ? Array.Empty<ContinuitySession>()
+            : _store.GetSessions(accountUserId, null, limit);
+
     public void ShowSession(ContinuitySessionItem session)
     {
         if (session is null)
