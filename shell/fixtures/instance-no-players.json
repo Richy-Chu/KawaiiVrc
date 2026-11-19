@@ -1,0 +1,9 @@
+{
+  "capacity": 20,
+  "world": {
+    "id": "wrld_quiet",
+    "name": "Quiet World",
+    "imageUrl": "https://api.vrchat.cloud/api/1/image/file_quiet/1/256.png",
+    "capacity": 20
+  }
+}

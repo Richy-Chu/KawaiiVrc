@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "KawaiiVrc Shell",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "identifier": "com.kawaiivrc.shell",
   "build": {
     "frontendDist": "ui"
@@ -28,6 +28,18 @@
     "publisher": "KawaiiVrc",
     "category": "Utility",
     "shortDescription": "VRChat companion shell",
-    "icon": ["icons/icon.ico"]
+    "icon": ["icons/icon.ico"],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYwOTVCM0M3MEM2MjI1NTQKUldSVUpXSU14N09WWUNMd05McUNMQ1daTUpuMVRGZFpXUEpsdHViTHYrMDlmOUdPcjFMSFVXL2EK",
+      "endpoints": [
+        "https://github.com/Richy-Chu/KawaiiVrc/releases/latest/download/shell-latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

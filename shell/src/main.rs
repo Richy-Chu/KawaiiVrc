@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod activity;
+mod chatbox;
 mod session;
 mod settings;
+mod updates;
 mod vrchat;
 
 use serde::Serialize;
@@ -409,6 +411,127 @@ fn settings_save(next: settings::ShellSettings) -> Result<(), String> {
     settings::save(&next)
 }
 
+// -------------------------------------------------------- updates + merging
+
+#[derive(Serialize)]
+struct UpdateStatus {
+    available: bool,
+    version: Option<String>,
+    notes: Option<String>,
+    message: String,
+}
+
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> UpdateStatus {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let idle = |message: String| UpdateStatus {
+        available: false,
+        version: None,
+        notes: None,
+        message,
+    };
+
+    let updater = match app.updater() {
+        Ok(updater) => updater,
+        Err(error) => return idle(format!("The updater is not configured: {error}")),
+    };
+
+    match updater.check().await {
+        Ok(Some(update)) => UpdateStatus {
+            available: true,
+            version: Some(update.version.clone()),
+            notes: update.body.clone(),
+            message: format!("Version {} is available.", update.version),
+        },
+        Ok(None) => idle("You are running the newest shell build.".to_string()),
+        Err(error) => idle(format!("Update check failed: {error}")),
+    }
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|error| error.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No update is available.".to_string())?;
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+    app.restart();
+}
+
+#[tauri::command]
+fn send_chatbox(message: String, send: Option<bool>) -> Result<String, String> {
+    chatbox::send(&message, send.unwrap_or(true))?;
+    Ok(format!(
+        "Sent to VRChat's chatbox (OSC at {}).",
+        chatbox::DEFAULT_ADDRESS
+    ))
+}
+
+/// Validates a release manifest before it is uploaded.
+#[tauri::command]
+fn verify_manifest(path: Option<String>) -> Result<updates::Manifest, String> {
+    let path = path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("latest.json"));
+    let raw = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let manifest = updates::parse_manifest(&raw)?;
+    if updates::windows_platform(&manifest).is_none() {
+        return Err("The manifest has no windows-x86_64 entry.".to_string());
+    }
+    if !updates::is_newer(env!("CARGO_PKG_VERSION"), &manifest.version) {
+        return Err(format!(
+            "The manifest offers {}, which is not newer than {}.",
+            manifest.version,
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+    Ok(manifest)
+}
+
+fn companion_running() -> bool {
+    std::process::Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq VrcCompanion.exe", "/NH"])
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).contains("VrcCompanion.exe"))
+        .unwrap_or(false)
+}
+
+/// One-way import of the shell's own events into the history the WPF app owns.
+/// Only allowed while the other app is closed, because it rewrites that file.
+#[tauri::command]
+fn merge_activity() -> Result<String, String> {
+    if companion_running() {
+        return Err(
+            "Close the other KawaiiVrc app first: it rewrites its activity file while running."
+                .to_string(),
+        );
+    }
+
+    let events = activity::ActivityLog::new().load(usize::MAX);
+    if events.is_empty() {
+        return Ok("No shell events to import yet.".to_string());
+    }
+
+    let path = data_dir().join("activity.json");
+    if !path.exists() {
+        return Err(format!("{} does not exist yet.", path.display()));
+    }
+    let account = feed(None, Some(0))?.account;
+    let outcome = activity::merge_into_shared(&path, &account, &events)?;
+    Ok(format!(
+        "Imported {} new events ({} already there); the shared history now has {}.",
+        outcome.imported, outcome.skipped, outcome.total
+    ))
+}
+
 // -------------------------------------------------------------------- report
 
 /// Console output is invisible in a windowed release build, so `--dump` writes
@@ -561,6 +684,7 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::new(Api::new()))
         .register_asynchronous_uri_scheme_protocol("kawaii", |context, request, responder| {
             let app = context.app_handle().clone();
@@ -625,7 +749,12 @@ fn main() {
             instance,
             notifications,
             settings_get,
-            settings_save
+            settings_save,
+            check_update,
+            install_update,
+            verify_manifest,
+            merge_activity,
+            send_chatbox
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the KawaiiVrc shell");

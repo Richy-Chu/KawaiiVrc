@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -114,6 +115,96 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year + i64::from(month <= 2), month as u32, day as u32)
 }
 
+#[derive(Debug, PartialEq)]
+pub struct MergeOutcome {
+    pub imported: usize,
+    pub skipped: usize,
+    pub total: usize,
+}
+
+/// One-way import of shell events into the shared history the WPF app owns.
+/// It is deliberately not a live merge: the WPF app caches that file in memory
+/// and rewrites it wholesale, so a concurrent writer would lose data. The caller
+/// must make sure the other app is closed before calling this.
+pub fn merge_into_shared(
+    shared: &std::path::Path,
+    account_id: &str,
+    events: &[LoggedEvent],
+) -> Result<MergeOutcome, String> {
+    let raw = fs::read_to_string(shared)
+        .map_err(|error| format!("{}: {error}", shared.display()))?;
+    let mut root: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("The shared activity file is not valid JSON: {error}"))?;
+
+    let accounts = root
+        .get_mut("accounts")
+        .and_then(|value| value.as_object_mut())
+        .ok_or_else(|| "The shared activity file has no accounts.".to_string())?;
+    let account = accounts
+        .get_mut(account_id)
+        .ok_or_else(|| format!("Account {account_id} is not in the shared history."))?;
+    let entries = account
+        .get_mut("entries")
+        .and_then(|value| value.as_array_mut())
+        .ok_or_else(|| "That account has no activity entries.".to_string())?;
+
+    let mut known: HashSet<String> = entries
+        .iter()
+        .filter_map(|entry| entry.get("id").and_then(|value| value.as_str()))
+        .map(str::to_string)
+        .collect();
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+    let mut additions = Vec::new();
+    for event in events {
+        if !known.insert(event.id.clone()) {
+            skipped += 1;
+            continue;
+        }
+        imported += 1;
+        additions.push(serde_json::json!({
+            "id": event.id,
+            "type": event.kind,
+            "userId": event.user_id,
+            "userName": "",
+            "displayName": event.display_name,
+            "isSelf": false,
+            "avatarUrl": event.avatar,
+            "location": event.location,
+            "timestamp": event.timestamp,
+            "details": event.details,
+            "isOnline": event.kind == 0,
+        }));
+    }
+
+    additions.sort_by(|left, right| {
+        let left = left.get("timestamp").and_then(|value| value.as_str()).unwrap_or("");
+        let right = right.get("timestamp").and_then(|value| value.as_str()).unwrap_or("");
+        right.cmp(left)
+    });
+    for addition in additions.into_iter().rev() {
+        entries.insert(0, addition);
+    }
+    if entries.len() > 20_000 {
+        entries.truncate(20_000);
+    }
+    let total = entries.len();
+
+    let temp = shared.with_extension("json.shell-tmp");
+    let bytes = serde_json::to_vec(&root).map_err(|error| error.to_string())?;
+    fs::write(&temp, bytes)
+        .map_err(|error| format!("Could not write the merged history: {error}"))?;
+    fs::rename(&temp, shared)
+        .map_err(|error| format!("Could not replace the shared history: {error}"))?;
+
+    Ok(MergeOutcome {
+        imported,
+        skipped,
+        total,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +260,111 @@ mod tests {
         assert_eq!(log.count(), 3);
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_dir(directory);
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    fn event(id: &str, kind: u32, timestamp: &str) -> LoggedEvent {
+        LoggedEvent {
+            id: id.to_string(),
+            kind,
+            user_id: "usr_friend".to_string(),
+            display_name: "Friend".to_string(),
+            avatar: String::new(),
+            location: "offline".to_string(),
+            timestamp: timestamp.to_string(),
+            details: "went offline".to_string(),
+        }
+    }
+
+    fn shared_file(directory: &std::path::Path) -> std::path::PathBuf {
+        let path = directory.join("activity.json");
+        let existing = serde_json::json!({
+            "accounts": {
+                "usr_self": {
+                    "entries": [
+                        { "id": "existing-1", "type": 0, "userId": "usr_friend", "displayName": "Friend",
+                          "timestamp": "2026-11-19T10:00:00.000Z", "details": "came online" },
+                        { "id": "existing-2", "type": 1, "userId": "usr_other", "displayName": "Other",
+                          "timestamp": "2026-11-18T10:00:00.000Z", "details": "went offline" }
+                    ]
+                }
+            }
+        });
+        std::fs::write(&path, serde_json::to_vec(&existing).expect("fixture")).expect("write");
+        path
+    }
+
+    #[test]
+    fn imports_only_new_events_and_keeps_newest_first() {
+        let directory = std::env::temp_dir().join(format!(
+            "kawaii-shell-merge-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&directory);
+        let path = shared_file(&directory);
+
+        let events = vec![
+            event("existing-1", 0, "2026-11-19T10:00:00.000Z"),
+            event("new-1", 1, "2026-11-19T12:00:00.000Z"),
+            event("new-2", 13, "2026-11-19T11:00:00.000Z"),
+        ];
+
+        let outcome = merge_into_shared(&path, "usr_self", &events).expect("merge");
+        assert_eq!(outcome.imported, 2);
+        assert_eq!(outcome.skipped, 1);
+        assert_eq!(outcome.total, 4);
+
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
+        let entries = written["accounts"]["usr_self"]["entries"]
+            .as_array()
+            .expect("entries");
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0]["id"], "new-1");
+        assert_eq!(entries[1]["id"], "new-2");
+        assert_eq!(entries[2]["id"], "existing-1");
+        assert_eq!(entries[0]["type"], 1);
+        assert_eq!(entries[0]["isOnline"], false);
+
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn refuses_an_unknown_account() {
+        let directory = std::env::temp_dir().join(format!(
+            "kawaii-shell-merge-unknown-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&directory);
+        let path = shared_file(&directory);
+
+        let error = merge_into_shared(&path, "usr_missing", &[]).expect_err("must fail");
+        assert!(error.contains("usr_missing"));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn a_second_merge_changes_nothing() {
+        let directory = std::env::temp_dir().join(format!(
+            "kawaii-shell-merge-twice-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&directory);
+        let path = shared_file(&directory);
+        let events = vec![event("new-1", 1, "2026-11-19T12:00:00.000Z")];
+
+        merge_into_shared(&path, "usr_self", &events).expect("first");
+        let second = merge_into_shared(&path, "usr_self", &events).expect("second");
+        assert_eq!(second.imported, 0);
+        assert_eq!(second.skipped, 1);
+        assert_eq!(second.total, 3);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

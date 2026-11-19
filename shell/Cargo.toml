@@ -1,6 +1,6 @@
 [package]
 name = "kawaii-shell"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Experimental Rust + WebView2 core for KawaiiVrc (rewrite stage 2: auth and roster)"
 
@@ -18,6 +18,7 @@ url = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+tauri-plugin-updater = "2"
 
 [profile.release]
 opt-level = "s"

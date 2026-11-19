@@ -32,6 +32,7 @@
       <button class="tab" data-tab="activity">Activity</button>
       <button class="tab" data-tab="media">Media</button>
       <button class="tab" data-tab="notifications">Notifications</button>
+      <button class="tab" data-tab="chatbox">Chatbox</button>
       <button class="tab" data-tab="instances">History</button>
       <button class="tab" data-tab="settings">Settings</button>
       <input id="search" type="search" placeholder="Filter friends…" autocomplete="off" />
@@ -77,6 +78,23 @@
         <div id="notification-list" class="list"></div>
       </section>
 
+      <section id="chatbox" class="pane">
+        <form id="chatbox-form" class="auth">
+          <h2>Chatbox</h2>
+          <p class="hint">
+            Sent over OSC to 127.0.0.1:9000. Turn on OSC in VRChat's Action Menu first. Lines are
+            trimmed to 144 characters at a word boundary.
+          </p>
+          <label>Message<textarea id="chatbox-text" rows="3" maxlength="144"></textarea></label>
+          <label class="inline">
+            <input id="chatbox-wait" type="checkbox" />
+            Type it first, then send on the next keypress
+          </label>
+          <button class="primary" type="submit">Send to chatbox</button>
+          <p class="error" id="chatbox-message"></p>
+        </form>
+      </section>
+
       <section id="instances" class="pane">
         <div id="instance-list" class="list"></div>
       </section>
@@ -100,6 +118,26 @@
           <button class="primary" type="submit">Save settings</button>
           <p class="error" id="settings-message"></p>
         </form>
+
+        <div class="auth">
+          <h2>Updates</h2>
+          <p class="hint">Checks the signed release manifest and installs a newer build in place.</p>
+          <div class="inline">
+            <button id="check-update" class="ghost" type="button">Check for updates</button>
+            <button id="install-update" class="primary" type="button" hidden>Install and restart</button>
+          </div>
+          <p class="hint" id="update-message"></p>
+        </div>
+
+        <div class="auth">
+          <h2>Shared history</h2>
+          <p class="hint">
+            The shell records what it sees into its own log. Import it into the shared activity
+            history once the other app is closed, so both show one timeline.
+          </p>
+          <button id="merge-activity" class="ghost" type="button">Import shell events</button>
+          <p class="hint" id="merge-message"></p>
+        </div>
       </section>
     </main>
 

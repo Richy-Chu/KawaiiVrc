@@ -742,58 +742,7 @@ impl Api {
 
         let body: Value = serde_json::from_str(&body_text)
             .map_err(|_| "VRChat returned an unexpected instance payload.".to_string())?;
-        let world = body.get("world").cloned().unwrap_or(Value::Null);
-        let thumbnail = {
-            let candidate = text(&world, "thumbnailImageUrl");
-            if candidate.is_empty() {
-                text(&world, "imageUrl")
-            } else {
-                candidate
-            }
-        };
-        let capacity = body
-            .get("capacity")
-            .and_then(Value::as_i64)
-            .or_else(|| world.get("capacity").and_then(Value::as_i64))
-            .unwrap_or(0);
-
-        let mut players: Vec<Player> = body
-            .get("players")
-            .and_then(Value::as_array)
-            .map(|rows| {
-                rows.iter()
-                    .map(|row| Player {
-                        id: text(row, "id"),
-                        name: display_name(row),
-                        status: text(row, "status"),
-                        avatar: pick_avatar(row),
-                        is_friend: row
-                            .get("isFriend")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                        trust: trust_label(row),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        players.sort_by(|left, right| {
-            right
-                .is_friend
-                .cmp(&left.is_friend)
-                .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-        });
-
-        Ok(InstanceView {
-            in_instance: true,
-            location,
-            world_id,
-            world_name: text(&world, "name"),
-            world_thumbnail: thumbnail,
-            instance_type,
-            capacity,
-            players,
-            notice: String::new(),
-        })
+        Ok(parse_instance_body(&location, &body))
     }
 
     // --------------------------------------------------------- notifications
@@ -1326,5 +1275,154 @@ mod tests {
         assert!(private.online);
         assert_eq!(private.world, "Private world");
         assert_eq!(private.instance, "private");
+    }
+}
+
+/// The instance payload, mapped without any network access so it can be tested
+/// against recorded fixtures.
+pub(crate) fn parse_instance_body(location: &str, body: &Value) -> InstanceView {
+    let world = body.get("world").cloned().unwrap_or(Value::Null);
+    let world_id = {
+        let from_body = text(&world, "id");
+        if from_body.is_empty() {
+            location
+                .split('~')
+                .next()
+                .unwrap_or(location)
+                .split(':')
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        } else {
+            from_body
+        }
+    };
+    let thumbnail = {
+        let candidate = text(&world, "thumbnailImageUrl");
+        if candidate.is_empty() {
+            text(&world, "imageUrl")
+        } else {
+            candidate
+        }
+    };
+    let capacity = body
+        .get("capacity")
+        .and_then(Value::as_i64)
+        .or_else(|| world.get("capacity").and_then(Value::as_i64))
+        .unwrap_or(0);
+
+    let mut players: Vec<Player> = body
+        .get("players")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .map(|row| Player {
+                    id: text(row, "id"),
+                    name: display_name(row),
+                    status: text(row, "status"),
+                    avatar: pick_avatar(row),
+                    is_friend: row
+                        .get("isFriend")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    trust: trust_label(row),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    players.sort_by(|left, right| {
+        right
+            .is_friend
+            .cmp(&left.is_friend)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+
+    InstanceView {
+        in_instance: true,
+        location: location.to_string(),
+        world_id,
+        world_name: text(&world, "name"),
+        world_thumbnail: thumbnail,
+        instance_type: instance_label(location),
+        capacity,
+        players,
+        notice: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod instance_fixture_tests {
+    use super::*;
+
+    const WITH_PLAYERS: &str = include_str!("../fixtures/instance-players.json");
+    const WITHOUT_PLAYERS: &str = include_str!("../fixtures/instance-no-players.json");
+
+    fn parse(raw: &str, location: &str) -> InstanceView {
+        let body: Value = serde_json::from_str(raw).expect("fixture json");
+        parse_instance_body(location, &body)
+    }
+
+    #[test]
+    fn reads_world_capacity_and_players_from_the_payload() {
+        let view = parse(WITH_PLAYERS, "wrld_test:12345~hidden(usr_owner)~region(us)");
+        assert!(view.in_instance);
+        assert_eq!(view.world_id, "wrld_test");
+        assert_eq!(view.world_name, "Test World");
+        assert_eq!(view.instance_type, "friends+");
+        assert_eq!(view.capacity, 32);
+        assert_eq!(view.players.len(), 3);
+        assert_eq!(
+            view.world_thumbnail,
+            "https://api.vrchat.cloud/api/1/image/file_test/1/256.png"
+        );
+    }
+
+    #[test]
+    fn friends_come_first_then_alphabetical() {
+        let view = parse(WITH_PLAYERS, "wrld_test:12345");
+        let names: Vec<&str> = view.players.iter().map(|player| player.name.as_str()).collect();
+        assert_eq!(names, vec!["Alpha", "Gamma", "Beta"]);
+        assert!(view.players[0].is_friend);
+        assert!(view.players[1].is_friend);
+        assert!(!view.players[2].is_friend);
+    }
+
+    #[test]
+    fn maps_status_trust_and_avatar_fallbacks() {
+        let view = parse(WITH_PLAYERS, "wrld_test:12345");
+        let alpha = &view.players[0];
+        assert_eq!(alpha.name, "Alpha");
+        assert_eq!(alpha.status, "join me");
+        assert_eq!(alpha.trust, "Trusted");
+        // Falls back from the thumbnail field to currentAvatarImageUrl.
+        assert_eq!(
+            alpha.avatar,
+            "https://api.vrchat.cloud/api/1/image/file_alpha/1/1024.png"
+        );
+        assert_eq!(view.players[2].trust, "New");
+        assert_eq!(view.players[1].trust, "User");
+    }
+
+    #[test]
+    fn a_payload_without_players_still_describes_the_world() {
+        let view = parse(WITHOUT_PLAYERS, "wrld_quiet:99~region(eu)");
+        assert!(view.players.is_empty());
+        assert_eq!(view.world_name, "Quiet World");
+        assert_eq!(view.capacity, 20);
+        assert_eq!(view.instance_type, "public");
+        assert_eq!(
+            view.world_thumbnail,
+            "https://api.vrchat.cloud/api/1/image/file_quiet/1/256.png"
+        );
+    }
+
+    #[test]
+    fn an_empty_payload_falls_back_to_the_location() {
+        let view = parse("{}", "wrld_missing:7~friends(usr_1)");
+        assert_eq!(view.world_id, "wrld_missing");
+        assert_eq!(view.world_name, "");
+        assert_eq!(view.instance_type, "friends");
+        assert_eq!(view.capacity, 0);
+        assert!(view.players.is_empty());
     }
 }

@@ -557,4 +557,57 @@ async function start() {
   }
 }
 
+el("check-update").addEventListener("click", async () => {
+  const message = el("update-message");
+  const install = el("install-update");
+  message.textContent = "Checking…";
+  install.hidden = true;
+  try {
+    const status = await invoke("check_update");
+    message.textContent = status.notes ? `${status.message} ${status.notes}` : status.message;
+    install.hidden = !status.available;
+  } catch (error) {
+    message.textContent = `Update check failed: ${error}`;
+  }
+});
+
+el("install-update").addEventListener("click", async () => {
+  const message = el("update-message");
+  message.textContent = "Downloading… the app restarts once the update is installed.";
+  try {
+    await invoke("install_update");
+  } catch (error) {
+    message.textContent = `Install failed: ${error}`;
+  }
+});
+
+el("chatbox-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = el("chatbox-message");
+  const text = el("chatbox-text").value.trim();
+  if (!text) {
+    message.textContent = "Type a message first.";
+    return;
+  }
+  message.textContent = "Sending…";
+  try {
+    message.textContent = await invoke("send_chatbox", {
+      message: text,
+      send: !el("chatbox-wait").checked
+    });
+  } catch (error) {
+    message.textContent = String(error);
+  }
+});
+
+el("merge-activity").addEventListener("click", async () => {
+  const message = el("merge-message");
+  message.textContent = "Importing…";
+  try {
+    message.textContent = await invoke("merge_activity");
+  } catch (error) {
+    message.textContent = String(error);
+  }
+});
+
 start();
