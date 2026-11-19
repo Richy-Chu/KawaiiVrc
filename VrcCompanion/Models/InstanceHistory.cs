@@ -67,6 +67,14 @@ public sealed class InstanceHistoryEntry
     internal List<long> EventIds { get; set; } = new();
 
     /// <summary>
+    /// True for a row built from a picture rather than a recorded session: the
+    /// capture time is known, the visit's duration is not, so nothing may claim
+    /// a join/leave time or a length.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsPhotoSnapshot { get; internal set; }
+
+    /// <summary>
     /// Stored session ids represented by this row. A view-level merge of
     /// repeated visits to the exact same instance keeps every source id so a
     /// delete removes all of them.

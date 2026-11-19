@@ -236,11 +236,15 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
 
     public string DetailDurationText => SelectedEntry is null
         ? string.Empty
-        : $"You were here {SelectedEntry.DurationText}";
+        : SelectedEntry.Entry.IsPhotoSnapshot
+            ? $"Taken {SelectedEntry.Entry.JoinedAt.ToLocalTime():MMM d, yyyy · h:mm tt}"
+            : $"You were here {SelectedEntry.DurationText}";
 
     public string DetailTimeRangeText => SelectedEntry is null
         ? string.Empty
-        : SelectedEntry.TimeRangeText;
+        : SelectedEntry.Entry.IsPhotoSnapshot
+            ? SelectedEntry.Entry.JoinedAt.ToLocalTime().ToString("h:mm tt", CultureInfo.CurrentCulture)
+            : SelectedEntry.TimeRangeText;
 
     public void SetAccount(VrcUser user)
     {
@@ -1031,9 +1035,11 @@ public sealed class InstanceHistoryItem : ViewModelBase
 
     public string PlayersSummary => PlayerCount == 1 ? "1 player" : $"{PlayerCount:N0} players";
 
-    public string TimelineSummary => Entry.LeftAt is null
-        ? $"You have been here {DurationText} · started {Entry.JoinedAt.ToLocalTime():h:mm tt}"
-        : $"You were here {DurationText} · {TimeRangeText}";
+    public string TimelineSummary => Entry.IsPhotoSnapshot
+        ? $"Taken {Entry.JoinedAt.ToLocalTime():MMM d, yyyy · h:mm tt}"
+        : Entry.LeftAt is null
+            ? $"You have been here {DurationText} · started {Entry.JoinedAt.ToLocalTime():h:mm tt}"
+            : $"You were here {DurationText} · {TimeRangeText}";
 
     public string AvatarUrl
     {
@@ -1249,7 +1255,7 @@ public sealed class InstanceHistoryPlayerItem : ViewModelBase
         }
     }
 
-    public int Visits => Math.Max(1, Player.Visits.Count);
+    public int Visits => Player.Visits.Count;
 
     public string VisitsText => Visits.ToString(CultureInfo.CurrentCulture);
 
@@ -1276,6 +1282,12 @@ public sealed class InstanceHistoryPlayerItem : ViewModelBase
     {
         get
         {
+            // A picture roster has no visit times; do not claim "<1m".
+            if (Player.Visits.Count == 0)
+            {
+                return "—";
+            }
+
             var duration = Player.TotalTime;
             if (duration.TotalHours >= 1)
             {

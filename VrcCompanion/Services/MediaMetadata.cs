@@ -145,7 +145,7 @@ public sealed class MediaContext
     /// losing the join/leave times the log already knows for shared names.
     /// </summary>
     /// <returns>True when at least one player was added or upgraded.</returns>
-    public bool ApplyPhotoRoster(IEnumerable<VrcPhotoPlayer> roster, DateTimeOffset takenAt)
+    public bool ApplyPhotoRoster(IEnumerable<VrcPhotoPlayer> roster)
     {
         var changed = false;
         foreach (var player in roster)
@@ -182,7 +182,9 @@ public sealed class MediaContext
                 continue;
             }
 
-            _people.Add(new MediaPersonItem(userId, name, string.Empty, isSelf: false, takenAt, takenAt));
+            // No join/leave time: the picture proves they were there at the
+            // shutter, nothing more. Leave the times empty instead of faking.
+            _people.Add(new MediaPersonItem(userId, name, string.Empty, isSelf: false));
             changed = true;
         }
 
@@ -351,8 +353,9 @@ public sealed class MediaContext
             WorldThumbnailUrl = WorldThumbnailUrl,
             WorldAuthorName = WorldAuthorName,
             JoinedAt = JoinedAt,
-            LeftAt = LeftAt ?? LastSeenAt,
-            LastSeenAt = LastSeenAt,
+            LeftAt = IsPhotoMetadata ? JoinedAt : LeftAt ?? LastSeenAt,
+            LastSeenAt = IsPhotoMetadata ? JoinedAt : LastSeenAt,
+            IsPhotoSnapshot = IsPhotoMetadata,
             OwnerId = string.Empty,
             OwnerName = WorldAuthorName,
             Players = People

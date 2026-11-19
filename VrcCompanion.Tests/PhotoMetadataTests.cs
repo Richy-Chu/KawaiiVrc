@@ -435,7 +435,7 @@ public class PhotoMetadataTests
     }
 
     [Fact]
-    public async Task PhotoSessionCardShowsTheCaptureTimeForEveryPlayer()
+    public async Task PhotoSessionCardDoesNotInventVisitTimes()
     {
         var path = WritePng(
             "drinking",
@@ -462,11 +462,10 @@ public class PhotoMetadataTests
 
         var entry = viewModel.ViewerContext!.ToHistoryEntry();
         Assert.Equal(2, entry.Players.Count);
-        Assert.All(entry.Players, player =>
-        {
-            var visit = Assert.Single(player.Visits);
-            Assert.Equal(new DateTimeOffset(new DateTime(2026, 9, 11, 21, 46, 0)), visit.JoinedAt);
-        });
+        Assert.True(entry.IsPhotoSnapshot);
+        // A picture knows who was there, never when they joined or left.
+        Assert.All(entry.Players, player => Assert.Empty(player.Visits));
+        Assert.Equal(entry.JoinedAt, entry.LeftAt);
     }
 
     [Fact]

@@ -505,7 +505,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             var photo = MetadataForViewer(item);
             if (photo is { HasPlayers: true })
             {
-                session.ApplyPhotoRoster(photo.Players, photo.TakenAt ?? new DateTimeOffset(item.TakenAt));
+                session.ApplyPhotoRoster(photo.Players);
             }
         }
 
@@ -562,23 +562,12 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             JoinedAt = taken,
             LeftAt = taken,
             LastSeenAt = taken,
+            // Only names: a picture never records when anyone joined or left.
             Players = metadata.Players
-                .Select(player =>
+                .Select(player => new InstanceHistoryPlayer
                 {
-                    var entryPlayer = new InstanceHistoryPlayer
-                    {
-                        UserId = player.UserId,
-                        DisplayName = player.DisplayName
-                    };
-                    // The picture proves they were there at the shutter; give the
-                    // card that time so Joined/Left are not blank.
-                    entryPlayer.Visits.Add(new InstanceHistoryVisit
-                    {
-                        JoinedAt = taken,
-                        LeftAt = taken,
-                        LastSeenAt = taken
-                    });
-                    return entryPlayer;
+                    UserId = player.UserId,
+                    DisplayName = player.DisplayName
                 })
                 .ToList()
         };
@@ -701,8 +690,9 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
         // Long sessions matter too: one shot may carry the VRCX chunk while the
         // rest have only VRChat's world, so widen to the same world that day.
-        return own is { HasWorld: true }
-            ? ClosestWithPlayers(
+        if (own is { HasWorld: true })
+        {
+            return ClosestWithPlayers(
                 _allItems
                     .Where(other =>
                         !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
@@ -710,8 +700,20 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                         Math.Abs((other.TakenAt - item.TakenAt).TotalHours) <= 6)
                     .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
                     .Take(48),
-                own)
-            : null;
+                own);
+        }
+
+        // No world in the file: VRChat writes pictures in capture order, so the
+        // nearest roster in this folder within a few hours is still that session.
+        return ClosestWithPlayers(
+            _allItems
+                .Where(other =>
+                    !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
+                    string.Equals(Path.GetDirectoryName(other.Path), folder, StringComparison.OrdinalIgnoreCase) &&
+                    Math.Abs((other.TakenAt - item.TakenAt).TotalHours) <= 3)
+                .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
+                .Take(48),
+            own: null);
     }
 
     /// <summary>The nearest shot of the same session that knows its world.</summary>
@@ -1458,8 +1460,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                         {
                             UserId = person.UserId,
                             DisplayName = person.DisplayName
-                        }),
-                        photo.JoinedAt);
+                        }));
                     if (added)
                     {
                         changed = true;
