@@ -415,14 +415,8 @@ public sealed class UpdateViewModel : ViewModelBase
 
     private void Open()
     {
-        if (!_hasUpdate && _service.IsSupported && !IsBusy)
-        {
-            // A supported build opened the bar before the first check landed.
-            _ = CheckNowAsync(manual: true);
-            IsOpen = true;
-            return;
-        }
-
+        // The bar is only visible while HasUpdate is true, so there is no state
+        // to check here.
         IsOpen = true;
     }
 

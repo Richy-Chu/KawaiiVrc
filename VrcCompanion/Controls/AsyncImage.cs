@@ -216,8 +216,14 @@ public sealed class AsyncImage : FrameworkElement
         }
 
         _image = image;
-        ImageOpacity = 0;
         InvalidateVisual();
+        if (AppPerformance.LiteMode)
+        {
+            ImageOpacity = 1;
+            return;
+        }
+
+        ImageOpacity = 0;
         BeginAnimation(
             ImageOpacityProperty,
             new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(240))

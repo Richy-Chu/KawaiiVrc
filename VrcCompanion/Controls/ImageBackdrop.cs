@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using VrcCompanion.Services;
 using WpfAnimatedGif;
 
 namespace VrcCompanion.Controls;
@@ -101,7 +102,7 @@ public sealed class ImageBackdrop : Image
         {
             var isGif = string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase);
 
-            if (isGif && Animate)
+            if (isGif && Animate && !AppPerformance.LiteMode)
             {
                 // WPF's BitmapImage alone renders only the first GIF frame.
                 // ImageBehavior drives the frames; 75% keeps the motion close to

@@ -314,6 +314,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _notificationStore = new NotificationPersistenceStore();
         _settingsStore = SettingsStore.Shared;
         _settings = _settingsStore.Settings;
+        AppPerformance.Apply(_settings);
+        AppPerformance.Changed += () =>
+        {
+            OnPropertyChanged(nameof(LiteMode));
+            OnPropertyChanged(nameof(LiteModeDescription));
+        };
         Controls.TextSelection.IsEnabled = _settings.EnableTextSelection;
         _favoriteFriends = new HashSet<string>(_settings.FavoriteFriends, StringComparer.Ordinal);
         _favoriteWorlds = new HashSet<string>(_settings.FavoriteWorlds, StringComparer.Ordinal);
@@ -771,6 +777,32 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// anywhere in the app. Off by default so clicking text keeps behaving
     /// like a normal desktop reader.
     /// </summary>
+    /// <summary>
+    /// Light-resource mode: static background, no GIF backdrop, no image fades.
+    /// Old machines start with it on; the Settings toggle overrides it.
+    /// </summary>
+    public bool LiteMode
+    {
+        get => AppPerformance.LiteMode;
+        set
+        {
+            if (AppPerformance.LiteMode == value)
+            {
+                return;
+            }
+
+            _settings.LiteMode = value;
+            _settingsStore.Save();
+            AppPerformance.Set(value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(LiteModeDescription));
+        }
+    }
+
+    public string LiteModeDescription => AppPerformance.LiteMode
+        ? "Lite mode is on: the animated background is frozen, GIF backdrops and image fades are skipped. Everything still works, it just costs less."
+        : "Lite mode is off: the background animates and images fade in. Turn it on if this PC feels slow.";
+
     public bool EnableTextSelection
     {
         get => _settings.EnableTextSelection;

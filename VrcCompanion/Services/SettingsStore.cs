@@ -74,6 +74,13 @@ public sealed class CompanionSettings
     [JsonPropertyName("enableTextSelection")]
     public bool EnableTextSelection { get; set; }
 
+    /// <summary>
+    /// Light-resource presentation. Null means "decide from this machine's
+    /// render tier", so older PCs start light without the user finding a setting.
+    /// </summary>
+    [JsonPropertyName("liteMode")]
+    public bool? LiteMode { get; set; }
+
     [JsonPropertyName("braveShields")]
     public BraveShieldsPreferences BraveShields { get; set; } = new();
 

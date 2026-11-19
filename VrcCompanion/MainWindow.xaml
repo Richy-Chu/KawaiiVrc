@@ -2129,6 +2129,23 @@
 
                             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                                 <StackPanel>
+                                    <TextBlock Text="Performance" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Lite mode keeps the app light on older PCs: the animated background is drawn once, GIF backdrops show their first frame, and pictures appear without fading. Nothing is removed or disabled."
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,3,0,12" />
+                                    <CheckBox Style="{StaticResource FriendlyCheckBox}"
+                                              Content="Use lite mode on this PC"
+                                              IsChecked="{Binding LiteMode}" />
+                                    <TextBlock Text="{Binding LiteModeDescription}"
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
                                     <TextBlock Text="Text selection" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Highlight any label, message or user id with the mouse, then press Ctrl+C or right-click to copy it. Text boxes keep working normally either way."
                                                Style="{StaticResource MutedText}"
@@ -8841,13 +8858,26 @@
                                 Visibility="{Binding UpdateViewModel.ShowUpdateBar, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
-                                    <Border Background="{TemplateBinding Background}"
+                                    <Border x:Name="UpdateBarSurface"
+                                            Background="{TemplateBinding Background}"
                                             BorderBrush="{TemplateBinding BorderBrush}"
                                             BorderThickness="{TemplateBinding BorderThickness}"
                                             CornerRadius="8"
                                             Padding="{TemplateBinding Padding}">
                                         <ContentPresenter HorizontalAlignment="Stretch" />
                                     </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="UpdateBarSurface" Property="Background" Value="{StaticResource KawaiiChipBrush}" />
+                                            <Setter TargetName="UpdateBarSurface" Property="BorderBrush" Value="{StaticResource PinkBrush}" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="UpdateBarSurface" Property="Opacity" Value="0.85" />
+                                        </Trigger>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter TargetName="UpdateBarSurface" Property="Opacity" Value="0.6" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
                                 </ControlTemplate>
                             </Button.Template>
                             <Grid>

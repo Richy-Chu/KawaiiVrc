@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
+using VrcCompanion.Services;
 
 namespace VrcCompanion.Controls;
 
@@ -207,6 +208,7 @@ public sealed class AuroraBackdrop : FrameworkElement
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        AppPerformance.Changed += OnPerformanceChanged;
         _window = Window.GetWindow(this);
         if (_window is not null)
         {
@@ -221,6 +223,7 @@ public sealed class AuroraBackdrop : FrameworkElement
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        AppPerformance.Changed -= OnPerformanceChanged;
         if (_window is not null)
         {
             _window.StateChanged -= OnWindowStateChanged;
@@ -229,6 +232,12 @@ public sealed class AuroraBackdrop : FrameworkElement
             _window = null;
         }
         UnhookAnimation();
+    }
+
+    private void OnPerformanceChanged()
+    {
+        UpdateAnimationHook();
+        InvalidateVisual();
     }
 
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -259,7 +268,9 @@ public sealed class AuroraBackdrop : FrameworkElement
 
     private void UpdateAnimationHook()
     {
-        var shouldAnimate = Animate && _isVisible && _isActive && IsLoaded &&
+        // Lite mode paints one static frame: a 15 fps full-window repaint is the
+        // single largest continuous cost in the app on a weak GPU.
+        var shouldAnimate = Animate && !AppPerformance.LiteMode && _isVisible && _isActive && IsLoaded &&
                             _window?.WindowState != WindowState.Minimized;
         if (shouldAnimate && !_isHooked)
         {

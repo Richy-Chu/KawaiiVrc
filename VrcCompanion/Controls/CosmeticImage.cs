@@ -214,8 +214,14 @@ public sealed class CosmeticImage : FrameworkElement
         _frameIndex = 0;
         _frame = null;
         ShowCurrentFrame();
-        ImageOpacity = 0;
         InvalidateVisual();
+        if (AppPerformance.LiteMode)
+        {
+            ImageOpacity = 1;
+            return;
+        }
+
+        ImageOpacity = 0;
         BeginAnimation(
             ImageOpacityProperty,
             new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200))
@@ -243,8 +249,10 @@ public sealed class CosmeticImage : FrameworkElement
         _frame = frames[_frameIndex];
         InvalidateVisual();
 
-        if (frames.Count <= 1)
+        if (frames.Count <= 1 || AppPerformance.LiteMode)
         {
+            // Lite mode keeps the first frame instead of driving decoration
+            // timers for every visible profile.
             StopAnimation();
             return;
         }
