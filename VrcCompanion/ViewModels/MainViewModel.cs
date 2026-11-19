@@ -360,6 +360,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // the world thumbnail and player icons in from the API.
         MediaViewModel.WorldFetcher = FetchMediaWorldAsync;
         MediaViewModel.PersonFetcher = FetchMediaPersonAsync;
+        // VRCX-0 remembers the world of pictures taken before VRChat wrote it
+        // into the file itself, which is most of this library.
+        MediaViewModel.PhotoWorldLookup = Vrcx0PhotoCache.Lookup;
         UpdateViewModel = new UpdateViewModel();
         ChatboxViewModel = chatboxViewModel ?? new ChatboxViewModel();
         CreatorResourcesViewModel = new CreatorResourcesViewModel();

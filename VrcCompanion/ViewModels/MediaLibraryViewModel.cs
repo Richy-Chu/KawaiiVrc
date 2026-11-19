@@ -446,6 +446,10 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public string ViewerGroupIconUrl => ViewerContext?.GroupIconUrl ?? string.Empty;
 
+    /// <summary>Optional world cache (VRCX-0) used for pictures older than
+    /// VRChat's own in-file metadata.</summary>
+    public Func<string, CachedPhotoWorld?>? PhotoWorldLookup { get; set; }
+
     /// <summary>The viewer's world/player lookups; exposed so tests can await them.</summary>
     internal Task ViewerHydration { get; private set; } = Task.CompletedTask;
 
@@ -509,6 +513,10 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         SelectedMedia = item;
         OnPropertyChanged(nameof(ViewerIsPlainPicture));
         OnPropertyChanged(nameof(ViewerShowsMetaPanel));
+        OnPropertyChanged(nameof(ViewerSessionTitle));
+        OnPropertyChanged(nameof(ViewerSessionText));
+        OnPropertyChanged(nameof(ViewerNoPlayersText));
+        OnPropertyChanged(nameof(ViewerShowsNoContext));
         OnPropertyChanged(nameof(ViewerPeople));
         OnPropertyChanged(nameof(HasViewerPeople));
         OnPropertyChanged(nameof(ViewerShowsNoPlayers));
@@ -555,10 +563,22 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             LeftAt = taken,
             LastSeenAt = taken,
             Players = metadata.Players
-                .Select(player => new InstanceHistoryPlayer
+                .Select(player =>
                 {
-                    UserId = player.UserId,
-                    DisplayName = player.DisplayName
+                    var entryPlayer = new InstanceHistoryPlayer
+                    {
+                        UserId = player.UserId,
+                        DisplayName = player.DisplayName
+                    };
+                    // The picture proves they were there at the shutter; give the
+                    // card that time so Joined/Left are not blank.
+                    entryPlayer.Visits.Add(new InstanceHistoryVisit
+                    {
+                        JoinedAt = taken,
+                        LeftAt = taken,
+                        LastSeenAt = taken
+                    });
+                    return entryPlayer;
                 })
                 .ToList()
         };
@@ -578,6 +598,35 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private VrcPhotoMetadata? MetadataForViewer(MediaItem item)
     {
         var own = item.EmbeddedMetadata;
+
+        // VRCX-0 has scanned this folder and remembered each picture's world,
+        // which covers the years before VRChat wrote the world into the PNG.
+        var cached = PhotoWorldLookup?.Invoke(item.Path);
+        if (cached is not null)
+        {
+            if (own is null)
+            {
+                own = new VrcPhotoMetadata
+                {
+                    WorldId = cached.WorldId,
+                    WorldName = cached.WorldName,
+                    TakenAt = new DateTimeOffset(item.TakenAt)
+                };
+            }
+            else if (!own.HasWorld)
+            {
+                own = new VrcPhotoMetadata
+                {
+                    WorldId = cached.WorldId,
+                    WorldName = cached.WorldName,
+                    InstanceId = own.InstanceId,
+                    AuthorId = own.AuthorId,
+                    AuthorName = own.AuthorName,
+                    TakenAt = own.TakenAt,
+                    Players = own.Players
+                };
+            }
+        }
 
         // VRCX sometimes writes the players but an empty world (it did not know
         // where you were yet). The world is in the neighbouring shots, so fill

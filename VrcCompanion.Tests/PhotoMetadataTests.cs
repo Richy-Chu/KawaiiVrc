@@ -400,6 +400,76 @@ public class PhotoMetadataTests
     }
 
     [Fact]
+    public async Task OldPictureGetsItsWorldFromTheVrcx0Cache()
+    {
+        // 2023 pictures predate VRChat's in-file world metadata. VRCX-0 has
+        // scanned them and stored the world, so the picture is not "VRChat".
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "VRChat_2023-08-08_18-31-36.010_1920x1080.png");
+        File.WriteAllBytes(path, BuildPng());
+
+        var picture = new MediaItem(path, "VRChat", new DateTime(2023, 8, 8, 18, 31, 36));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · August 2023", "VRChat", new DateTime(2023, 8, 1), new[] { picture })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"))
+        {
+            HistoryProvider = () => Array.Empty<Models.InstanceHistoryEntry>(),
+            PhotoWorldLookup = _ => new CachedPhotoWorld(JapanId, "MOVIE & CHILL")
+        };
+
+        await viewModel.LoadAsync(force: true);
+        await viewModel.PhotoContextsTask;
+        viewModel.OpenViewer(picture);
+
+        Assert.True(viewModel.HasViewerContext);
+        Assert.Equal("MOVIE & CHILL", viewModel.ViewerWorldName);
+        Assert.Equal("PHOTO", viewModel.ViewerSessionTitle);
+        Assert.True(viewModel.CanOpenViewerSession);
+        Assert.Contains(viewModel.WorldFilterOptions, option => option.Key == JapanId);
+    }
+
+    [Fact]
+    public async Task PhotoSessionCardShowsTheCaptureTimeForEveryPlayer()
+    {
+        var path = WritePng(
+            "drinking",
+            "Description",
+            """
+{"application":"VRCX","version":1,"author":{"id":"usr_a","displayName":"Aya"},"world":{"name":"Drinking Night","id":"wrld_a","instanceId":"wrld_a:41533"},"players":[{"id":"usr_a","displayName":"Aya"},{"id":"usr_b","displayName":"Bob"}]}
+""");
+        var picture = new MediaItem(path, "VRChat", new DateTime(2026, 9, 11, 21, 46, 0));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · September 2026", "VRChat", new DateTime(2026, 9, 1), new[] { picture })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            Path.GetDirectoryName(path),
+            (_, _) => groups,
+            cachePath: Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".json"))
+        {
+            HistoryProvider = () => Array.Empty<Models.InstanceHistoryEntry>(),
+            PersonFetcher = _ => Task.FromResult<MediaPersonInfo?>(null)
+        };
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(picture);
+
+        var entry = viewModel.ViewerContext!.ToHistoryEntry();
+        Assert.Equal(2, entry.Players.Count);
+        Assert.All(entry.Players, player =>
+        {
+            var visit = Assert.Single(player.Visits);
+            Assert.Equal(new DateTimeOffset(new DateTime(2026, 9, 11, 21, 46, 0)), visit.JoinedAt);
+        });
+    }
+
+    [Fact]
     public async Task SessionWithoutPlayersTakesTheRosterFromThePicture()
     {
         // The real Nov 8 shot: the log has the visit but no roster, while VRCX
