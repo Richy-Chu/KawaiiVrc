@@ -5802,7 +5802,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // not in our own log database, so the history popup cannot look it up by
         // id and would open empty. It carries the whole row instead.
         var imported = context.SessionId.StartsWith("continuity:", StringComparison.Ordinal);
-        if (context.HasSession && !imported)
+        // When the picture supplied players the log missed, the stored row would
+        // open with an empty roster; the merged row is the honest one to show.
+        if (context.HasSession && !imported && !context.HasPhotoRoster)
         {
             InstanceHistoryViewModel.ShowSession(context.SessionId, context.Location, context.JoinedAt);
             return;

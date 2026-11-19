@@ -304,6 +304,60 @@ public class PhotoMetadataTests
     }
 
     [Fact]
+    public async Task SessionWithoutPlayersTakesTheRosterFromThePicture()
+    {
+        // The real Nov 8 shot: the log has the visit but no roster, while VRCX
+        // saved 18 people next to the pixels. The picture's list must win.
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "VRChat_2026-11-08_23-43-13.492_1920x1080.png");
+        var json = $$"""
+{"application":"VRCX","version":1,"author":{"id":"usr_a","displayName":"Aya"},"world":{"name":"Borough - Wicker Hive Hunt System","id":"{{JapanId}}","instanceId":"{{JapanId}}:12345"},"players":[{"id":"usr_a","displayName":"Aya"},{"id":"usr_b","displayName":"Bob"}]}
+""";
+        File.WriteAllBytes(path, BuildPng(("Description", json), ("XML:com.adobe.xmp", Xmp)));
+
+        var session = new Models.InstanceHistoryEntry
+        {
+            Id = "s1",
+            AccountUserId = "usr_self",
+            Location = JapanId + ":12345",
+            WorldId = JapanId,
+            InstanceId = "12345",
+            WorldName = "Borough - Wicker Hive Hunt System",
+            WorldAuthorName = "Buckybrust",
+            JoinedAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 33, 0)),
+            LeftAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 44, 0)),
+            LastSeenAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 44, 0))
+        };
+
+        var picture = new MediaItem(path, "VRChat", new DateTime(2026, 11, 8, 23, 43, 13));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · November 2026", "VRChat", new DateTime(2026, 11, 1), new[] { picture })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"))
+        {
+            HistoryProvider = () => new[] { session },
+            PersonFetcher = _ => Task.FromResult<MediaPersonInfo?>(null)
+        };
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(picture);
+
+        Assert.Equal("SESSION", viewModel.ViewerSessionTitle);
+        Assert.True(viewModel.HasViewerPeople);
+        Assert.Equal(
+            new[] { "Aya@usr_a", "Bob@usr_b" },
+            viewModel.ViewerPeople.Select(person => person.DisplayName + "@" + person.UserId));
+        Assert.True(viewModel.ViewerShowsPhotoNote);
+        Assert.True(viewModel.CanOpenViewerSession);
+        Assert.Equal(2, viewModel.ViewerContext!.ToHistoryEntry().Players.Count);
+    }
+
+    [Fact]
     public async Task PhotoWithPlayersButNoWorldBorrowsTheNeighboursWorld()
     {
         // VRCX writes an empty world when it did not know the instance yet.

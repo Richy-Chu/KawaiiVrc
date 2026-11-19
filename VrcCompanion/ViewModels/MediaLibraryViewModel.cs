@@ -428,8 +428,10 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public bool ViewerShowsAccessChip =>
         HasViewerContext && !ViewerHasGroup && !string.IsNullOrWhiteSpace(ViewerAccessLabel);
 
-    /// <summary>The picture carried its own metadata (VRChat or VRCX XMP).</summary>
-    public bool ViewerShowsPhotoNote => ViewerContext?.IsPhotoMetadata == true;
+    /// <summary>The picture carried its own metadata (VRChat or VRCX XMP), or
+    /// supplied the roster of a session the log only half recorded.</summary>
+    public bool ViewerShowsPhotoNote =>
+        ViewerContext is { } noteContext && (noteContext.IsPhotoMetadata || noteContext.HasPhotoRoster);
 
     public bool CanOpenViewerGroup => ViewerContext?.CanOpenGroup == true;
 
@@ -484,9 +486,26 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         {
             item.Context = BuildPhotoContext(item);
         }
+        else if (item.Context is { IsPhotoMetadata: false } session)
+        {
+            // The log recorded the visit but not who was there. The picture
+            // itself has VRCX's roster, so merge it into the session instead of
+            // claiming nothing was recorded.
+            var photo = MetadataForViewer(item);
+            if (photo is { HasPlayers: true })
+            {
+                session.ApplyPhotoRoster(photo.Players, photo.TakenAt ?? new DateTimeOffset(item.TakenAt));
+            }
+        }
 
         _photoContext = null;
         SelectedMedia = item;
+        OnPropertyChanged(nameof(ViewerPeople));
+        OnPropertyChanged(nameof(HasViewerPeople));
+        OnPropertyChanged(nameof(ViewerShowsNoPlayers));
+        OnPropertyChanged(nameof(ViewerPeopleCountText));
+        OnPropertyChanged(nameof(ViewerShowsPhotoNote));
+        OnPropertyChanged(nameof(ViewerContextNote));
         RestartViewerHydration(ViewerContext);
     }
 
@@ -1311,7 +1330,12 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         _photoContextCancellation = cancellation;
         var token = cancellation.Token;
 
-        var pending = items.Where(item => item.Context is null).ToList();
+        // Pictures without a session need a context built; pictures whose
+        // session recorded no players still need the roster stored in the file.
+        var pending = items
+            .Where(item => item.Context is null ||
+                           item.Context is { IsPhotoMetadata: false, HasPeople: false })
+            .ToList();
         if (pending.Count == 0)
         {
             return;
@@ -1354,6 +1378,20 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                 {
                     item.Context = context;
                     changed = true;
+                    continue;
+                }
+
+                if (item.Context is { IsPhotoMetadata: false, HasPeople: false } session &&
+                    context is { HasPeople: true } photo &&
+                    (string.IsNullOrWhiteSpace(photo.WorldId) ||
+                     string.Equals(photo.WorldId, session.WorldId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    session.ApplyPhotoRoster(photo.People.Select(person => new VrcPhotoPlayer
+                    {
+                        UserId = person.UserId,
+                        DisplayName = person.DisplayName
+                    }), photo.JoinedAt);
+                    changed = true;
                 }
             }
 
@@ -1366,6 +1404,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             ApplyFilters();
             OnPropertyChanged(nameof(ViewerContext));
             OnPropertyChanged(nameof(ViewerShowsPhotoNote));
+            OnPropertyChanged(nameof(ViewerContextNote));
             OnPropertyChanged(nameof(CanOpenViewerWorld));
             OnPropertyChanged(nameof(ViewerSessionText));
             OnPropertyChanged(nameof(ViewerPeople));

@@ -107,7 +107,7 @@ public sealed class MediaContext
         JoinedAt = session.JoinedAt;
         LeftAt = session.LeftAt;
         LastSeenAt = session.LastSeenAt;
-        People = people;
+        _people = people.ToList();
         SourceEntryIds = session.SourceEntryIds.ToList();
     }
 
@@ -129,7 +129,61 @@ public sealed class MediaContext
 
     public DateTimeOffset LastSeenAt { get; }
 
-    public IReadOnlyList<MediaPersonItem> People { get; }
+    private readonly List<MediaPersonItem> _people;
+
+    public IReadOnlyList<MediaPersonItem> People => _people;
+
+    /// <summary>
+    /// True when the picture itself supplied people the session log did not
+    /// have. VRCX writes the roster next to the shot even when the log only
+    /// recorded the world, so the viewer prefers the fuller list.
+    /// </summary>
+    public bool HasPhotoRoster { get; private set; }
+
+    /// <summary>
+    /// Adds the people saved inside the picture to a session's roster without
+    /// losing the join/leave times the log already knows for shared names.
+    /// </summary>
+    public void ApplyPhotoRoster(IEnumerable<VrcPhotoPlayer> roster, DateTimeOffset takenAt)
+    {
+        foreach (var player in roster)
+        {
+            var name = player.DisplayName?.Trim() ?? string.Empty;
+            if (name.Length == 0)
+            {
+                continue;
+            }
+
+            var userId = player.UserId?.Trim() ?? string.Empty;
+            // Display names are unique in VRChat, and older rows can be
+            // name-only, so match on either the id or the name.
+            var index = _people.FindIndex(person =>
+                (userId.Length > 0 && string.Equals(person.UserId, userId, StringComparison.Ordinal)) ||
+                string.Equals(person.DisplayName, name, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+            {
+                var existing = _people[index];
+                HasPhotoRoster = true;
+
+                // A name-only log row can be upgraded once the picture supplies
+                // the account id, keeping the times it already had.
+                if (existing.UserId.Length == 0 && userId.Length > 0)
+                {
+                    _people[index] = new MediaPersonItem(
+                        userId,
+                        name,
+                        existing.AvatarUrl,
+                        existing.IsSelf,
+                        existing.JoinedAt,
+                        existing.LeftAt);
+                }
+                continue;
+            }
+
+            _people.Add(new MediaPersonItem(userId, name, string.Empty, isSelf: false, takenAt, takenAt));
+            HasPhotoRoster = true;
+        }
+    }
 
     /// <summary>Every stored session id this row represents (merged visits).</summary>
     public IReadOnlyList<string> SourceEntryIds { get; }
@@ -257,11 +311,13 @@ public sealed class MediaContext
     public string SessionTitle => IsPhotoMetadata ? "PHOTO" : "SESSION";
 
     /// <summary>One line on where the panel's world and players came from.</summary>
-    public string PhotoNote => !IsPhotoMetadata
-        ? string.Empty
-        : HasPeople
+    public string PhotoNote => IsPhotoMetadata
+        ? HasPeople
             ? "Read from the picture itself: VRChat saved the world, VRCX saved the players."
-            : "Read from the picture itself: VRChat saved the world and author, but VRCX saved no player list.";
+            : "Read from the picture itself: VRChat saved the world and author, but VRCX saved no player list."
+        : HasPhotoRoster
+            ? "Players read from the picture itself; the session times come from your local history."
+            : string.Empty;
 
     /// <summary>
     /// A logged session can be reopened in the history popup, and so can a
@@ -324,7 +380,7 @@ public sealed class MediaContext
     };
 
     /// <summary>Shown under the player header when the roster is empty.</summary>
-    public string NoPlayersText => IsPhotoMetadata
+    public string NoPlayersText => IsPhotoMetadata || HasPhotoRoster
         ? "VRCX didn't save who was there for this picture."
         : "No players were recorded for this session.";
 }
