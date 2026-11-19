@@ -150,6 +150,50 @@ public class PhotoMetadataTests
         Assert.All(viewModel.ViewerPeople, person => Assert.True(person.HasAvatar));
     }
 
+    [Fact]
+    public async Task ViewerBorrowsPlayersFromAShotTakenSecondsEarlier()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        // One shot has VRChat's world only; the other, two seconds earlier, also
+        // has VRCX's chunk with the instance and players.
+        var xmpOnly = Path.Combine(root, "VRChat_2026-11-06_23-23-29.317_2048x1440.png");
+        File.WriteAllBytes(xmpOnly, BuildPng(("XML:com.adobe.xmp", Xmp)));
+        var withPlayers = Path.Combine(root, "VRChat_2026-11-06_23-23-27.108_1920x1080.png");
+        File.WriteAllBytes(
+            withPlayers,
+            BuildPng(("Description", Json($"{JapanId}:12345~group({GroupId})~groupAccessType(plus)"))));
+
+        var picture = new MediaItem(xmpOnly, "VRChat", new DateTime(2026, 11, 6, 23, 23, 29));
+        var sibling = new MediaItem(withPlayers, "VRChat", new DateTime(2026, 11, 6, 23, 23, 27));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · November 2026", "VRChat", new DateTime(2026, 11, 1), new[] { picture, sibling })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"))
+        {
+            HistoryProvider = () => Array.Empty<Models.InstanceHistoryEntry>(),
+            WorldFetcher = _ => Task.FromResult<MediaWorldInfo?>(
+                new MediaWorldInfo("Anthro Heat Lockers and Sauna", "https://example.test/world.png", "Sluggy Boi")),
+            PersonFetcher = _ => Task.FromResult<MediaPersonInfo?>(null),
+            GroupLookup = _ => ("Kawaii Club", "https://example.test/group.png")
+        };
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(picture);
+
+        Assert.True(viewModel.HasViewerContext);
+        Assert.Equal("Anthro Heat Lockers and Sauna", viewModel.ViewerWorldName);
+        Assert.Equal("Group+", viewModel.ViewerAccessLabel);
+        Assert.Equal("Kawaii Club", viewModel.ViewerGroupName);
+        Assert.Equal(new[] { "Alice", "Bob" }, viewModel.ViewerPeople.Select(person => person.DisplayName));
+        Assert.StartsWith("From the photo", viewModel.ViewerSessionText);
+    }
+
     private static string WritePng(string name, string keyword, string text)
         => WritePng(name, new[] { (keyword, text) });
 

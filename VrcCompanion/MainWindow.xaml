@@ -6346,8 +6346,9 @@
 
                                         <!-- Group instances name the group and open its popup. -->
                                         <Button Style="{StaticResource GhostButton}"
-                                                Padding="0,0,8,0"
-                                                Margin="0,8,0,0"
+                                                Padding="2,2,8,2"
+                                                Margin="0,8,0,2"
+                                                MinHeight="36"
                                                 HorizontalContentAlignment="Stretch"
                                                 Cursor="Hand"
                                                 IsEnabled="{Binding MediaViewModel.CanOpenViewerGroup}"

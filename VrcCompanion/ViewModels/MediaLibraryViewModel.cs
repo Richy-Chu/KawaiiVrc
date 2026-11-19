@@ -473,7 +473,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     /// </summary>
     private MediaContext? BuildPhotoContext(MediaItem item)
     {
-        var metadata = item.EmbeddedMetadata;
+        var metadata = MetadataForViewer(item);
         if (metadata is null)
         {
             return null;
@@ -505,6 +505,81 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         var context = MediaMetadataResolver.Describe(entry, null, GroupLookup);
         context.MarkPhotoMetadata(taken);
         return context;
+    }
+
+    /// <summary>
+    /// VRChat only writes the world and author; the players and instance come
+    /// from VRCX's own chunk. Not every shot gets both (and older files get
+    /// neither), but shots taken moments apart in the same folder belong to the
+    /// same session, so the missing parts are filled from the nearest neighbour
+    /// that has them.
+    /// </summary>
+    private VrcPhotoMetadata? MetadataForViewer(MediaItem item)
+    {
+        var own = item.EmbeddedMetadata;
+        if (own is { HasPlayers: true } && !string.IsNullOrWhiteSpace(own.InstanceId))
+        {
+            return own;
+        }
+
+        var nearby = FindNearbyMetadata(item, own);
+        if (nearby is null)
+        {
+            return own;
+        }
+
+        if (own is null)
+        {
+            return nearby;
+        }
+
+        return new VrcPhotoMetadata
+        {
+            WorldId = string.IsNullOrWhiteSpace(own.WorldId) ? nearby.WorldId : own.WorldId,
+            WorldName = string.IsNullOrWhiteSpace(own.WorldName) ? nearby.WorldName : own.WorldName,
+            InstanceId = string.IsNullOrWhiteSpace(own.InstanceId) ? nearby.InstanceId : own.InstanceId,
+            AuthorId = string.IsNullOrWhiteSpace(own.AuthorId) ? nearby.AuthorId : own.AuthorId,
+            AuthorName = string.IsNullOrWhiteSpace(own.AuthorName) ? nearby.AuthorName : own.AuthorName,
+            TakenAt = own.TakenAt ?? nearby.TakenAt,
+            Players = own.Players.Count > 0 ? own.Players : nearby.Players
+        };
+    }
+
+    private VrcPhotoMetadata? FindNearbyMetadata(MediaItem item, VrcPhotoMetadata? own)
+    {
+        var folder = Path.GetDirectoryName(item.Path);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return null;
+        }
+
+        var candidates = _allItems
+            .Where(other =>
+                !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
+                string.Equals(Path.GetDirectoryName(other.Path), folder, StringComparison.OrdinalIgnoreCase) &&
+                Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes) <= 30)
+            .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
+            .Take(16);
+
+        foreach (var candidate in candidates)
+        {
+            var metadata = candidate.EmbeddedMetadata;
+            if (metadata is null || !metadata.HasPlayers)
+            {
+                continue;
+            }
+
+            // A neighbour from another world must not leak its session in.
+            if (own is { HasWorld: true } && metadata.HasWorld &&
+                !string.Equals(own.WorldId, metadata.WorldId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return metadata;
+        }
+
+        return null;
     }
 
     /// <summary>
