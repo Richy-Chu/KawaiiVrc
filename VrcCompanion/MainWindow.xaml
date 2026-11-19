@@ -8825,15 +8825,63 @@
                         BorderBrush="{StaticResource SoftBorderBrush}"
                         BorderThickness="0,1,0,0"
                         Padding="26,8">
-                    <Grid>
-                        <TextBlock Text="KawaiiVrc · Unofficial VRChat companion · Use at your own risk"
-                                   FontSize="9.5"
-                                   Foreground="{StaticResource DimBrush}" />
-                        <TextBlock Text="API requests are rate-limited to protect your account"
-                                   FontSize="9.5"
-                                   Foreground="{StaticResource DimBrush}"
-                                   HorizontalAlignment="Right" />
-                    </Grid>
+                    <StackPanel>
+                        <!-- Only visible while a newer release is waiting to be downloaded. -->
+                        <Button Command="{Binding UpdateViewModel.OpenCommand}"
+                                Cursor="Hand"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                Padding="12,7"
+                                Margin="0,0,0,8"
+                                BorderThickness="1"
+                                BorderBrush="{StaticResource AccentHoverBrush}"
+                                Background="{StaticResource AccentSoftBrush}"
+                                ToolTip="Open the update download popup"
+                                AutomationProperties.Name="Open the available update"
+                                Visibility="{Binding UpdateViewModel.ShowUpdateBar, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="8"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Stretch" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Grid>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE895;"
+                                               FontFamily="Segoe MDL2 Assets"
+                                               FontSize="12"
+                                               Foreground="{StaticResource AccentHoverBrush}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding UpdateViewModel.UpdateBarText}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource AccentHoverBrush}"
+                                               Margin="8,0,0,0"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Text="Open updater"
+                                           FontSize="10"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </Button>
+
+                        <Grid>
+                            <TextBlock Text="KawaiiVrc · Unofficial VRChat companion · Use at your own risk"
+                                       FontSize="9.5"
+                                       Foreground="{StaticResource DimBrush}" />
+                            <TextBlock Text="API requests are rate-limited to protect your account"
+                                       FontSize="9.5"
+                                       Foreground="{StaticResource DimBrush}"
+                                       HorizontalAlignment="Right" />
+                        </Grid>
+                    </StackPanel>
                 </Border>
             </Grid>
         </Grid>

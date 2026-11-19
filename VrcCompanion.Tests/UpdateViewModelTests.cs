@@ -85,6 +85,39 @@ public class UpdateViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task BottomBarOnlyAppearsWhileAnUpdateIsAvailable()
+    {
+        var service = new FakeUpdateService
+        {
+            CheckResult = new AppUpdateCheckResult(AppUpdateCheckState.UpToDate)
+        };
+        var viewModel = new UpdateViewModel(service, _settings);
+
+        await viewModel.CheckNowAsync(manual: true);
+        Assert.False(viewModel.ShowUpdateBar);
+
+        service.CheckResult = new AppUpdateCheckResult(AppUpdateCheckState.Available, "1.9.0");
+        await viewModel.CheckNowAsync(manual: false);
+
+        Assert.True(viewModel.ShowUpdateBar);
+        Assert.Contains("1.9.0", viewModel.UpdateBarText);
+
+        // Dismissing the popup keeps the bar: the update is still waiting.
+        viewModel.CloseCommand.Execute(null);
+        Assert.False(viewModel.IsOpen);
+        Assert.True(viewModel.ShowUpdateBar);
+
+        viewModel.OpenCommand.Execute(null);
+        Assert.True(viewModel.IsOpen);
+        Assert.True(viewModel.ShowDownloadAction);
+
+        await viewModel.DownloadNowAsync();
+        Assert.True(viewModel.IsReady);
+        Assert.True(viewModel.ShowUpdateBar);
+        Assert.Contains("install", viewModel.UpdateBarText);
+    }
+
+    [Fact]
     public async Task FailedDownloadKeepsTheDownloadStepAndShowsAnError()
     {
         var service = new FakeUpdateService

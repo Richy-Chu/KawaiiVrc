@@ -55,6 +55,7 @@ public sealed class UpdateViewModel : ViewModelBase
         DownloadCommand = new AsyncRelayCommand(DownloadNowAsync, () => CanDownload);
         InstallCommand = new RelayCommand(InstallAndRestart, () => CanInstall);
         CloseCommand = new RelayCommand(Close);
+        OpenCommand = new RelayCommand(Open, () => HasUpdate);
         OpenReleasePageCommand = new RelayCommand(_service.OpenReleasesPage);
     }
 
@@ -65,6 +66,9 @@ public sealed class UpdateViewModel : ViewModelBase
     public RelayCommand InstallCommand { get; }
 
     public RelayCommand CloseCommand { get; }
+
+    /// <summary>Opens the popup from the bottom bar when an update is waiting.</summary>
+    public RelayCommand OpenCommand { get; }
 
     public RelayCommand OpenReleasePageCommand { get; }
 
@@ -86,6 +90,18 @@ public sealed class UpdateViewModel : ViewModelBase
     public string VersionSummary => _hasUpdate
         ? $"KawaiiVrc {_latestVersion} is ready · you have {CurrentVersion}"
         : $"KawaiiVrc {CurrentVersion}";
+
+    /// <summary>
+    /// The slim bar above the footer. It exists only while a newer release is
+    /// waiting to be downloaded, so an up-to-date app shows nothing there.
+    /// </summary>
+    public bool ShowUpdateBar => _hasUpdate;
+
+    public string UpdateBarText => _isReady
+        ? "KawaiiVrc update downloaded · click to install and restart"
+        : string.IsNullOrWhiteSpace(_latestVersion)
+            ? "A new KawaiiVrc update is available · open the updater"
+            : $"KawaiiVrc {_latestVersion} is available · click to open the updater";
 
     public bool IsOpen
     {
@@ -397,6 +413,19 @@ public sealed class UpdateViewModel : ViewModelBase
         Application.Current?.Shutdown();
     }
 
+    private void Open()
+    {
+        if (!_hasUpdate && _service.IsSupported && !IsBusy)
+        {
+            // A supported build opened the bar before the first check landed.
+            _ = CheckNowAsync(manual: true);
+            IsOpen = true;
+            return;
+        }
+
+        IsOpen = true;
+    }
+
     private void Close()
     {
         if (IsDownloading)
@@ -425,7 +454,10 @@ public sealed class UpdateViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowProgress));
         OnPropertyChanged(nameof(ShowDownloadAction));
         OnPropertyChanged(nameof(ShowInstallAction));
+        OnPropertyChanged(nameof(ShowUpdateBar));
+        OnPropertyChanged(nameof(UpdateBarText));
 
+        OpenCommand?.RaiseCanExecuteChanged();
         CheckCommand.RaiseCanExecuteChanged();
         DownloadCommand.RaiseCanExecuteChanged();
         InstallCommand.RaiseCanExecuteChanged();
