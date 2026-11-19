@@ -28,7 +28,10 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private readonly string _cachePath;
     private const int PageSize = 48;
     // The dropdowns scroll, so a session with a big roster is still filterable.
-    private const int MaximumFilterChips = 60;
+    private const int MaximumWorldFilters = 80;
+
+    // The people dropdown scrolls, so it can list the whole library's cast.
+    private const int MaximumPeopleFilters = 500;
 
     private bool _loaded;
     private bool _isBusy;
@@ -460,7 +463,15 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         }
 
         ViewerImage = item.LoadBitmap(1400);
-        _photoContext = item.Context is null ? BuildPhotoContext(item) : null;
+
+        // Reading the picture is cheap, and keeping the result on the item means
+        // the filters know the world too and the background pass skips it.
+        if (item.Context is null)
+        {
+            item.Context = BuildPhotoContext(item);
+        }
+
+        _photoContext = null;
         SelectedMedia = item;
         RestartViewerHydration(ViewerContext);
     }
@@ -986,7 +997,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                      })
                      .OrderByDescending(group => group.Count)
                      .ThenBy(group => group.Label, StringComparer.CurrentCultureIgnoreCase)
-                     .Take(MaximumFilterChips))
+                     .Take(MaximumWorldFilters))
         {
             WorldFilters.Add(new MediaFilterOption(group.Key, group.Label, group.ImageUrl, group.Count));
         }
@@ -1006,7 +1017,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                      })
                      .OrderByDescending(group => group.Count)
                      .ThenBy(group => group.Label, StringComparer.CurrentCultureIgnoreCase)
-                     .Take(MaximumFilterChips))
+                     .Take(MaximumPeopleFilters))
         {
             PeopleFilters.Add(new MediaFilterOption(group.Key, group.Label, group.ImageUrl, group.Count));
         }
@@ -1170,6 +1181,11 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             {
                 MediaIndexCache.Save(RootPath, groups, _cachePath);
             }
+
+            // Not every picture falls inside a logged session, but many carry
+            // their own world/players; read them all in the background so the
+            // filters and the viewer know about those pictures too.
+            PhotoContextsTask = BuildPhotoContextsAsync(groups.SelectMany(group => group.Items).ToList());
         }
         catch (Exception ex)
         {
@@ -1179,6 +1195,84 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    /// <summary>The background pass that reads metadata out of every picture.</summary>
+    internal Task PhotoContextsTask { get; private set; } = Task.CompletedTask;
+
+    private CancellationTokenSource? _photoContextCancellation;
+
+    private async Task BuildPhotoContextsAsync(IReadOnlyList<MediaItem> items)
+    {
+        _photoContextCancellation?.Cancel();
+        _photoContextCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        _photoContextCancellation = cancellation;
+        var token = cancellation.Token;
+
+        var pending = items.Where(item => item.Context is null).ToList();
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        const int batchSize = 40;
+        for (var offset = 0; offset < pending.Count; offset += batchSize)
+        {
+            var batch = pending.GetRange(offset, Math.Min(batchSize, pending.Count - offset));
+            IReadOnlyList<(MediaItem Item, MediaContext Context)> results;
+            try
+            {
+                results = await Task.Run(
+                    () => batch
+                        .Select(item => (Item: item, Context: BuildPhotoContext(item)))
+                        .Where(pair => pair.Context is not null)
+                        .Select(pair => (pair.Item, pair.Context!))
+                        .ToList(),
+                    token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"media photo metadata: {ex.Message}");
+                continue;
+            }
+
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var changed = false;
+            foreach (var (item, context) in results)
+            {
+                if (item.Context is null)
+                {
+                    item.Context = context;
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+            {
+                continue;
+            }
+
+            RebuildFilters();
+            ApplyFilters();
+            OnPropertyChanged(nameof(ViewerContext));
+            OnPropertyChanged(nameof(ViewerShowsPhotoNote));
+            OnPropertyChanged(nameof(CanOpenViewerWorld));
+            OnPropertyChanged(nameof(ViewerSessionText));
+            OnPropertyChanged(nameof(ViewerPeople));
+            OnPropertyChanged(nameof(HasViewerPeople));
+            OnPropertyChanged(nameof(ViewerShowsNoPlayers));
+            OnPropertyChanged(nameof(ViewerPeopleCountText));
+            OnPropertyChanged(nameof(ViewerContextNote));
         }
     }
 

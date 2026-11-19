@@ -151,6 +151,51 @@ public class PhotoMetadataTests
     }
 
     [Fact]
+    public async Task PicturesWithoutSessionsStillFillTheFilters()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        const string clubId = "wrld_11111111-2222-3333-4444-555555555555";
+        var clubJson = """
+{"application":"VRCX-0","version":1,"author":{"id":"usr_x","displayName":"Aya"},"world":{"name":"Late Night Sauna","id":"__WORLD__","instanceId":"__WORLD__:98765"},"players":[{"id":"usr_c","displayName":"Cleo"}]}
+""".Replace("__WORLD__", clubId);
+
+        var sauna = Path.Combine(root, "VRChat_2026-11-06_23-23-27.108_1920x1080.png");
+        File.WriteAllBytes(sauna, BuildPng(("XML:com.adobe.xmp", Xmp)));
+        var club = Path.Combine(root, "VRChat_2026-10-02_20-00-00.000_1920x1080.png");
+        File.WriteAllBytes(club, BuildPng(("Description", clubJson)));
+
+        var groups = new[]
+        {
+            new MediaGroup(
+                "VRChat · November 2026",
+                "VRChat",
+                new DateTime(2026, 11, 1),
+                new[]
+                {
+                    new MediaItem(sauna, "VRChat", new DateTime(2026, 11, 6, 23, 23, 27)),
+                    new MediaItem(club, "VRChat", new DateTime(2026, 10, 2, 20, 0, 0))
+                })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"));
+
+        await viewModel.LoadAsync(force: true);
+        await viewModel.PhotoContextsTask;
+
+        Assert.Contains(viewModel.WorldFilterOptions, option => option.Label == "Anthro Heat Lockers and Sauna");
+        Assert.Contains(viewModel.WorldFilterOptions, option => option.Label == "Late Night Sauna");
+        Assert.Contains(viewModel.PeopleFilterOptions, option => option.Label == "Cleo");
+
+        viewModel.SelectedWorldFilter = viewModel.WorldFilterOptions
+            .Single(option => option.Label == "Anthro Heat Lockers and Sauna");
+        Assert.Equal(1, viewModel.PictureCount);
+    }
+
+    [Fact]
     public async Task ViewerBorrowsPlayersFromAShotTakenSecondsEarlier()
     {
         var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
