@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Media;
+using VrcCompanion.Models;
 using VrcCompanion.Services;
 
 namespace VrcCompanion.ViewModels;
@@ -15,6 +16,10 @@ namespace VrcCompanion.ViewModels;
 /// The Media tab: real pictures from the VRChat pictures folder, grouped by
 /// world folder and month, with an in-app viewer, progress while scanning and
 /// a cached index so the grid appears immediately on later visits.
+///
+/// Each picture is matched to the locally recorded instance session that was
+/// open when it was taken, which is how the viewer can show the real world and
+/// the players who were there (VRChat stores no metadata in the image itself).
 /// </summary>
 public sealed class MediaLibraryViewModel : ViewModelBase
 {
@@ -22,6 +27,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private readonly Action<string> _openPath;
     private readonly string _cachePath;
     private const int PageSize = 48;
+    private const int MaximumFilterChips = 14;
 
     private bool _loaded;
     private bool _isBusy;
@@ -31,6 +37,10 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private string? _errorMessage;
     private MediaItem? _selectedMedia;
     private ImageSource? _viewerImage;
+    private List<MediaItem> _allItems = new();
+    private string _searchText = string.Empty;
+    private string _worldFilterKey = string.Empty;
+    private string _personFilterKey = string.Empty;
 
     public MediaLibraryViewModel(
         string? root = null,
@@ -54,9 +64,24 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             () => SelectedMedia is not null);
         PreviousPageCommand = new RelayCommand(PreviousPage, () => HasPreviousPage);
         NextPageCommand = new RelayCommand(NextPage, () => HasNextPage);
+        ToggleWorldFilterCommand = new RelayCommand<MediaFilterOption>(ToggleWorldFilter, option => option is not null);
+        TogglePersonFilterCommand = new RelayCommand<MediaFilterOption>(TogglePersonFilter, option => option is not null);
+        ClearFiltersCommand = new RelayCommand(ClearFilters, () => HasActiveFilter);
+        ShowWorldFilterCommand = new RelayCommand<MediaContext>(ShowWorldFilter, context => context is not null);
+        ShowPersonFilterCommand = new RelayCommand<MediaPersonItem>(ShowPersonFilter, person => person is not null);
     }
 
+    /// <summary>
+    /// Supplies the signed-in account's recorded sessions. Set by the shell
+    /// after login because the account id is only known then.
+    /// </summary>
+    public Func<IReadOnlyList<InstanceHistoryEntry>>? HistoryProvider { get; set; }
+
     public ObservableCollection<MediaGroup> Groups { get; } = new();
+
+    public ObservableCollection<MediaFilterOption> WorldFilters { get; } = new();
+
+    public ObservableCollection<MediaFilterOption> PeopleFilters { get; } = new();
 
     /// <summary>
     /// The fixed 48 card slots used by the page. Cards are reused across pages
@@ -68,6 +93,16 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public RelayCommand PreviousPageCommand { get; }
 
     public RelayCommand NextPageCommand { get; }
+
+    public RelayCommand<MediaFilterOption> ToggleWorldFilterCommand { get; }
+
+    public RelayCommand<MediaFilterOption> TogglePersonFilterCommand { get; }
+
+    public RelayCommand ClearFiltersCommand { get; }
+
+    public RelayCommand<MediaContext> ShowWorldFilterCommand { get; }
+
+    public RelayCommand<MediaPersonItem> ShowPersonFilterCommand { get; }
 
     public int PageCount => (PictureCount + PageSize - 1) / PageSize;
 
@@ -96,6 +131,70 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public RelayCommand PreviousImageCommand { get; }
 
     public RelayCommand OpenSelectedInShellCommand { get; }
+
+    // ------------------------------------------------------------- filters
+
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            if (!SetProperty(ref _searchText, value ?? string.Empty))
+            {
+                return;
+            }
+
+            ApplyFilters();
+        }
+    }
+
+    public bool HasActiveFilter =>
+        !string.IsNullOrWhiteSpace(_searchText) ||
+        _worldFilterKey.Length > 0 ||
+        _personFilterKey.Length > 0;
+
+    public bool HasWorldFilter => _worldFilterKey.Length > 0;
+
+    public bool HasPersonFilter => _personFilterKey.Length > 0;
+
+    public string FilterSummaryText
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (_worldFilterKey.Length > 0)
+            {
+                parts.Add(WorldFilters.FirstOrDefault(option =>
+                    string.Equals(option.Key, _worldFilterKey, StringComparison.OrdinalIgnoreCase))?.Label
+                    ?? "this world");
+            }
+
+            if (_personFilterKey.Length > 0)
+            {
+                parts.Add("with " + (PeopleFilters.FirstOrDefault(option =>
+                    string.Equals(option.Key, _personFilterKey, StringComparison.OrdinalIgnoreCase))?.Label
+                    ?? "this person"));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_searchText))
+            {
+                parts.Add($"matching “{_searchText.Trim()}”");
+            }
+
+            if (parts.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            return "Showing pictures from " + string.Join(" · ", parts);
+        }
+    }
+
+    public bool HasFilterSummary => HasActiveFilter;
+
+    public bool HasWorldFilters => WorldFilters.Count > 0;
+
+    public bool HasPeopleFilters => PeopleFilters.Count > 0;
 
     public bool IsBusy
     {
@@ -132,13 +231,17 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public int PictureCount => Groups.Sum(group => group.Items.Count);
 
+    public int TotalPictureCount => _allItems.Count;
+
     public bool HasPictures => PictureCount > 0;
 
     /// <summary>
     /// Only true after a completed scan found nothing, so the empty message never
     /// flashes while the first scan is still running.
     /// </summary>
-    public bool IsEmpty => _loaded && !IsBusy && !HasError && !HasPictures;
+    public bool IsEmpty => _loaded && !IsBusy && !HasError && !HasPictures && !HasActiveFilter;
+
+    public bool IsFilteredEmpty => _loaded && !IsBusy && !HasPictures && HasActiveFilter;
 
     public string? ErrorMessage
     {
@@ -161,12 +264,16 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         : HasError
             ? "Pictures could not be loaded"
             : PictureCount == 0
-                ? "No VRChat pictures yet"
-                : $"{PictureCount} picture{(PictureCount == 1 ? string.Empty : "s")} in {Groups.Count} group{(Groups.Count == 1 ? string.Empty : "s")}";
+                ? HasActiveFilter ? "No pictures match these filters" : "No VRChat pictures yet"
+                : HasActiveFilter
+                    ? $"{PictureCount:N0} of {_allItems.Count:N0} pictures"
+                    : $"{PictureCount} picture{(PictureCount == 1 ? string.Empty : "s")} in {Groups.Count} group{(Groups.Count == 1 ? string.Empty : "s")}";
 
     public string EmptyMessage => Directory.Exists(RootPath)
         ? "No pictures in the VRChat folder yet. Take a photo in-game and press Refresh."
         : $"No VRChat pictures folder at {RootPath}. Open folder will create it.";
+
+    public string FilteredEmptyMessage => "No picture matches the current world, person or search.";
 
     // ------------------------------------------------------------- viewer
 
@@ -175,13 +282,33 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         get => _selectedMedia;
         private set
         {
-            if (SetProperty(ref _selectedMedia, value))
+            if (!SetProperty(ref _selectedMedia, value))
             {
-                OnPropertyChanged(nameof(IsViewerOpen));
-                OnPropertyChanged(nameof(ViewerTitle));
-                OnPropertyChanged(nameof(ViewerImage));
-                OpenSelectedInShellCommand.RaiseCanExecuteChanged();
+                return;
             }
+
+            OnPropertyChanged(nameof(IsViewerOpen));
+            OnPropertyChanged(nameof(ViewerTitle));
+            OnPropertyChanged(nameof(ViewerImage));
+            OnPropertyChanged(nameof(ViewerTakenText));
+            OnPropertyChanged(nameof(ViewerContext));
+            OnPropertyChanged(nameof(HasViewerContext));
+            OnPropertyChanged(nameof(ViewerShowsNoContext));
+            OnPropertyChanged(nameof(ViewerWorldName));
+            OnPropertyChanged(nameof(ViewerWorldAuthorText));
+            OnPropertyChanged(nameof(ViewerWorldThumbnailUrl));
+            OnPropertyChanged(nameof(HasViewerWorldThumbnail));
+            OnPropertyChanged(nameof(ViewerWorldFolderName));
+            OnPropertyChanged(nameof(CanOpenViewerWorld));
+            OnPropertyChanged(nameof(ViewerSessionText));
+            OnPropertyChanged(nameof(CanOpenViewerSession));
+            OnPropertyChanged(nameof(ViewerPeople));
+            OnPropertyChanged(nameof(HasViewerPeople));
+            OnPropertyChanged(nameof(ViewerShowsNoPlayers));
+            OnPropertyChanged(nameof(ViewerPeopleCountText));
+            OnPropertyChanged(nameof(ViewerContextNote));
+            OnPropertyChanged(nameof(CanFilterByViewerWorld));
+            OpenSelectedInShellCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -189,11 +316,55 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public string ViewerTitle => _selectedMedia?.FileName ?? string.Empty;
 
+    public string ViewerTakenText => _selectedMedia is null
+        ? string.Empty
+        : $"Taken {_selectedMedia.TakenAt:MMM d, yyyy · HH:mm}";
+
     public ImageSource? ViewerImage
     {
         get => _viewerImage;
         private set => SetProperty(ref _viewerImage, value);
     }
+
+    public MediaContext? ViewerContext => _selectedMedia?.Context;
+
+    public bool HasViewerContext => ViewerContext is not null;
+
+    /// <summary>True when the picture predates any recorded session.</summary>
+    public bool ViewerShowsNoContext => !HasViewerContext;
+
+    public string ViewerWorldName => ViewerContext?.WorldNameText
+        ?? _selectedMedia?.WorldName
+        ?? string.Empty;
+
+    public string ViewerWorldAuthorText => ViewerContext?.WorldAuthorText ?? string.Empty;
+
+    public string ViewerWorldThumbnailUrl => ViewerContext?.WorldThumbnailUrl ?? string.Empty;
+
+    public bool HasViewerWorldThumbnail => !string.IsNullOrWhiteSpace(ViewerWorldThumbnailUrl);
+
+    /// <summary>The folder name, shown when there is no API thumbnail to draw.</summary>
+    public string ViewerWorldFolderName => _selectedMedia?.WorldName ?? string.Empty;
+
+    public bool CanOpenViewerWorld => ViewerContext?.HasWorld == true;
+
+    public bool CanFilterByViewerWorld => !string.IsNullOrWhiteSpace(ViewerContext?.WorldName);
+
+    public string ViewerSessionText => ViewerContext?.SessionText ?? string.Empty;
+
+    public bool CanOpenViewerSession => ViewerContext?.HasSession == true;
+
+    public IReadOnlyList<MediaPersonItem> ViewerPeople =>
+        ViewerContext?.People ?? (IReadOnlyList<MediaPersonItem>)Array.Empty<MediaPersonItem>();
+
+    public bool HasViewerPeople => ViewerPeople.Count > 0;
+
+    public bool ViewerShowsNoPlayers => HasViewerContext && !HasViewerPeople;
+
+    public string ViewerPeopleCountText => ViewerContext?.PeopleCountText ?? string.Empty;
+
+    public string ViewerContextNote =>
+        "VRChat does not save the world inside the picture. This one has no recorded session yet — the Companion matches pictures to your local instance history, which starts from the first world you joined with it installed.";
 
     public void OpenViewer(MediaItem? item)
     {
@@ -212,7 +383,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         ViewerImage = null;
     }
 
-    /// <summary>Moves to the next/previous picture in the flattened library.</summary>
+    /// <summary>Moves to the next/previous picture in the filtered library.</summary>
     public void ShowRelative(int offset)
     {
         var items = Groups.SelectMany(group => group.Items).ToList();
@@ -230,6 +401,279 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         var next = items[(index + offset + items.Count) % items.Count];
         OpenViewer(next);
     }
+
+    // ------------------------------------------------------------- filters
+
+    public void ToggleWorldFilter(MediaFilterOption? option)
+    {
+        if (option is null)
+        {
+            return;
+        }
+
+        _worldFilterKey = string.Equals(_worldFilterKey, option.Key, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : option.Key;
+        // A world and a person filter at once is almost always empty; keeping
+        // one dimension at a time is what VRCX's gallery does.
+        if (_worldFilterKey.Length > 0)
+        {
+            _personFilterKey = string.Empty;
+        }
+
+        ApplyFilters();
+    }
+
+    public void TogglePersonFilter(MediaFilterOption? option)
+    {
+        if (option is null)
+        {
+            return;
+        }
+
+        _personFilterKey = string.Equals(_personFilterKey, option.Key, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : option.Key;
+        if (_personFilterKey.Length > 0)
+        {
+            _worldFilterKey = string.Empty;
+        }
+
+        ApplyFilters();
+    }
+
+    public void ShowWorldFilter(MediaContext? context)
+    {
+        if (context is null)
+        {
+            return;
+        }
+
+        var key = WorldKeyFor(context.WorldId, context.WorldName);
+        var option = WorldFilters.FirstOrDefault(candidate =>
+            string.Equals(candidate.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (option is null)
+        {
+            return;
+        }
+
+        _worldFilterKey = option.Key;
+        _personFilterKey = string.Empty;
+        CloseViewer();
+        ApplyFilters();
+    }
+
+    public void ShowPersonFilter(MediaPersonItem? person)
+    {
+        if (person is null)
+        {
+            return;
+        }
+
+        var key = PersonKeyFor(person.UserId, person.DisplayName);
+        var option = PeopleFilters.FirstOrDefault(candidate =>
+            string.Equals(candidate.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (option is null)
+        {
+            return;
+        }
+
+        _personFilterKey = option.Key;
+        _worldFilterKey = string.Empty;
+        CloseViewer();
+        ApplyFilters();
+    }
+
+    public void ClearFilters()
+    {
+        _searchText = string.Empty;
+        _worldFilterKey = string.Empty;
+        _personFilterKey = string.Empty;
+        OnPropertyChanged(nameof(SearchText));
+        ApplyFilters();
+    }
+
+    private void ApplyFilters(bool resetPage = false)
+    {
+        IEnumerable<MediaItem> items = _allItems;
+        if (_worldFilterKey.Length > 0)
+        {
+            items = items.Where(item =>
+                string.Equals(
+                    WorldKeyFor(item.Context?.WorldId, item.DisplayWorldName),
+                    _worldFilterKey,
+                    StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (_personFilterKey.Length > 0)
+        {
+            items = items.Where(item =>
+                item.Context?.People.Any(person =>
+                    string.Equals(
+                        PersonKeyFor(person.UserId, person.DisplayName),
+                        _personFilterKey,
+                        StringComparison.OrdinalIgnoreCase)) == true);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            var term = _searchText.Trim();
+            items = items.Where(item => MatchesSearch(item, term));
+        }
+
+        Groups.Clear();
+        foreach (var group in BuildGroupsInOrder(items))
+        {
+            Groups.Add(group);
+        }
+
+        _pageIndex = resetPage
+            ? 0
+            : Math.Max(0, Math.Min(_pageIndex, Math.Max(0, PageCount - 1)));
+        SyncFilterSelection();
+        OnPropertyChanged(nameof(PictureCount));
+        OnPropertyChanged(nameof(TotalPictureCount));
+        OnPropertyChanged(nameof(HasPictures));
+        OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(IsFilteredEmpty));
+        OnPropertyChanged(nameof(SummaryText));
+        OnPropertyChanged(nameof(HasActiveFilter));
+        OnPropertyChanged(nameof(HasWorldFilter));
+        OnPropertyChanged(nameof(HasPersonFilter));
+        OnPropertyChanged(nameof(HasFilterSummary));
+        OnPropertyChanged(nameof(FilterSummaryText));
+        ClearFiltersCommand.RaiseCanExecuteChanged();
+        RebuildPage();
+    }
+
+    /// <summary>
+    /// Groups the filtered pictures without re-sorting them: the scan (and its
+    /// cache) already decided the order, so filtering must not shuffle the grid.
+    /// </summary>
+    private static List<MediaGroup> BuildGroupsInOrder(IEnumerable<MediaItem> items)
+    {
+        var order = new List<(string World, DateTime Month, List<MediaItem> Items)>();
+        var index = new Dictionary<(string World, DateTime Month), List<MediaItem>>();
+        foreach (var item in items)
+        {
+            var month = new DateTime(item.TakenAt.Year, item.TakenAt.Month, 1);
+            var key = (item.DisplayWorldName, month);
+            if (!index.TryGetValue(key, out var bucket))
+            {
+                bucket = new List<MediaItem>();
+                index[key] = bucket;
+                order.Add((item.DisplayWorldName, month, bucket));
+            }
+
+            bucket.Add(item);
+        }
+
+        return order
+            .Select(group => new MediaGroup(
+                $"{group.World} · {group.Month:MMMM yyyy}",
+                group.World,
+                group.Month,
+                group.Items))
+            .ToList();
+    }
+
+    private static bool MatchesSearch(MediaItem item, string term)
+    {
+        bool Match(string? value) =>
+            !string.IsNullOrWhiteSpace(value) &&
+            value.Contains(term, StringComparison.CurrentCultureIgnoreCase);
+
+        return Match(item.FileName) ||
+               Match(item.DisplayWorldName) ||
+               Match(item.Context?.WorldAuthorName) ||
+               Match(item.TakenAt.ToString("MMMM yyyy")) ||
+               Match(item.TakenAt.ToString("yyyy-MM-dd")) ||
+               item.Context?.People.Any(person => Match(person.DisplayName)) == true;
+    }
+
+    private void RebuildFilters()
+    {
+        var previousWorld = _worldFilterKey;
+        var previousPerson = _personFilterKey;
+        WorldFilters.Clear();
+        PeopleFilters.Clear();
+
+        foreach (var group in _allItems
+                     .Where(item => item.Context is not null)
+                     .GroupBy(item => WorldKeyFor(item.Context!.WorldId, item.DisplayWorldName))
+                     .Select(group => new
+                     {
+                         Key = group.Key,
+                         Label = group.Select(item => item.DisplayWorldName)
+                             .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? "Unknown world",
+                         ImageUrl = group.Select(item => item.Context?.WorldThumbnailUrl ?? string.Empty)
+                             .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url)) ?? string.Empty,
+                         Count = group.Count()
+                     })
+                     .OrderByDescending(group => group.Count)
+                     .ThenBy(group => group.Label, StringComparer.CurrentCultureIgnoreCase)
+                     .Take(MaximumFilterChips))
+        {
+            WorldFilters.Add(new MediaFilterOption(group.Key, group.Label, group.ImageUrl, group.Count));
+        }
+
+        foreach (var group in _allItems
+                     .Where(item => item.Context is not null)
+                     .SelectMany(item => item.Context!.People)
+                     .GroupBy(person => PersonKeyFor(person.UserId, person.DisplayName))
+                     .Select(group => new
+                     {
+                         Key = group.Key,
+                         Label = group.Select(person => person.DisplayName)
+                             .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? "Unknown player",
+                         ImageUrl = group.Select(person => person.AvatarUrl)
+                             .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url)) ?? string.Empty,
+                         Count = group.Count()
+                     })
+                     .OrderByDescending(group => group.Count)
+                     .ThenBy(group => group.Label, StringComparer.CurrentCultureIgnoreCase)
+                     .Take(MaximumFilterChips))
+        {
+            PeopleFilters.Add(new MediaFilterOption(group.Key, group.Label, group.ImageUrl, group.Count));
+        }
+
+        if (WorldFilters.All(option => !string.Equals(option.Key, previousWorld, StringComparison.OrdinalIgnoreCase)))
+        {
+            _worldFilterKey = string.Empty;
+        }
+
+        if (PeopleFilters.All(option => !string.Equals(option.Key, previousPerson, StringComparison.OrdinalIgnoreCase)))
+        {
+            _personFilterKey = string.Empty;
+        }
+
+        SyncFilterSelection();
+        OnPropertyChanged(nameof(HasWorldFilters));
+        OnPropertyChanged(nameof(HasPeopleFilters));
+    }
+
+    private void SyncFilterSelection()
+    {
+        foreach (var option in WorldFilters)
+        {
+            option.IsSelected = string.Equals(option.Key, _worldFilterKey, StringComparison.OrdinalIgnoreCase);
+        }
+
+        foreach (var option in PeopleFilters)
+        {
+            option.IsSelected = string.Equals(option.Key, _personFilterKey, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private static string WorldKeyFor(string? worldId, string? worldName) =>
+        !string.IsNullOrWhiteSpace(worldId)
+            ? worldId
+            : "name:" + (worldName ?? string.Empty).Trim();
+
+    private static string PersonKeyFor(string? userId, string? displayName) =>
+        !string.IsNullOrWhiteSpace(userId)
+            ? userId
+            : "name:" + (displayName ?? string.Empty).Trim();
 
     // ------------------------------------------------------------- loading
 
@@ -282,20 +726,55 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     private void Apply(IReadOnlyList<MediaGroup> groups)
     {
-        Groups.Clear();
-        foreach (var group in groups)
+        // Keep the scanner's order (newest first); filtering re-groups without
+        // re-sorting so a page never shuffles under the pointer.
+        _allItems = groups.SelectMany(group => group.Items).ToList();
+        AttachContexts();
+        _loaded = true;
+        RebuildFilters();
+        ApplyFilters(resetPage: true);
+        OnPropertyChanged(nameof(EmptyMessage));
+    }
+
+    /// <summary>
+    /// Matches every picture to the recorded session that was live when it was
+    /// taken. Runs on the scan result, so the first paint already has metadata.
+    /// </summary>
+    private void AttachContexts()
+    {
+        var provider = HistoryProvider;
+        if (provider is null)
         {
-            Groups.Add(group);
+            return;
         }
 
-        _loaded = true;
-        OnPropertyChanged(nameof(PictureCount));
-        OnPropertyChanged(nameof(HasPictures));
-        OnPropertyChanged(nameof(IsEmpty));
-        OnPropertyChanged(nameof(SummaryText));
-        OnPropertyChanged(nameof(EmptyMessage));
-        _pageIndex = 0;
-        RebuildPage();
+        try
+        {
+            var sessions = provider();
+            if (sessions.Count == 0)
+            {
+                return;
+            }
+
+            var byPath = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
+            foreach (var item in _allItems)
+            {
+                byPath[item.Path] = item;
+            }
+
+            foreach (var pair in MediaMetadataResolver.Build(_allItems, sessions))
+            {
+                if (byPath.TryGetValue(pair.Key, out var item))
+                {
+                    item.Context = pair.Value;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Metadata is a bonus; a damaged history store must not break Media.
+            Debug.WriteLine($"media metadata: {ex}");
+        }
     }
 
     private void PreviousPage()
@@ -446,6 +925,8 @@ public sealed class MediaCard : ViewModelBase
                 OnPropertyChanged(nameof(Path));
                 OnPropertyChanged(nameof(FileName));
                 OnPropertyChanged(nameof(HasItem));
+                OnPropertyChanged(nameof(WorldBadgeText));
+                OnPropertyChanged(nameof(HasWorldBadge));
             }
         }
     }
@@ -455,6 +936,13 @@ public sealed class MediaCard : ViewModelBase
     public string FileName => _item?.FileName ?? string.Empty;
 
     public bool HasItem => _item is not null;
+
+    /// <summary>The recorded world name, shown as a caption over the card.</summary>
+    public string WorldBadgeText => _item?.Context is { HasWorldName: true } context
+        ? context.WorldName
+        : string.Empty;
+
+    public bool HasWorldBadge => !string.IsNullOrWhiteSpace(WorldBadgeText);
 
     public string? GroupTitle
     {

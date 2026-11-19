@@ -264,6 +264,50 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
         Open();
     }
 
+    /// <summary>
+    /// Opens the history popup on one already recorded session, which is how a
+    /// picture in Media links back to the night it was taken.
+    /// </summary>
+    public void ShowSession(string sessionId, string location, DateTimeOffset joinedAt)
+    {
+        Show();
+        if (string.IsNullOrWhiteSpace(sessionId) && string.IsNullOrWhiteSpace(location))
+        {
+            return;
+        }
+
+        _ = SelectSessionAsync(sessionId ?? string.Empty, location ?? string.Empty, joinedAt);
+    }
+
+    private async Task SelectSessionAsync(string sessionId, string location, DateTimeOffset joinedAt)
+    {
+        // Rows are rebuilt from SQLite asynchronously, so wait for the refresh
+        // that Show() started instead of depending on it having finished.
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            if (!IsOpen)
+            {
+                return;
+            }
+
+            var match = _entries.FirstOrDefault(item =>
+                (sessionId.Length > 0 &&
+                 (string.Equals(item.Entry.Id, sessionId, StringComparison.Ordinal) ||
+                  item.Entry.SourceEntryIds.Contains(sessionId))) ||
+                (location.Length > 0 &&
+                 string.Equals(item.Entry.Location, location, StringComparison.Ordinal) &&
+                 Math.Abs((item.Entry.JoinedAt - joinedAt).TotalMinutes) < 5));
+            if (match is not null)
+            {
+                SelectedEntry = match;
+                IsPlayersTab = true;
+                return;
+            }
+
+            await Task.Delay(100);
+        }
+    }
+
     public void ShowForUser(string userId, string displayName)
     {
         if (string.IsNullOrWhiteSpace(userId))

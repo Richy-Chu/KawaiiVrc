@@ -2,6 +2,18 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:controls="clr-namespace:VrcCompanion.Controls">
 
+    <!-- A world or player chip in the Media filter bar. -->
+    <Style x:Key="MediaFilterChip" TargetType="Button" BasedOn="{StaticResource ChipButton}">
+        <Setter Property="Padding" Value="9,5" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
     <DataTemplate x:Key="MediaCardTemplate">
         <StackPanel Margin="0,0,8,8"
                     Visibility="{Binding HasItem, Converter={StaticResource BoolToVis}}">

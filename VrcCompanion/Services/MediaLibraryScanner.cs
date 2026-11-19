@@ -26,6 +26,19 @@ public sealed class MediaItem
 
     public DateTime TakenAt { get; }
 
+    /// <summary>
+    /// The world, session and players recorded when this picture was taken.
+    /// Null when the picture predates the local instance history.
+    /// </summary>
+    public MediaContext? Context { get; internal set; }
+
+    /// <summary>The real world name from history, falling back to the folder name.</summary>
+    public string DisplayWorldName => Context is { HasWorldName: true } context
+        ? context.WorldName
+        : WorldName;
+
+    public bool HasContext => Context is not null;
+
     public string FileName => System.IO.Path.GetFileName(Path);
 
     /// <summary>Small decode for the grid; loaded lazily and frozen for reuse.</summary>
@@ -133,10 +146,10 @@ public static class MediaLibraryScanner
 
     /// <summary>Builds the world/month groups from a flat list (also used for the cache).</summary>
     public static IReadOnlyList<MediaGroup> BuildGroups(IEnumerable<MediaItem> items) => items
-        .GroupBy(item => (item.WorldName, item.TakenAt.Year, item.TakenAt.Month))
+        .GroupBy(item => (item.DisplayWorldName, item.TakenAt.Year, item.TakenAt.Month))
         .Select(group => new MediaGroup(
-            $"{group.Key.WorldName} · {new DateTime(group.Key.Year, group.Key.Month, 1):MMMM yyyy}",
-            group.Key.WorldName,
+            $"{group.Key.DisplayWorldName} · {new DateTime(group.Key.Year, group.Key.Month, 1):MMMM yyyy}",
+            group.Key.DisplayWorldName,
             new DateTime(group.Key.Year, group.Key.Month, 1),
             group.OrderByDescending(item => item.TakenAt).ToList()))
         .OrderByDescending(group => group.Month)

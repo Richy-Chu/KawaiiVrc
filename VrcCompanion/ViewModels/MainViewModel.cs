@@ -345,6 +345,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         };
         _selectedSection = Sections[0];
         MediaViewModel = mediaViewModel;
+        // Pictures are matched to the sessions recorded for the signed-in
+        // account, so the Media viewer can show the real world and players.
+        MediaViewModel.HistoryProvider = () => CurrentUser is { } user
+            ? _instanceHistoryStore.ForAccount(user.Id)
+            : Array.Empty<InstanceHistoryEntry>();
         UpdateViewModel = new UpdateViewModel();
         ChatboxViewModel = chatboxViewModel ?? new ChatboxViewModel();
         CreatorResourcesViewModel = new CreatorResourcesViewModel();
@@ -492,6 +497,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             SearchSuggestionAsync,
             _ => IsLoggedIn && !IsBusy));
         OpenWorldCommand = Track(new RelayCommand<WorldItem>(OpenWorld, world => world is not null));
+        OpenMediaPersonCommand = Track(new RelayCommand<MediaPersonItem>(
+            OpenMediaPerson,
+            person => person is { HasUserId: true }));
+        OpenMediaWorldCommand = Track(new AsyncRelayCommand<MediaContext>(
+            context => OpenContinuityWorldAsync(context.WorldId),
+            context => context is { HasWorld: true } && !IsBusy));
+        OpenMediaSessionCommand = Track(new RelayCommand<MediaContext>(
+            OpenMediaSession,
+            context => context is { HasSession: true }));
         CloseFriendDetailCommand = Track(new RelayCommand(ClearFriendSelection));
         OpenOwnProfileCommand = Track(new RelayCommand(OpenOwnProfile, () => CurrentUser is not null));
         ChooseLaunchModeCommand = Track(new RelayCommand<string>(
@@ -2359,6 +2373,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public AsyncRelayCommand SearchWorldsCommand { get; }
     public AsyncRelayCommand<string> SearchSuggestionCommand { get; }
     public RelayCommand<WorldItem> OpenWorldCommand { get; }
+
+    public RelayCommand<MediaPersonItem> OpenMediaPersonCommand { get; }
+
+    public AsyncRelayCommand<MediaContext> OpenMediaWorldCommand { get; }
+
+    public RelayCommand<MediaContext> OpenMediaSessionCommand { get; }
     public RelayCommand CloseFriendDetailCommand { get; }
 
     public RelayCommand OpenOwnProfileCommand { get; }
@@ -5509,6 +5529,27 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private void OpenContextPlayer(InstancePlayerItem player)
     {
         _ = OpenInstancePlayerAsync(player);
+    }
+
+    private void OpenMediaPerson(MediaPersonItem? person)
+    {
+        if (person is null || !person.HasUserId)
+        {
+            return;
+        }
+
+        OpenUserProfile(person.UserId, person.DisplayName, person.AvatarUrl);
+    }
+
+    private void OpenMediaSession(MediaContext? context)
+    {
+        if (context is null || InstanceHistoryViewModel is null || !context.HasSession)
+        {
+            return;
+        }
+
+        ProfileZIndex = 30;
+        InstanceHistoryViewModel.ShowSession(context.SessionId, context.Location, context.JoinedAt);
     }
 
     private void OpenContinuitySession(ContinuitySessionItem session)
