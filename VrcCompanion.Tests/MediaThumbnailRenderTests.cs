@@ -254,7 +254,7 @@ public class MediaThumbnailRenderTests
         var resources = new ResourceDictionary
         {
             Source = new Uri(
-                "pack://application:,,,/VrcCompanion;component/Themes/MediaTemplates.xaml",
+                "pack://application:,,,/KawaiiVrc;component/Themes/MediaTemplates.xaml",
                 UriKind.Absolute)
         };
         return Assert.IsType<DataTemplate>(resources["MediaCardTemplate"]);

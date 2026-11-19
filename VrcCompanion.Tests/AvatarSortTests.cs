@@ -71,6 +71,15 @@ public class AvatarSortTests
     {
         WpfTestHost.Run(() =>
         {
+            // Start from a known sort instead of whatever the last run (or the
+            // real app) left in the shared settings file.
+            var settings = SettingsStore.Shared.Settings;
+            var previousUploadedSort = settings.UploadedAvatarSort;
+            var previousFavoriteSort = settings.FavoriteAvatarSort;
+            settings.UploadedAvatarSort = "date-added";
+            settings.FavoriteAvatarSort = "date-added";
+            SettingsStore.Shared.Save();
+
             using var shell = new MainViewModel();
             TestHooks.SetLoggedIn(shell);
             shell.SelectedSection = shell.Sections.Single(section => section.Key == "avatars");
@@ -116,6 +125,9 @@ public class AvatarSortTests
             }
             finally
             {
+                settings.UploadedAvatarSort = previousUploadedSort;
+                settings.FavoriteAvatarSort = previousFavoriteSort;
+                SettingsStore.Shared.Save();
                 window.Close();
             }
         });

@@ -70,6 +70,10 @@ public sealed class CompanionSettings
     [JsonPropertyName("browserAdBlockEnabled")]
     public bool BrowserAdBlockEnabled { get; set; } = true;
 
+    /// <summary>When on, labels and messages can be highlighted and copied like web text.</summary>
+    [JsonPropertyName("enableTextSelection")]
+    public bool EnableTextSelection { get; set; }
+
     [JsonPropertyName("braveShields")]
     public BraveShieldsPreferences BraveShields { get; set; } = new();
 

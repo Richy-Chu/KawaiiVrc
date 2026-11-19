@@ -25,6 +25,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Themes/MediaTemplates.xaml" />
+                <ResourceDictionary Source="Themes/SettingsStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
             <SolidColorBrush x:Key="KawaiiAccentBrush" Color="#5A3796" />
@@ -1946,278 +1947,350 @@
         <!-- Settings: backdrop, appearance, app preferences             -->
         <!-- ========================================================= -->
         <DataTemplate x:Key="SettingsTemplate">
-            <ScrollViewer VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled"
-                          Padding="16,2,12,12">
-                <StackPanel>
+            <TabControl Style="{StaticResource SettingsTabControl}"
+                        Margin="16,2,12,12">
 
-                    <!-- Backdrop / appearance -->
-                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                <!-- System: the account the app is signed in with. -->
+                <TabItem Header="System" Style="{StaticResource SettingsTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="0,0,8,12">
                         <StackPanel>
-                            <TextBlock Text="Background" Style="{StaticResource SectionTitle}" />
-                            <TextBlock Text="Make the app come alive with an animated backdrop."
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,3,0,12" />
-
-                            <StackPanel Margin="0,0,0,10">
-                                <TextBlock Text="Style" Style="{StaticResource FieldLabel}" />
-                                <ListBox ItemsSource="{Binding BackdropStyles}"
-                                         SelectedItem="{Binding SelectedBackdropStyle, Mode=TwoWay}"
-                                         Style="{StaticResource RegionPillList}"
-                                         MaxHeight="60">
-                                    <ListBox.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel Orientation="Horizontal" />
-                                        </ItemsPanelTemplate>
-                                    </ListBox.ItemsPanel>
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Background="{StaticResource InputBrush}"
-                                                    CornerRadius="8"
-                                                    Padding="10,6">
-                                                <TextBlock Text="{Binding Label}"
-                                                           FontSize="10"
-                                                           FontWeight="SemiBold"
-                                                           Foreground="{StaticResource MutedBrush}" />
-                                            </Border>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
-                                            <Setter Property="Margin" Value="0,0,6,0" />
-                                            <Setter Property="Padding" Value="0" />
-                                            <Setter Property="Background" Value="Transparent" />
-                                            <Setter Property="BorderThickness" Value="0" />
-                                            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-                                        </Style>
-                                    </ListBox.ItemContainerStyle>
-                                </ListBox>
-                            </StackPanel>
-
-                            <StackPanel Margin="0,0,0,10">
-                                <TextBlock Text="Animated" Style="{StaticResource FieldLabel}" />
-                                <CheckBox Style="{StaticResource FriendlyCheckBox}"
-                                          Content="Animate the backdrop"
-                                          IsChecked="{Binding AnimateBackdrop}"
-                                          Margin="0,4,0,0" />
-                            </StackPanel>
-
-                            <StackPanel Margin="0,0,0,10">
-                                <TextBlock Text="Dim overlay" Style="{StaticResource FieldLabel}" />
-                                <TextBlock Text="Darkens the backdrop so content stays readable."
-                                           Style="{StaticResource MutedText}"
-                                           Margin="0,4,0,8" />
-                                <Slider Minimum="0" Maximum="0.7"
-                                        Value="{Binding BackdropDim}"
-                                        TickFrequency="0.05"
-                                        IsSnapToTickEnabled="True"
-                                        Margin="0,4,0,0" />
-                                <TextBlock Text="{Binding BackdropDim, StringFormat={}{0:P0}}"
-                                           Style="{StaticResource MutedText}"
-                                           Margin="0,4,0,0"
-                                           HorizontalAlignment="Right" />
-                            </StackPanel>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                <TextBlock Text="Custom image" Style="{StaticResource FieldLabel}" />
-                                <Button Style="{StaticResource PrimaryButton}"
-                                        Content="Choose PNG / GIFâ€¦"
-                                        Padding="12,7"
-                                        FontSize="11"
-                                        Margin="10,0,0,0"
-                                        Command="{Binding ChooseBackdropCommand}" />
-                                <Button Style="{StaticResource SecondaryButton}"
-                                        Content="Reset"
-                                        Padding="10,7"
-                                        FontSize="11"
-                                        Margin="8,0,0,0"
-                                        Command="{Binding ClearBackdropCommand}" />
-                            </StackPanel>
-
-                            <TextBlock Text="{Binding BackdropFileName}"
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,4,0,0"
-                                       Visibility="{Binding HasCustomBackdrop, Converter={StaticResource BoolToVis}}" />
-
-                            <!-- URL paste input -->
-                            <StackPanel Margin="0,12,0,0">
-                                <TextBlock Text="Or paste an image URL" Style="{StaticResource FieldLabel}" />
-                                <Grid Margin="0,4,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox Text="{Binding BackdropUrlInput, UpdateSourceTrigger=PropertyChanged}">
-                                        <TextBox.Style>
-                                            <Style TargetType="TextBox" BasedOn="{StaticResource InputBox}">
-                                                <Setter Property="Tag" Value="https://example.com/image.gif" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Text, RelativeSource={RelativeSource Self}}" Value="">
-                                                        <Setter Property="Tag" Value="https://example.com/image.gif" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBox.Style>
-                                    </TextBox>
-                                    <Button Grid.Column="1"
-                                            Style="{StaticResource PrimaryButton}"
-                                            Content="Download"
-                                            Padding="12,7"
-                                            FontSize="11"
-                                            Margin="8,0,0,0"
-                                            Command="{Binding DownloadBackdropFromUrlCommand}" />
-                                </Grid>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Profile popup background -->
-                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="Profile popup background" Style="{StaticResource SectionTitle}" />
-                            <TextBlock Text="Use a PNG or GIF behind friend and profile popups. GIFs animate."
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,3,0,12" />
-
-                            <StackPanel Orientation="Horizontal">
-                                <Button Style="{StaticResource PrimaryButton}"
-                                        Content="Choose PNG / GIF…"
-                                        Padding="12,7"
-                                        FontSize="11"
-                                        Command="{Binding ChooseProfileBackdropCommand}" />
-                                <Button Style="{StaticResource SecondaryButton}"
-                                        Content="Reset"
-                                        Padding="10,7"
-                                        FontSize="11"
-                                        Margin="8,0,0,0"
-                                        Command="{Binding ClearProfileBackdropCommand}" />
-                            </StackPanel>
-
-                            <TextBlock Text="{Binding ProfileBackdropFileName}"
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,6,0,0" />
-                        </StackPanel>
-                    </Border>
-
-                    <!-- New feature settings -->
-                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="Activity Feed" Style="{StaticResource SectionTitle}" />
-                            <TextBlock Text="Configure how the activity timeline behaves."
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,3,0,12" />
-
-                            <StackPanel Margin="0,0,0,10">
-                                <TextBlock Text="Default filter" Style="{StaticResource FieldLabel}" />
-                                <ListBox SelectedItem="{Binding ActivityDefaultFilter}"
-                                         Style="{StaticResource RegionPillList}"
-                                         MaxHeight="44">
-                                    <ListBox.Items>
-                                        <sys:String>all</sys:String>
-                                        <sys:String>FriendOnline</sys:String>
-                                        <sys:String>FriendJoinedWorld</sys:String>
-                                        <sys:String>FriendOffline</sys:String>
-                                        <sys:String>BioChanged</sys:String>
-                                        <sys:String>AvatarChanged</sys:String>
-                                        <sys:String>FriendAdded</sys:String>
-                                        <sys:String>FriendRemoved</sys:String>
-                                    </ListBox.Items>
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Background="{StaticResource InputBrush}"
-                                                    CornerRadius="8"
-                                                    Padding="10,6"
-                                                    Margin="0,0,6,0">
-                                                <TextBlock Text="{Binding}"
-                                                           FontSize="10"
-                                                           FontWeight="SemiBold"
-                                                           Foreground="{StaticResource MutedBrush}" />
-                                            </Border>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </StackPanel>
-
-                            <StackPanel Margin="0,0,0,10">
-                                <CheckBox Style="{StaticResource FriendlyCheckBox}"
-                                          Content="Show offline friends in activity feed"
-                                          IsChecked="{Binding ActivityShowOfflineFriends}"
-                                          Margin="0,4,0,0" />
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="Multi-Account" Style="{StaticResource SectionTitle}" />
-                            <TextBlock Text="Manage multiple VRChat accounts. Only auth cookies are stored, encrypted with Windows DPAPI."
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,3,0,12" />
-
-                            <TextBlock Text="Last active account" Style="{StaticResource FieldLabel}" />
-                            <TextBlock Text="{Binding MultiAccountViewModel.ActiveAccountLabel, TargetNullValue='(none)'}"
-                                       FontSize="13"
-                                       FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextBrush}"
-                                       Margin="0,4,0,0" />
-                            <TextBlock Text="Switch accounts in the Accounts section."
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,4,0,12" />
-                        </StackPanel>
-                    </Border>
-
-                    <!-- App info -->
-                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="About" Style="{StaticResource SectionTitle}" />
-                            <TextBlock FontSize="17"
-                                       FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextBrush}"
-                                       Margin="0,0,0,4">
-                                <Run Text="Kawaii" Foreground="{StaticResource PinkBrush}" />
-                                <Run Text="Vrc" Foreground="{StaticResource VioletBrush}" />
-                            </TextBlock>
-                            <TextBlock Text="A kawaii unofficial VRChat companion."
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,0,0,4" />
-                            <TextBlock Text="Your auth cookie is encrypted with Windows DPAPI. Your password is never stored."
-                                       Style="{StaticResource MutedText}"
-                                       TextWrapping="Wrap"
-                                       Margin="0,0,0,12" />
-
-                            <TextBlock Text="{Binding UpdateViewModel.VersionSummary}"
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,0,0,8" />
-                            <StackPanel Margin="0,0,0,14">
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Style="{StaticResource SecondaryButton}"
-                                            Content="Check for updates"
-                                            Command="{Binding UpdateViewModel.CheckCommand}"
-                                            IsEnabled="{Binding UpdateViewModel.CanCheck}"
-                                            ToolTip="{Binding UpdateViewModel.UpdateUnavailableText}" />
-                                    <TextBlock Text="{Binding UpdateViewModel.StatusText}"
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Account" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Only auth cookies are stored, encrypted with Windows DPAPI. Your password is never stored."
                                                Style="{StaticResource MutedText}"
-                                               VerticalAlignment="Center"
-                                               Margin="10,0,0,0"
-                                               TextTrimming="CharacterEllipsis"
-                                               Visibility="{Binding UpdateViewModel.HasStatusText, Converter={StaticResource BoolToVis}}" />
+                                               TextWrapping="Wrap"
+                                               Margin="0,3,0,14" />
+
+                                    <TextBlock Text="Last active account" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Text="{Binding MultiAccountViewModel.ActiveAccountLabel, TargetNullValue='(none)'}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}"
+                                               Margin="0,4,0,4" />
+                                    <TextBlock Text="Switch accounts in the Accounts section."
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,0,0,14" />
+
+                                    <Button Style="{StaticResource SecondaryButton}"
+                                            Content="Sign out"
+                                            Command="{Binding LogoutCommand}"
+                                            HorizontalAlignment="Left" />
                                 </StackPanel>
-                                <TextBlock Text="{Binding UpdateViewModel.UpdateUnavailableText}"
-                                           Style="{StaticResource MutedText}"
-                                           TextWrapping="Wrap"
-                                           Margin="0,6,0,0"
-                                           Visibility="{Binding UpdateViewModel.ShowUnsupportedNotice, Converter={StaticResource BoolToVis}}" />
-                            </StackPanel>
-
-                            <Button Style="{StaticResource SecondaryButton}"
-                                    Content="Sign out"
-                                    Command="{Binding LogoutCommand}"
-                                    HorizontalAlignment="Left" />
+                            </Border>
                         </StackPanel>
-                    </Border>
+                    </ScrollViewer>
+                </TabItem>
 
-                </StackPanel>
-            </ScrollViewer>
+                <!-- Interface: how the app looks and how text behaves. -->
+                <TabItem Header="Interface" Style="{StaticResource SettingsTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="0,0,8,12">
+                        <StackPanel>
+
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Background" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Make the app come alive with an animated backdrop."
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,3,0,12" />
+
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Text="Style" Style="{StaticResource FieldLabel}" />
+                                        <ListBox ItemsSource="{Binding BackdropStyles}"
+                                                 SelectedItem="{Binding SelectedBackdropStyle, Mode=TwoWay}"
+                                                 Style="{StaticResource RegionPillList}"
+                                                 MaxHeight="60">
+                                            <ListBox.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel Orientation="Horizontal" />
+                                                </ItemsPanelTemplate>
+                                            </ListBox.ItemsPanel>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{StaticResource InputBrush}"
+                                                            CornerRadius="8"
+                                                            Padding="10,6">
+                                                        <TextBlock Text="{Binding Label}"
+                                                                   FontSize="10"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource MutedBrush}" />
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="Margin" Value="0,0,6,0" />
+                                                    <Setter Property="Padding" Value="0" />
+                                                    <Setter Property="Background" Value="Transparent" />
+                                                    <Setter Property="BorderThickness" Value="0" />
+                                                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                        </ListBox>
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Text="Animated" Style="{StaticResource FieldLabel}" />
+                                        <CheckBox Style="{StaticResource FriendlyCheckBox}"
+                                                  Content="Animate the backdrop"
+                                                  IsChecked="{Binding AnimateBackdrop}"
+                                                  Margin="0,4,0,0" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Text="Dim overlay" Style="{StaticResource FieldLabel}" />
+                                        <TextBlock Text="Darkens the backdrop so content stays readable."
+                                                   Style="{StaticResource MutedText}"
+                                                   Margin="0,4,0,8" />
+                                        <Slider Minimum="0" Maximum="0.7"
+                                                Value="{Binding BackdropDim}"
+                                                TickFrequency="0.05"
+                                                IsSnapToTickEnabled="True"
+                                                Margin="0,4,0,0" />
+                                        <TextBlock Text="{Binding BackdropDim, StringFormat={}{0:P0}}"
+                                                   Style="{StaticResource MutedText}"
+                                                   Margin="0,4,0,0"
+                                                   HorizontalAlignment="Right" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <TextBlock Text="Custom image" Style="{StaticResource FieldLabel}" />
+                                        <Button Style="{StaticResource PrimaryButton}"
+                                                Content="Choose PNG / GIF…"
+                                                Padding="12,7"
+                                                FontSize="11"
+                                                Margin="10,0,0,0"
+                                                Command="{Binding ChooseBackdropCommand}" />
+                                        <Button Style="{StaticResource SecondaryButton}"
+                                                Content="Reset"
+                                                Padding="10,7"
+                                                FontSize="11"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding ClearBackdropCommand}" />
+                                    </StackPanel>
+
+                                    <TextBlock Text="{Binding BackdropFileName}"
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,4,0,0"
+                                               Visibility="{Binding HasCustomBackdrop, Converter={StaticResource BoolToVis}}" />
+
+                                    <StackPanel Margin="0,12,0,0">
+                                        <TextBlock Text="Or paste an image URL" Style="{StaticResource FieldLabel}" />
+                                        <Grid Margin="0,4,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Text="{Binding BackdropUrlInput, UpdateSourceTrigger=PropertyChanged}"
+                                                     Style="{StaticResource InputBox}"
+                                                     Tag="https://example.com/image.gif" />
+                                            <Button Grid.Column="1"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Content="Download"
+                                                    Padding="12,7"
+                                                    FontSize="11"
+                                                    Margin="8,0,0,0"
+                                                    Command="{Binding DownloadBackdropFromUrlCommand}" />
+                                        </Grid>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Profile popup background" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Use a PNG or GIF behind friend and profile popups. GIFs animate."
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,3,0,12" />
+
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Style="{StaticResource PrimaryButton}"
+                                                Content="Choose PNG / GIF…"
+                                                Padding="12,7"
+                                                FontSize="11"
+                                                Command="{Binding ChooseProfileBackdropCommand}" />
+                                        <Button Style="{StaticResource SecondaryButton}"
+                                                Content="Reset"
+                                                Padding="10,7"
+                                                FontSize="11"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding ClearProfileBackdropCommand}" />
+                                    </StackPanel>
+
+                                    <TextBlock Text="{Binding ProfileBackdropFileName}"
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,6,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Text selection" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Highlight any label, message or user id with the mouse, then press Ctrl+C or right-click to copy it. Text boxes keep working normally either way."
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,3,0,12" />
+                                    <CheckBox Style="{StaticResource FriendlyCheckBox}"
+                                              Content="Let me highlight and copy text across the app"
+                                              IsChecked="{Binding EnableTextSelection}" />
+                                    <TextBlock Text="Rows, buttons and links are never grabbed, so clicking them still does what it always did."
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- Social: the activity feed. -->
+                <TabItem Header="Social" Style="{StaticResource SettingsTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="0,0,8,12">
+                        <StackPanel>
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Activity Feed" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Configure how the activity timeline behaves."
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,3,0,12" />
+
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Text="Default filter" Style="{StaticResource FieldLabel}" />
+                                        <ListBox SelectedItem="{Binding ActivityDefaultFilter}"
+                                                 Style="{StaticResource RegionPillList}"
+                                                 MaxHeight="44">
+                                            <ListBox.Items>
+                                                <sys:String>all</sys:String>
+                                                <sys:String>FriendOnline</sys:String>
+                                                <sys:String>FriendJoinedWorld</sys:String>
+                                                <sys:String>FriendOffline</sys:String>
+                                                <sys:String>BioChanged</sys:String>
+                                                <sys:String>AvatarChanged</sys:String>
+                                                <sys:String>FriendAdded</sys:String>
+                                                <sys:String>FriendRemoved</sys:String>
+                                            </ListBox.Items>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{StaticResource InputBrush}"
+                                                            CornerRadius="8"
+                                                            Padding="10,6"
+                                                            Margin="0,0,6,0">
+                                                        <TextBlock Text="{Binding}"
+                                                                   FontSize="10"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource MutedBrush}" />
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </StackPanel>
+
+                                    <CheckBox Style="{StaticResource FriendlyCheckBox}"
+                                              Content="Show offline friends in activity feed"
+                                              IsChecked="{Binding ActivityShowOfflineFriends}"
+                                              Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- Browser: settings shared by every embedded page. -->
+                <TabItem Header="Browser" Style="{StaticResource SettingsTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="0,0,8,12">
+                        <StackPanel>
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Embedded browsers" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Brave Browser, Discord and Creator Resources share one engine. This one switch covers all three; per-site shields stay in the Brave Browser section."
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,3,0,12" />
+
+                                    <CheckBox Style="{StaticResource FriendlyCheckBox}"
+                                              Content="Block ads and trackers in every embedded browser"
+                                              IsChecked="{Binding BrowserAdBlockEnabled}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- Advanced: updates and the about blurb. -->
+                <TabItem Header="Advanced" Style="{StaticResource SettingsTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="0,0,8,12">
+                        <StackPanel>
+
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Updates" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="KawaiiVrc checks for a newer release when it starts."
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,3,0,10" />
+
+                                    <TextBlock Text="{Binding UpdateViewModel.VersionSummary}"
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,0,0,8" />
+                                    <StackPanel Margin="0,0,0,10">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Style="{StaticResource SecondaryButton}"
+                                                    Content="Check for updates"
+                                                    Command="{Binding UpdateViewModel.CheckCommand}"
+                                                    IsEnabled="{Binding UpdateViewModel.CanCheck}"
+                                                    ToolTip="{Binding UpdateViewModel.UpdateUnavailableText}" />
+                                            <TextBlock Text="{Binding UpdateViewModel.StatusText}"
+                                                       Style="{StaticResource MutedText}"
+                                                       VerticalAlignment="Center"
+                                                       Margin="10,0,0,0"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Visibility="{Binding UpdateViewModel.HasStatusText, Converter={StaticResource BoolToVis}}" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding UpdateViewModel.UpdateUnavailableText}"
+                                                   Style="{StaticResource MutedText}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,6,0,0"
+                                                   Visibility="{Binding UpdateViewModel.ShowUnsupportedNotice, Converter={StaticResource BoolToVis}}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="About" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock FontSize="17"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}"
+                                               Margin="0,0,0,4">
+                                        <Run Text="Kawaii" Foreground="{StaticResource PinkBrush}" />
+                                        <Run Text="Vrc" Foreground="{StaticResource VioletBrush}" />
+                                    </TextBlock>
+                                    <TextBlock Text="A kawaii unofficial VRChat companion."
+                                               Style="{StaticResource MutedText}"
+                                               Margin="0,0,0,4" />
+                                    <TextBlock Text="Settings and caches live in %LOCALAPPDATA%\VrcCompanion. Your auth cookie is encrypted with Windows DPAPI and your password is never stored."
+                                               Style="{StaticResource MutedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+            </TabControl>
         </DataTemplate>
 
         <!-- ========================================================= -->

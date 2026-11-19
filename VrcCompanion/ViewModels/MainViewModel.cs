@@ -312,6 +312,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _notificationStore = new NotificationPersistenceStore();
         _settingsStore = SettingsStore.Shared;
         _settings = _settingsStore.Settings;
+        Controls.TextSelection.IsEnabled = _settings.EnableTextSelection;
         _favoriteFriends = new HashSet<string>(_settings.FavoriteFriends, StringComparer.Ordinal);
         _favoriteWorlds = new HashSet<string>(_settings.FavoriteWorlds, StringComparer.Ordinal);
         LaunchProfiles = new ObservableCollection<LaunchProfileItem>();
@@ -731,6 +732,28 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             _settings.BrowserAdBlockEnabled = value;
             _settingsStore.Save();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// Lets the user highlight and copy ordinary labels, messages and ids
+    /// anywhere in the app. Off by default so clicking text keeps behaving
+    /// like a normal desktop reader.
+    /// </summary>
+    public bool EnableTextSelection
+    {
+        get => _settings.EnableTextSelection;
+        set
+        {
+            if (_settings.EnableTextSelection == value)
+            {
+                return;
+            }
+
+            _settings.EnableTextSelection = value;
+            _settingsStore.Save();
+            Controls.TextSelection.IsEnabled = value;
             OnPropertyChanged();
         }
     }
