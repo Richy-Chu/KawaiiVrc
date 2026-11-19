@@ -303,8 +303,86 @@ public class PhotoMetadataTests
         Assert.Equal("PHOTO", viewModel.ViewerSessionTitle);
     }
 
+    [Fact]
+    public void ReadsLegacyMetadataStoredAfterThePixels()
+    {
+        // LFS and ScreenshotManager put their text chunk after the image data;
+        // VRCX scans backwards for it, and so does the reader now.
+        var path = WritePngAfterPixels(
+            "lfs",
+            ("Description", $"lfs|2|author:usr_61cc28f3-76ea-41b4-a9da-ede327ef3703,ЯichψTru|world:{JapanId},12345,Anthro Heat Lockers and Sauna"));
+
+        var metadata = PhotoMetadataReader.Read(path);
+
+        Assert.NotNull(metadata);
+        Assert.Equal(JapanId, metadata!.WorldId);
+        Assert.Equal("Anthro Heat Lockers and Sauna", metadata.WorldName);
+        Assert.Equal($"{JapanId}:12345", metadata.InstanceId);
+        Assert.Equal("ЯichψTru", metadata.AuthorName);
+    }
+
+    [Fact]
+    public async Task FilterWorldsGetTheirThumbnailFromTheApi()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "VRChat_2026-06-14_08-07-40.105_2048x1440.png");
+        File.WriteAllBytes(path, BuildPng(("XML:com.adobe.xmp", Xmp)));
+
+        var item = new MediaItem(path, "VRChat", new DateTime(2026, 6, 14, 8, 7, 40));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · June 2026", "VRChat", new DateTime(2026, 6, 1), new[] { item })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"))
+        {
+            WorldFetcher = _ => Task.FromResult<MediaWorldInfo?>(
+                new MediaWorldInfo("Palm Point - Night", "https://example.test/palm.png", "Sam"))
+        };
+
+        await viewModel.LoadAsync(force: true);
+        await viewModel.PhotoContextsTask;
+
+        var world = viewModel.WorldFilterOptions.Single(option => option.Key == JapanId);
+        Assert.Equal("https://example.test/palm.png", world.ImageUrl);
+        Assert.True(world.HasImage);
+    }
+
     private static string WritePng(string name, string keyword, string text)
         => WritePng(name, new[] { (keyword, text) });
+
+    /// <summary>A PNG with a large IDAT, then the metadata chunk after it.</summary>
+    private static string WritePngAfterPixels(string name, params (string Keyword, string Text)[] chunks)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcPhotoMetadata", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, name + ".png");
+
+        using var output = new MemoryStream();
+        output.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        var header = new byte[13];
+        header[3] = 1;
+        header[7] = 1;
+        header[8] = 8;
+        header[9] = 6;
+        WriteChunk(output, "IHDR", header);
+        WriteChunk(output, "IDAT", new byte[300_000]);
+        foreach (var (keyword, text) in chunks)
+        {
+            var payload = new List<byte>();
+            payload.AddRange(Encoding.UTF8.GetBytes(keyword));
+            payload.AddRange(new byte[] { 0, 0, 0, 0, 0 });
+            payload.AddRange(Encoding.UTF8.GetBytes(text));
+            WriteChunk(output, "iTXt", payload.ToArray());
+        }
+
+        WriteChunk(output, "IEND", Array.Empty<byte>());
+        File.WriteAllBytes(path, output.ToArray());
+        return path;
+    }
 
     private static string WritePng(string name, (string Keyword, string Text)[] chunks)
     {

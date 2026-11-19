@@ -1307,6 +1307,74 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             OnPropertyChanged(nameof(ViewerPeopleCountText));
             OnPropertyChanged(nameof(ViewerContextNote));
         }
+
+        await HydrateWorldImagesAsync(token);
+    }
+
+    /// <summary>
+    /// VRCX and VRCNext fill a world's name and thumbnail from their own world
+    /// cache; the file only knows the id, so ask the API for the icons the
+    /// world dropdown draws.
+    /// </summary>
+    private async Task HydrateWorldImagesAsync(CancellationToken token)
+    {
+        var fetcher = WorldFetcher;
+        if (fetcher is null)
+        {
+            return;
+        }
+
+        var worlds = _allItems
+            .Where(item => item.Context is { HasWorld: true, HasWorldThumbnail: false })
+            .GroupBy(item => item.Context!.WorldId, StringComparer.OrdinalIgnoreCase)
+            .Take(160)
+            .ToList();
+        if (worlds.Count == 0)
+        {
+            return;
+        }
+
+        for (var offset = 0; offset < worlds.Count; offset += 4)
+        {
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var batch = worlds.GetRange(offset, Math.Min(4, worlds.Count - offset));
+            await Task.WhenAll(batch.Select(async group =>
+            {
+                try
+                {
+                    var info = await fetcher(group.Key).ConfigureAwait(false);
+                    if (info is null)
+                    {
+                        return;
+                    }
+
+                    foreach (var item in group)
+                    {
+                        item.Context?.ApplyWorldInfo(info.Name, info.ThumbnailUrl, info.AuthorName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"media world {group.Key}: {ex.Message}");
+                }
+            }));
+
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            RebuildFilters();
+            ApplyFilters();
+            OnPropertyChanged(nameof(ViewerWorldName));
+            OnPropertyChanged(nameof(ViewerWorldThumbnailUrl));
+            OnPropertyChanged(nameof(HasViewerWorldThumbnail));
+            OnPropertyChanged(nameof(ViewerWorldAuthorText));
+        }
     }
 
     private void Apply(IReadOnlyList<MediaGroup> groups)

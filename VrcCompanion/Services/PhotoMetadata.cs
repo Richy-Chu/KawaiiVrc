@@ -85,6 +85,7 @@ public static class PhotoMetadataReader
             // chunk and merge them, otherwise the first one hides the players.
             VrcPhotoMetadata? json = null;
             VrcPhotoMetadata? xmp = null;
+            VrcPhotoMetadata? legacy = null;
             foreach (var text in ReadTextChunks(bytes))
             {
                 json ??= TryReadJson(text);
@@ -99,7 +100,25 @@ public static class PhotoMetadataReader
             // PNG chunk loop above does not apply, so look for the packet.
             xmp ??= TryReadXmp(Encoding.UTF8.GetString(bytes));
 
-            return Merge(json, xmp);
+            // Modded VRChat builds (LFS, ScreenshotManager) append their text
+            // chunk after the pixel data; VRCX scans backwards for it, so do the
+            // same instead of stopping at the first IDAT.
+            if (json is null && xmp is null)
+            {
+                foreach (var text in ReadTailTextChunks(path))
+                {
+                    json ??= TryReadJson(text);
+                    xmp ??= TryReadXmp(text);
+                    if (json is not null || xmp is not null)
+                    {
+                        break;
+                    }
+
+                    legacy ??= TryReadLegacy(text);
+                }
+            }
+
+            return Merge(json, xmp) ?? legacy;
         }
         catch (Exception)
         {
@@ -134,6 +153,140 @@ public static class PhotoMetadataReader
 
     private static string FirstNonEmpty(string first, string second)
         => string.IsNullOrWhiteSpace(first) ? second : first;
+
+    /// <summary>
+    /// Text chunks stored after the image data. The spec puts text before the
+    /// pixels, but old modded clients did not, and their chunk headers still
+    /// follow the normal shape, so walk the tail looking for them.
+    /// </summary>
+    private static IEnumerable<string> ReadTailTextChunks(string path)
+    {
+        byte[] tail;
+        try
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            if (stream.Length <= MaximumBytes)
+            {
+                yield break;
+            }
+
+            var length = (int)Math.Min(stream.Length, 512 * 1024);
+            stream.Seek(-length, SeekOrigin.End);
+            tail = new byte[length];
+            stream.ReadExactly(tail);
+        }
+        catch (Exception)
+        {
+            yield break;
+        }
+
+        // offset is the start of a chunk: 4-byte length, 4-byte type, data.
+        for (var offset = 0; offset + 12 < tail.Length; offset++)
+        {
+            var type = Encoding.ASCII.GetString(tail, offset + 4, 4);
+            if (type is not ("iTXt" or "tEXt"))
+            {
+                continue;
+            }
+
+            var length = (tail[offset] << 24) | (tail[offset + 1] << 16) |
+                         (tail[offset + 2] << 8) | tail[offset + 3];
+            if (length <= 0 || offset + 12 + length > tail.Length)
+            {
+                continue;
+            }
+
+            var text = DecodeTextChunk(type, new ReadOnlySpan<byte>(tail, offset + 8, length));
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                yield return text;
+            }
+
+            offset += 11 + length;
+        }
+    }
+
+    /// <summary>
+    /// LFS and ScreenshotManager wrote pipe-separated text instead of JSON:
+    /// "lfs|2|author:id,name|world:id,instance,name". VRCX parses these too.
+    /// </summary>
+    private static VrcPhotoMetadata? TryReadLegacy(string text)
+    {
+        var trimmed = text.Trim();
+        if (!trimmed.StartsWith("lfs", StringComparison.OrdinalIgnoreCase) &&
+            !trimmed.StartsWith("screenshotmanager", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var parts = trimmed.Split('|');
+        if (parts.Length < 3)
+        {
+            return null;
+        }
+
+        var isCvr = parts.Length > 1 && parts[1] == "cvr";
+        var offset = isCvr ? 1 : 0;
+        var authorId = string.Empty;
+        var authorName = string.Empty;
+        var worldId = string.Empty;
+        var worldName = string.Empty;
+        var instanceId = string.Empty;
+
+        for (var index = offset + 2; index < parts.Length; index++)
+        {
+            var part = parts[index];
+            var colon = part.IndexOf(':');
+            var key = colon > 0 ? part[..colon] : part;
+            var value = colon > 0 ? part[(colon + 1)..] : string.Empty;
+            if (value.Length == 0)
+            {
+                continue;
+            }
+
+            if (key is "author" or "Author")
+            {
+                var pieces = value.Split(',', 3);
+                if (pieces.Length >= 2)
+                {
+                    authorId = pieces[0];
+                    authorName = pieces[1];
+                }
+            }
+            else if (key is "world" or "World")
+            {
+                var pieces = value.Split(',', 4);
+                if (pieces.Length >= 3)
+                {
+                    worldId = pieces[0];
+                    instanceId = pieces[0] + ":" + pieces[1];
+                    worldName = string.Join(",", pieces.Skip(2));
+                }
+                else if (pieces.Length == 1)
+                {
+                    worldName = pieces[0];
+                }
+            }
+        }
+
+        if (worldId.Length == 0 && worldName.Length == 0 && authorName.Length == 0)
+        {
+            return null;
+        }
+
+        return new VrcPhotoMetadata
+        {
+            WorldId = worldId,
+            WorldName = worldName,
+            InstanceId = instanceId,
+            AuthorId = authorId,
+            AuthorName = authorName
+        };
+    }
 
     private static byte[] ReadHead(Stream stream)
     {
