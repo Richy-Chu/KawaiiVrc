@@ -391,6 +391,37 @@ public sealed class InstanceHistoryTests : IDisposable
     }
 
     [Fact]
+    public void KnownUserIdIsReusedOnlyWhenTheNameIsUnambiguous()
+    {
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "known-id.db"));
+        var start = DateTimeOffset.Now.AddHours(-3);
+
+        var nameOnly = InstanceHistoryStore.NewFromLog(Me, LocationA, start)!;
+        nameOnly.GetOrAddPlayer(string.Empty, "xoestasy").StartVisit(start);
+        nameOnly.Close(start.AddMinutes(5));
+        store.Add(nameOnly);
+
+        // The same name was never seen with an id, so nothing is invented.
+        Assert.Null(store.FindKnownUserId(Me, "xoestasy"));
+
+        var withId = InstanceHistoryStore.NewFromLog(Me, LocationB, start.AddMinutes(10))!;
+        withId.GetOrAddPlayer(Friend, "xoestasy").StartVisit(start.AddMinutes(10));
+        withId.Close(start.AddMinutes(20));
+        store.Add(withId);
+
+        // One known id for the name is safe to borrow for the name-only row.
+        Assert.Equal(Friend, store.FindKnownUserId(Me, "xoestasy"));
+
+        var impostor = InstanceHistoryStore.NewFromLog(Me, LocationC, start.AddMinutes(30))!;
+        impostor.GetOrAddPlayer(Other, "xoestasy").StartVisit(start.AddMinutes(30));
+        impostor.Close(start.AddMinutes(40));
+        store.Add(impostor);
+
+        // Two different people share the display name: keep the row untouched.
+        Assert.Null(store.FindKnownUserId(Me, "xoestasy"));
+    }
+
+    [Fact]
     public void DeletingAMergedHistoryRowRemovesEverySourceSession()
     {
         RunOnSta(() =>

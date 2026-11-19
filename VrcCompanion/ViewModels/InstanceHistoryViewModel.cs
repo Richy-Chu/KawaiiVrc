@@ -330,6 +330,7 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
         OnEntryStateChanged();
         SelectedEntry = item;
         IsPlayersTab = true;
+        _ = HydrateEntryAsync(item);
     }
 
     private async Task SelectSessionAsync(string sessionId, string location, DateTimeOffset joinedAt)
@@ -354,6 +355,9 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
             {
                 SelectedEntry = match;
                 IsPlayersTab = true;
+                // Selecting from a card skips the list click, so the world tile
+                // and the player icons have to be fetched here too.
+                _ = HydrateEntryAsync(match);
                 return;
             }
 
@@ -575,13 +579,131 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
         _ = HydrateEntryAsync(item);
     }
 
+    /// <summary>
+    /// Fetches the world behind the opened row so its tile works even when the
+    /// popup was opened straight from a card instead of the history list.
+    /// </summary>
+    private async Task HydrateEntryWorldAsync(InstanceHistoryItem item)
+    {
+        if (string.IsNullOrWhiteSpace(item.Entry.WorldId))
+        {
+            item.Entry.WorldId = LaunchService.GetWorldIdFromLocation(item.Entry.Location) ?? string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(item.Entry.WorldId) ||
+            !string.IsNullOrWhiteSpace(item.Entry.WorldThumbnailUrl))
+        {
+            return;
+        }
+
+        try
+        {
+            var world = await _api.GetWorldAsync(item.Entry.WorldId);
+            if (world is null || SelectedEntry != item)
+            {
+                return;
+            }
+
+            item.ApplyWorld(world);
+            _store.UpsertMetadata(item.Entry);
+        }
+        catch (Exception)
+        {
+            // Deleted or private worlds keep the name the log recorded.
+        }
+    }
+
+    /// <summary>
+    /// Fills in the identity of a player the log only knew by name, matching
+    /// the exact display name so non-friends get their picture and profile link.
+    /// </summary>
+    private async Task ResolvePlayerIdAsync(InstanceHistoryPlayerItem player)
+    {
+        if (string.IsNullOrWhiteSpace(player.DisplayName) ||
+            string.Equals(player.DisplayName, "Unknown player", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        // Free first: the same name may already have an id in our own log or in
+        // an imported history, which needs no network at all.
+        var known = _store.FindKnownUserId(_accountUserId, player.DisplayName);
+        if (!string.IsNullOrWhiteSpace(known))
+        {
+            player.AdoptUserId(known);
+            try
+            {
+                var knownUser = await _api.GetUserAsync(known);
+                if (knownUser is not null)
+                {
+                    player.ApplyProfile(knownUser);
+                }
+            }
+            catch (Exception)
+            {
+                // The id is still good for the profile link.
+            }
+
+            return;
+        }
+
+        try
+        {
+            var results = await _api.SearchUserListAsync(player.DisplayName.Trim(), 10);
+            var match = results.FirstOrDefault(user =>
+                string.Equals(
+                    user.DisplayName?.Trim(),
+                    player.DisplayName.Trim(),
+                    StringComparison.OrdinalIgnoreCase));
+            if (match is null || string.IsNullOrWhiteSpace(match.Id))
+            {
+                return;
+            }
+
+            player.AdoptUserId(match.Id);
+            player.ApplyProfile(match);
+            _store.AssignPlayerUserId(_accountUserId, player.DisplayName, match.Id);
+        }
+        catch (Exception)
+        {
+            // The row keeps the name from the log and its initial tile.
+        }
+    }
+
     private async Task HydrateEntryAsync(InstanceHistoryItem item)
     {
-        foreach (var player in item.Players.Where(player => player.CanOpenProfile))
+        await HydrateEntryWorldAsync(item);
+
+        foreach (var player in item.Players.ToList())
         {
             if (SelectedEntry != item)
             {
                 return;
+            }
+
+            if (!player.CanOpenProfile)
+            {
+                // VRChat logs only carry usr_ ids for some names. Resolve the
+                // rest by an exact display-name match so people outside the
+                // friends list still get a picture and a profile link.
+                await ResolvePlayerIdAsync(player);
+                if (player.CanOpenProfile)
+                {
+                    try
+                    {
+                        var resolved = await _api.GetUserAsync(player.UserId);
+                        if (resolved is not null && SelectedEntry == item)
+                        {
+                            player.ApplyProfile(resolved);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // Keep the search result already applied.
+                    }
+                }
+
+                continue;
             }
 
             try
@@ -1299,6 +1421,23 @@ public sealed class InstanceHistoryPlayerItem : ViewModelBase
             }
             return "<1m";
         }
+    }
+
+    /// <summary>
+    /// Takes the user id found for a row that only had a display name, so the
+    /// row becomes clickable and can be remembered for later loads.
+    /// </summary>
+    public void AdoptUserId(string userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return;
+        }
+
+        Player.UserId = userId;
+        OnPropertyChanged(nameof(UserId));
+        OnPropertyChanged(nameof(CanOpenProfile));
+        OpenProfileCommand.RaiseCanExecuteChanged();
     }
 
     public void ApplyProfile(VrcUser user)

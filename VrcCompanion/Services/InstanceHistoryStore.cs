@@ -258,6 +258,46 @@ public sealed class InstanceHistoryStore
     /// to repair. A second name-only occurrence (which could be another player
     /// sharing the display name) leaves every row untouched.
     /// </summary>
+    /// <summary>
+    /// Finds the one id ever recorded for a display name, so a name-only row can
+    /// borrow it when the same person appears with an id elsewhere in the log or
+    /// in an imported history. Returns null when the name is unknown or shared.
+    /// </summary>
+    public string? FindKnownUserId(string accountUserId, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(accountUserId) || string.IsNullOrWhiteSpace(displayName))
+        {
+            return null;
+        }
+
+        lock (_gate)
+        {
+            EnsureInitialized();
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT user_id
+                FROM gamelog_join_leave
+                WHERE account_user_id = $account
+                  AND display_name = $display COLLATE NOCASE
+                  AND user_id <> ''
+                GROUP BY user_id
+                LIMIT 2
+                """;
+            command.Parameters.AddWithValue("$account", accountUserId);
+            command.Parameters.AddWithValue("$display", displayName.Trim());
+
+            var ids = new List<string>();
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                ids.Add(reader.GetString(0));
+            }
+
+            return ids.Count == 1 ? ids[0] : null;
+        }
+    }
+
     public int AssignPlayerUserId(string accountUserId, string displayName, string userId)
     {
         if (string.IsNullOrWhiteSpace(accountUserId) ||
