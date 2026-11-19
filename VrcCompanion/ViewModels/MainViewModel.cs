@@ -350,6 +350,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         MediaViewModel.HistoryProvider = () => CurrentUser is { } user
             ? _instanceHistoryStore.ForAccount(user.Id)
             : Array.Empty<InstanceHistoryEntry>();
+        // Group instances name their group; unknown ones are fetched once the
+        // picture is open so the viewer does not guess.
+        MediaViewModel.GroupLookup = ResolveMediaGroupInfo;
+        MediaViewModel.GroupFetcher = FetchMediaGroupInfoAsync;
         UpdateViewModel = new UpdateViewModel();
         ChatboxViewModel = chatboxViewModel ?? new ChatboxViewModel();
         CreatorResourcesViewModel = new CreatorResourcesViewModel();
@@ -506,6 +510,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OpenMediaSessionCommand = Track(new RelayCommand<MediaContext>(
             OpenMediaSession,
             context => context is { HasSession: true }));
+        OpenMediaGroupCommand = Track(new RelayCommand<MediaContext>(
+            OpenMediaGroup,
+            context => context is { CanOpenGroup: true }));
         CloseFriendDetailCommand = Track(new RelayCommand(ClearFriendSelection));
         OpenOwnProfileCommand = Track(new RelayCommand(OpenOwnProfile, () => CurrentUser is not null));
         ChooseLaunchModeCommand = Track(new RelayCommand<string>(
@@ -2379,6 +2386,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public AsyncRelayCommand<MediaContext> OpenMediaWorldCommand { get; }
 
     public RelayCommand<MediaContext> OpenMediaSessionCommand { get; }
+
+    public RelayCommand<MediaContext> OpenMediaGroupCommand { get; }
     public RelayCommand CloseFriendDetailCommand { get; }
 
     public RelayCommand OpenOwnProfileCommand { get; }
@@ -5539,6 +5548,99 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         OpenUserProfile(person.UserId, person.DisplayName, person.AvatarUrl);
+    }
+
+    /// <summary>
+    /// The group chip in the media viewer: the group popup already carries the
+    /// membership state, instances and join/leave.
+    /// </summary>
+    private void OpenMediaGroup(MediaContext? context)
+    {
+        if (context is null || !context.CanOpenGroup)
+        {
+            return;
+        }
+
+        if (GroupViewModel is not null)
+        {
+            _ = GroupViewModel.OpenGroupInfoAsync(context.GroupId);
+            return;
+        }
+
+        try
+        {
+            LaunchService.OpenUrl($"https://vrchat.com/home/group/{context.GroupId}");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            ShowError("Couldn't open that group in your browser.");
+        }
+    }
+
+    /// <summary>Uses the groups already loaded in the app; empty when unheard of.</summary>
+    private (string? Name, string? IconUrl) ResolveMediaGroupInfo(string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return default;
+        }
+
+        if (_groupMetadataCache.TryGetValue(groupId, out var cached) &&
+            !string.IsNullOrWhiteSpace(cached.Name))
+        {
+            return cached;
+        }
+
+        var group = GroupViewModel?.Groups.FirstOrDefault(candidate =>
+            string.Equals(candidate.EffectiveId, groupId, StringComparison.OrdinalIgnoreCase));
+        if (group is null)
+        {
+            return default;
+        }
+
+        var iconUrl = string.IsNullOrWhiteSpace(group.IconUrl) ? group.ImageUrl : group.IconUrl;
+        _groupMetadataCache[groupId] = (group.Name, iconUrl);
+        return (group.Name, iconUrl);
+    }
+
+    /// <summary>Names an old session's group when neither cache knows it yet.</summary>
+    private async Task<(string? Name, string? IconUrl)> FetchMediaGroupInfoAsync(string groupId)
+    {
+        var known = ResolveMediaGroupInfo(groupId);
+        if (!string.IsNullOrWhiteSpace(known.Name))
+        {
+            return known;
+        }
+
+        await _groupMetadataGate.WaitAsync();
+        try
+        {
+            known = ResolveMediaGroupInfo(groupId);
+            if (!string.IsNullOrWhiteSpace(known.Name))
+            {
+                return known;
+            }
+
+            var group = await _api.GetGroupAsync(groupId);
+            if (group is null)
+            {
+                return default;
+            }
+
+            var iconUrl = string.IsNullOrWhiteSpace(group.IconUrl) ? group.ImageUrl : group.IconUrl;
+            _groupMetadataCache[groupId] = (group.Name, iconUrl);
+            return (group.Name, iconUrl);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"media group {groupId}: {ex.Message}");
+            return default;
+        }
+        finally
+        {
+            _groupMetadataGate.Release();
+        }
     }
 
     private void OpenMediaSession(MediaContext? context)

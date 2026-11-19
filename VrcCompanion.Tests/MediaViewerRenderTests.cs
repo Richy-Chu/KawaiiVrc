@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -22,6 +23,7 @@ namespace VrcCompanion.Tests;
 public class MediaViewerRenderTests
 {
     private const string JapanId = "wrld_4cf554b4-430c-4f8f-b53e-1f294eed230b";
+    private const string GroupId = "grp_9f1c2b3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d";
 
     [Fact]
     public void ViewerShowsTheWorldSessionAndPlayers()
@@ -57,6 +59,10 @@ public class MediaViewerRenderTests
                 // The shell owns the real history wiring; the test supplies it
                 // before the Media section loads.
                 media.HistoryProvider = () => new[] { Session() };
+                media.GroupLookup = groupId => groupId == GroupId
+                    ? ("Kawaii Club", "https://example.test/group.png")
+                    : default;
+                media.GroupFetcher = _ => Task.FromResult<(string?, string?)>(default);
 
                 window = new MainWindow(shell, initializeOnLoad: false);
                 window.Show();
@@ -90,6 +96,15 @@ public class MediaViewerRenderTests
                 Assert.True(
                     texts.Any(text => text.Contains("Alice", StringComparison.Ordinal)),
                     "player missing. Texts: " + string.Join(" | ", texts));
+                Assert.True(
+                    texts.Any(text => text.Contains("Group public", StringComparison.Ordinal)),
+                    "group access missing. Texts: " + string.Join(" | ", texts));
+                Assert.True(
+                    texts.Any(text => text.Contains("Kawaii Club", StringComparison.Ordinal)),
+                    "group name missing. Texts: " + string.Join(" | ", texts));
+                Assert.Contains(
+                    FindChildren<Button>(window),
+                    button => button.ToolTip as string == "Open this group");
                 Assert.Contains(texts, text => text.Contains("Session ·", StringComparison.Ordinal));
 
                 var buttons = FindChildren<Button>(window)
@@ -127,9 +142,9 @@ public class MediaViewerRenderTests
         {
             Id = "session-1",
             AccountUserId = "usr_00000000-0000-0000-0000-000000000000",
-            Location = JapanId + ":12345",
+            Location = $"{JapanId}:12345~group({GroupId})~groupAccessType(public)",
             WorldId = JapanId,
-            InstanceId = "12345",
+            InstanceId = $"12345~group({GroupId})~groupAccessType(public)",
             WorldName = "Japan Street",
             WorldThumbnailUrl = "https://example.test/world.png",
             WorldAuthorName = "Creator",

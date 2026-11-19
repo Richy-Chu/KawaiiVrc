@@ -77,6 +77,13 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     /// </summary>
     public Func<IReadOnlyList<InstanceHistoryEntry>>? HistoryProvider { get; set; }
 
+    /// <summary>Looks a group up in what the app already knows, so a group
+    /// instance shows its name without a request.</summary>
+    public Func<string, (string? Name, string? IconUrl)>? GroupLookup { get; set; }
+
+    /// <summary>Fetches an unknown group so old sessions still name it.</summary>
+    public Func<string, Task<(string? Name, string? IconUrl)>>? GroupFetcher { get; set; }
+
     public ObservableCollection<MediaGroup> Groups { get; } = new();
 
     public ObservableCollection<MediaFilterOption> WorldFilters { get; } = new();
@@ -300,6 +307,12 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             OnPropertyChanged(nameof(HasViewerWorldThumbnail));
             OnPropertyChanged(nameof(ViewerWorldFolderName));
             OnPropertyChanged(nameof(CanOpenViewerWorld));
+            OnPropertyChanged(nameof(ViewerAccessLabel));
+            OnPropertyChanged(nameof(ViewerHasGroup));
+            OnPropertyChanged(nameof(ViewerShowsAccessChip));
+            OnPropertyChanged(nameof(CanOpenViewerGroup));
+            OnPropertyChanged(nameof(ViewerGroupName));
+            OnPropertyChanged(nameof(ViewerGroupIconUrl));
             OnPropertyChanged(nameof(ViewerSessionText));
             OnPropertyChanged(nameof(CanOpenViewerSession));
             OnPropertyChanged(nameof(ViewerPeople));
@@ -348,6 +361,20 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public bool CanOpenViewerWorld => ViewerContext?.HasWorld == true;
 
+    /// <summary>Public, Friends, Friends+, Invite, Invite+, Group, Group+ or Group public.</summary>
+    public string ViewerAccessLabel => ViewerContext?.AccessLabel ?? string.Empty;
+
+    public bool ViewerHasGroup => ViewerContext?.HasGroup == true;
+
+    /// <summary>The access chip is only needed when there is no group row to carry it.</summary>
+    public bool ViewerShowsAccessChip => HasViewerContext && !ViewerHasGroup;
+
+    public bool CanOpenViewerGroup => ViewerContext?.CanOpenGroup == true;
+
+    public string ViewerGroupName => ViewerContext?.GroupDisplayName ?? string.Empty;
+
+    public string ViewerGroupIconUrl => ViewerContext?.GroupIconUrl ?? string.Empty;
+
     public bool CanFilterByViewerWorld => !string.IsNullOrWhiteSpace(ViewerContext?.WorldName);
 
     public string ViewerSessionText => ViewerContext?.SessionText ?? string.Empty;
@@ -375,6 +402,48 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
         ViewerImage = item.LoadBitmap(1400);
         SelectedMedia = item;
+        _ = HydrateViewerGroupAsync(item.Context);
+    }
+
+    /// <summary>
+    /// Older sessions only store the group id. Ask for its name/icon once and
+    /// update the open viewer, so the panel never says "Group instance" for a
+    /// group the account can still resolve.
+    /// </summary>
+    private async Task HydrateViewerGroupAsync(MediaContext? context)
+    {
+        if (context is null || !context.HasGroup || !string.IsNullOrWhiteSpace(context.GroupName))
+        {
+            return;
+        }
+
+        var fetcher = GroupFetcher;
+        if (fetcher is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var (name, iconUrl) = await fetcher(context.GroupId);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return;
+            }
+
+            context.ApplyGroupInfo(name, iconUrl);
+            if (!ReferenceEquals(ViewerContext, context))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(ViewerGroupName));
+            OnPropertyChanged(nameof(ViewerGroupIconUrl));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"media group {context.GroupId}: {ex.Message}");
+        }
     }
 
     public void CloseViewer()
@@ -762,7 +831,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                 byPath[item.Path] = item;
             }
 
-            foreach (var pair in MediaMetadataResolver.Build(_allItems, sessions))
+            foreach (var pair in MediaMetadataResolver.Build(_allItems, sessions, groupLookup: GroupLookup))
             {
                 if (byPath.TryGetValue(pair.Key, out var item))
                 {

@@ -44,8 +44,16 @@ public sealed class MediaContext
 {
     public MediaContext(
         InstanceHistoryEntry session,
-        IReadOnlyList<MediaPersonItem> people)
+        IReadOnlyList<MediaPersonItem> people,
+        string accessLabel,
+        string groupId,
+        string groupName,
+        string groupIconUrl)
     {
+        AccessLabel = accessLabel ?? string.Empty;
+        GroupId = groupId ?? string.Empty;
+        GroupName = groupName ?? string.Empty;
+        GroupIconUrl = groupIconUrl ?? string.Empty;
         SessionId = session.Id;
         Location = session.Location ?? string.Empty;
         WorldId = session.WorldId ?? string.Empty;
@@ -81,6 +89,41 @@ public sealed class MediaContext
 
     /// <summary>Every stored session id this row represents (merged visits).</summary>
     public IReadOnlyList<string> SourceEntryIds { get; }
+
+    /// <summary>Public, Friends, Friends+, Invite, Invite+, Group, Group+ or Group public.</summary>
+    public string AccessLabel { get; }
+
+    /// <summary>The group the instance belonged to, empty for a normal public session.</summary>
+    public string GroupId { get; }
+
+    public string GroupName { get; private set; }
+
+    public string GroupIconUrl { get; private set; }
+
+    public bool HasGroup => !string.IsNullOrWhiteSpace(GroupId);
+
+    public bool CanOpenGroup => HasGroup;
+
+    public string GroupDisplayName => !HasGroup
+        ? string.Empty
+        : string.IsNullOrWhiteSpace(GroupName)
+            ? "Group instance"
+            : GroupName;
+
+    /// <summary>Fills in the group name/icon after a lookup, so an old session
+    /// still names the group once the API answers.</summary>
+    public void ApplyGroupInfo(string? name, string? iconUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            GroupName = name.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(iconUrl))
+        {
+            GroupIconUrl = iconUrl.Trim();
+        }
+    }
 
     public bool HasWorld => !string.IsNullOrWhiteSpace(WorldId);
 
@@ -155,7 +198,8 @@ public static class MediaMetadataResolver
     public static IReadOnlyDictionary<string, MediaContext> Build(
         IEnumerable<MediaItem> items,
         IReadOnlyList<InstanceHistoryEntry> sessions,
-        string? accountUserId = null)
+        string? accountUserId = null,
+        Func<string, (string? Name, string? IconUrl)>? groupLookup = null)
     {
         var result = new Dictionary<string, MediaContext>(StringComparer.Ordinal);
         var orderedSessions = sessions
@@ -169,7 +213,7 @@ public static class MediaMetadataResolver
 
         foreach (var item in items)
         {
-            var context = FindContext(item.TakenAt, orderedSessions, accountUserId);
+            var context = FindContext(item.TakenAt, orderedSessions, accountUserId, groupLookup);
             if (context is not null)
             {
                 result[item.Path] = context;
@@ -183,7 +227,8 @@ public static class MediaMetadataResolver
     public static MediaContext? FindContext(
         DateTime takenAtLocal,
         IReadOnlyList<InstanceHistoryEntry> orderedSessions,
-        string? accountUserId = null)
+        string? accountUserId = null,
+        Func<string, (string? Name, string? IconUrl)>? groupLookup = null)
     {
         InstanceHistoryEntry? match = null;
         foreach (var session in orderedSessions)
@@ -203,10 +248,13 @@ public static class MediaMetadataResolver
             }
         }
 
-        return match is null ? null : Describe(match, accountUserId);
+        return match is null ? null : Describe(match, accountUserId, groupLookup);
     }
 
-    public static MediaContext Describe(InstanceHistoryEntry session, string? accountUserId)
+    public static MediaContext Describe(
+        InstanceHistoryEntry session,
+        string? accountUserId,
+        Func<string, (string? Name, string? IconUrl)>? groupLookup = null)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var people = new List<MediaPersonItem>();
@@ -229,7 +277,35 @@ public static class MediaMetadataResolver
                 string.Equals(player.UserId, accountUserId, StringComparison.Ordinal)));
         }
 
-        return new MediaContext(session, people);
+        var (accessLabel, groupId) = InstanceAccessOf(session);
+        var groupName = string.Empty;
+        var groupIconUrl = string.Empty;
+        if (!string.IsNullOrWhiteSpace(groupId) && groupLookup is not null)
+        {
+            try
+            {
+                var info = groupLookup(groupId);
+                groupName = info.Name ?? string.Empty;
+                groupIconUrl = info.IconUrl ?? string.Empty;
+            }
+            catch (Exception)
+            {
+                // A missing group must not cost the picture its world/session.
+            }
+        }
+
+        return new MediaContext(session, people, accessLabel, groupId, groupName, groupIconUrl);
+    }
+
+    /// <summary>Reads the instance access and group straight from the location.</summary>
+    private static (string AccessLabel, string GroupId) InstanceAccessOf(InstanceHistoryEntry session)
+    {
+        // Older rows keep the whole location in InstanceId, newer ones only the
+        // instance part; both carry the ~group(...) markers, so search both.
+        var value = $"{session.Location}|{session.InstanceId}";
+        return (
+            ViewModels.InstancePresentation.AccessLabel(null, value),
+            ViewModels.InstancePresentation.GroupIdFrom(value) ?? string.Empty);
     }
 }
 

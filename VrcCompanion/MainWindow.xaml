@@ -6417,6 +6417,74 @@
                                             </Grid>
                                         </Button>
 
+                                        <!-- Public / Friends / group access, kept apart from the
+                                             group row so a public session still says Public. -->
+                                        <Border Margin="0,10,0,0"
+                                                Padding="9,4"
+                                                CornerRadius="8"
+                                                HorizontalAlignment="Left"
+                                                Background="{StaticResource InputBrush}"
+                                                Visibility="{Binding MediaViewModel.ViewerShowsAccessChip, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="{Binding MediaViewModel.ViewerAccessLabel}"
+                                                       FontSize="10"
+                                                       Foreground="{StaticResource MutedBrush}" />
+                                        </Border>
+
+                                        <!-- Group instances name the group and open its popup. -->
+                                        <Button Style="{StaticResource GhostButton}"
+                                                Padding="0,0,8,0"
+                                                Margin="0,8,0,0"
+                                                HorizontalContentAlignment="Stretch"
+                                                Cursor="Hand"
+                                                IsEnabled="{Binding MediaViewModel.CanOpenViewerGroup}"
+                                                ToolTip="Open this group"
+                                                Visibility="{Binding MediaViewModel.ViewerHasGroup, Converter={StaticResource BoolToVis}}"
+                                                Command="{Binding OpenMediaGroupCommand}"
+                                                CommandParameter="{Binding MediaViewModel.ViewerContext}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="26"
+                                                        Height="26"
+                                                        CornerRadius="13"
+                                                        ClipToBounds="True"
+                                                        Background="{StaticResource InputBrush}">
+                                                    <Grid>
+                                                        <TextBlock Text="&#xE902;"
+                                                                   FontFamily="Segoe MDL2 Assets"
+                                                                   FontSize="11"
+                                                                   Foreground="{StaticResource MutedBrush}"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                        <controls:AsyncImage SourceUrl="{Binding MediaViewModel.ViewerGroupIconUrl}"
+                                                                             DecodeWidth="96"
+                                                                             CornerRadius="13" />
+                                                    </Grid>
+                                                </Border>
+                                                <StackPanel Grid.Column="1"
+                                                            Margin="8,0,0,0"
+                                                            VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding MediaViewModel.ViewerAccessLabel}"
+                                                               FontSize="9"
+                                                               Foreground="{StaticResource DimBrush}" />
+                                                    <TextBlock Text="{Binding MediaViewModel.ViewerGroupName}"
+                                                               FontSize="11.5"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource TextBrush}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2"
+                                                           Text="&#xE76C;"
+                                                           FontFamily="Segoe MDL2 Assets"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource MutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Button>
+
                                         <Button Style="{StaticResource ChipButton}"
                                                 Content="Only pictures from this world"
                                                 Margin="0,8,0,0"

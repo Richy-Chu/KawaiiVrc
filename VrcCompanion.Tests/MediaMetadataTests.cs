@@ -19,20 +19,23 @@ public class MediaMetadataTests
     private static DateTimeOffset Local(int year, int month, int day, int hour, int minute)
         => new(new DateTime(year, month, day, hour, minute, 0, DateTimeKind.Local));
 
+    private const string GroupId = "grp_9f1c2b3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d";
+
     private static InstanceHistoryEntry Session(
         string id,
         string worldId,
         string worldName,
         int startHour,
-        int endHour)
+        int endHour,
+        string instance = "12345")
     {
         var session = new InstanceHistoryEntry
         {
             Id = id,
             AccountUserId = AccountId,
-            Location = worldId + ":12345",
+            Location = worldId + ":" + instance,
             WorldId = worldId,
-            InstanceId = "12345",
+            InstanceId = instance,
             WorldName = worldName,
             WorldThumbnailUrl = "https://example.test/" + worldId + ".png",
             WorldAuthorName = "Creator",
@@ -76,6 +79,65 @@ public class MediaMetadataTests
 
         Assert.False(contexts.ContainsKey(outside.Path));
         Assert.Equal("Night Club", contexts[later.Path].WorldName);
+    }
+
+    [Fact]
+    public void GroupInstanceNamesTheGroupAndItsAccess()
+    {
+        var session = Session(
+            "s1",
+            JapanId,
+            "Japan Street",
+            10,
+            12,
+            $"12345~group({GroupId})~groupAccessType(public)");
+
+        var context = MediaMetadataResolver.Describe(
+            session,
+            AccountId,
+            groupId => groupId == GroupId ? ("Kawaii Club", "https://example.test/group.png") : default);
+
+        Assert.Equal("Group public", context.AccessLabel);
+        Assert.True(context.HasGroup);
+        Assert.True(context.CanOpenGroup);
+        Assert.Equal(GroupId, context.GroupId);
+        Assert.Equal("Kawaii Club", context.GroupDisplayName);
+        Assert.Equal("https://example.test/group.png", context.GroupIconUrl);
+    }
+
+    [Fact]
+    public void GroupPlusInstanceIsStillAGroup()
+    {
+        var session = Session(
+            "s1",
+            JapanId,
+            "Japan Street",
+            10,
+            12,
+            $"12345~group({GroupId})~groupAccessType(plus)");
+
+        var context = MediaMetadataResolver.Describe(session, AccountId);
+
+        Assert.Equal("Group+", context.AccessLabel);
+        Assert.True(context.CanOpenGroup);
+        // Without a lookup the group row still exists, just without its name yet.
+        Assert.Equal("Group instance", context.GroupDisplayName);
+
+        context.ApplyGroupInfo("Kawaii Club", "https://example.test/group.png");
+        Assert.Equal("Kawaii Club", context.GroupDisplayName);
+    }
+
+    [Fact]
+    public void PublicInstanceStaysPublic()
+    {
+        var context = MediaMetadataResolver.Describe(
+            Session("s1", JapanId, "Japan Street", 10, 12),
+            AccountId);
+
+        Assert.Equal("Public", context.AccessLabel);
+        Assert.False(context.HasGroup);
+        Assert.False(context.CanOpenGroup);
+        Assert.Equal(string.Empty, context.GroupDisplayName);
     }
 
     [Fact]

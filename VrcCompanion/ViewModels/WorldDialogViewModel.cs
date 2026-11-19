@@ -159,24 +159,7 @@ public sealed class WorldInstanceItem : ViewModelBase
         OnPropertyChanged(nameof(GroupChipText));
     }
 
-    private static string? ParseGroupId(string? value)
-    {
-        const string marker = "~group(";
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        var start = value.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (start < 0)
-        {
-            return null;
-        }
-
-        start += marker.Length;
-        var end = value.IndexOf(')', start);
-        return end <= start ? null : value[start..end];
-    }
+    private static string? ParseGroupId(string? value) => InstancePresentation.GroupIdFrom(value);
 }
 
 /// <summary>State for the world details overlay.</summary>
@@ -772,6 +755,14 @@ internal static class InstancePresentation
     public static string AccessLabel(string? type, string? instanceId)
     {
         var value = instanceId ?? string.Empty;
+        if (value.Contains("~group(", StringComparison.OrdinalIgnoreCase))
+        {
+            // Group instances say which kind of group access they use, so the
+            // label matches VRChat's own wording instead of a generic "Group".
+            if (value.Contains("groupAccessType(plus)", StringComparison.OrdinalIgnoreCase)) return "Group+";
+            if (value.Contains("groupAccessType(public)", StringComparison.OrdinalIgnoreCase)) return "Group public";
+            return "Group";
+        }
         if (value.Contains("~hidden(", StringComparison.OrdinalIgnoreCase)) return "Friends+";
         if (value.Contains("~friends(", StringComparison.OrdinalIgnoreCase)) return "Friends";
         if (value.Contains("~private(", StringComparison.OrdinalIgnoreCase))
@@ -780,7 +771,6 @@ internal static class InstancePresentation
                 ? "Invite+"
                 : "Invite";
         }
-        if (value.Contains("~group(", StringComparison.OrdinalIgnoreCase)) return "Group";
 
         return type?.ToLowerInvariant() switch
         {
@@ -790,6 +780,26 @@ internal static class InstancePresentation
             "group" => "Group",
             _ => "Public"
         };
+    }
+
+    /// <summary>The grp_ id inside `~~group(grp_…)~…`, if the instance has one.</summary>
+    public static string? GroupIdFrom(string? value)
+    {
+        const string marker = "~group(";
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var start = value.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+        {
+            return null;
+        }
+
+        start += marker.Length;
+        var end = value.IndexOf(')', start);
+        return end <= start ? null : value[start..end];
     }
 
     public static string RegionLabel(string? value)
