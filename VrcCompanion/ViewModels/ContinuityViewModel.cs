@@ -100,6 +100,12 @@ public sealed class ContinuityViewModel : ViewModelBase
             person => person?.CanOpenProfile == true);
     }
 
+    /// <summary>
+    /// Raised after a local import changes the stored history, so other views
+    /// (Media) can re-resolve their sessions without being reopened.
+    /// </summary>
+    public event Action? HistoryChanged;
+
     public ObservableCollection<ContinuitySessionItem> Sessions { get; } = new();
 
     public ObservableCollection<ContinuityPersonItem> People { get; } = new();
@@ -667,6 +673,7 @@ public sealed class ContinuityViewModel : ViewModelBase
                 "  ·  ",
                 results.Select(result => result.Message).Where(message => !string.IsNullOrWhiteSpace(message)));
             OnPropertyChanged(nameof(SourcesSummary));
+            HistoryChanged?.Invoke();
         }
         catch (Exception ex)
         {

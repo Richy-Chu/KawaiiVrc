@@ -81,6 +81,32 @@ public sealed class MediaItem
         }
     }
 
+    /// <summary>
+    /// Supplies metadata already read from this file on a previous visit, so a
+    /// warm Media tab never decodes the PNG again.
+    /// </summary>
+    internal void SeedMetadata(VrcPhotoMetadata metadata)
+    {
+        lock (_metadataLock)
+        {
+            _embeddedMetadata = metadata;
+            _metadataRead = true;
+        }
+    }
+
+    /// <summary>
+    /// The file was read on an earlier visit and had no VRChat/VRCX metadata.
+    /// Mark it read so a warm Media tab does not decode it again.
+    /// </summary>
+    internal void MarkMetadataAbsent()
+    {
+        lock (_metadataLock)
+        {
+            _embeddedMetadata = null;
+            _metadataRead = true;
+        }
+    }
+
     /// <summary>Small decode for the grid; loaded lazily and frozen for reuse.</summary>
     public BitmapImage? Thumbnail => _thumbnail ??= LoadBitmap(320);
 

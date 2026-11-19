@@ -2513,6 +2513,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             PersonProfileRequested = OpenContinuityPerson,
             WorldRequested = worldId => _ = OpenContinuityWorldAsync(worldId)
         };
+        // A history import (VRCX-0, VRCX, VRCNext or our own log) changes which
+        // sessions a picture belongs to, so Media re-resolves as soon as it
+        // finishes instead of waiting for the tab to be reopened.
+        ContinuityViewModel.HistoryChanged += () =>
+        {
+            if (MediaViewModel.HasLoadedPictures)
+            {
+                MediaViewModel.RefreshHistory();
+            }
+        };
         ContextViewModel = new ContextViewModel
         {
             RefreshRequested = RefreshContextAsync,
@@ -5192,15 +5202,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // Context reads the same durable rows as Continuity. Load and hydrate
-        // their world names first so today's sessions never fall back to an
-        // "Unknown world" label when Continuity has not been opened yet.
-        if (ContinuityViewModel is not null)
-        {
-            await ContinuityViewModel.EnsureLoadedAsync();
-            await ContinuityViewModel.HydrateWorldNamesAsync();
-        }
-
+        // Context reads the persisted Continuity rows directly. Loading and
+        // importing Continuity here made the first refresh after sign-in import
+        // thousands of rows and fetch world names, which froze the whole app on
+        // launch; that work belongs to the Continuity tab now.
         await ContextViewModel.RefreshAsync(CurrentUser, InstanceViewModel, Friends.ToList());
     }
 

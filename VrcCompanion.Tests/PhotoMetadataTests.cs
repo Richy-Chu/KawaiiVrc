@@ -400,6 +400,110 @@ public class PhotoMetadataTests
     }
 
     [Fact]
+    public async Task WarmMediaSeedsMetadataWithoutReadingThePictureAgain()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "VRChat_2026-11-08_23-43-13.492_1920x1080.png");
+        var json = $$"""
+{"application":"VRCX","version":1,"author":{"id":"usr_a","displayName":"Aya"},"world":{"name":"Japan Street","id":"{{JapanId}}","instanceId":"{{JapanId}}:12345"},"players":[{"id":"usr_a","displayName":"Aya"},{"id":"usr_b","displayName":"Bob"}]}
+""";
+        File.WriteAllBytes(path, BuildPng(("Description", json)));
+        var cachePath = Path.Combine(root, "photo-cache.json");
+        var picture = new MediaItem(path, "VRChat", new DateTime(2026, 11, 8, 23, 43, 13));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · November 2026", "VRChat", new DateTime(2026, 11, 1), new[] { picture })
+        };
+
+        var first = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"),
+            photoCachePath: cachePath)
+        {
+            HistoryProvider = () => Array.Empty<Models.InstanceHistoryEntry>()
+        };
+        await first.LoadAsync(force: true);
+        await first.PhotoContextsTask;
+        Assert.True(File.Exists(cachePath), "the photo cache was not written");
+
+        // A fresh visit: metadata must be available from the cache before the
+        // background pass has read anything.
+        var warmPicture = new MediaItem(path, "VRChat", new DateTime(2026, 11, 8, 23, 43, 13));
+        var warmGroups = new[]
+        {
+            new MediaGroup("VRChat · November 2026", "VRChat", new DateTime(2026, 11, 1), new[] { warmPicture })
+        };
+        var second = new MediaLibraryViewModel(
+            root,
+            (_, _) => warmGroups,
+            cachePath: Path.Combine(root, "index-2.json"),
+            photoCachePath: cachePath)
+        {
+            HistoryProvider = () => Array.Empty<Models.InstanceHistoryEntry>()
+        };
+        await second.LoadAsync(force: true);
+
+        Assert.Equal(2, warmPicture.EmbeddedMetadata!.Players.Count);
+        Assert.Equal("Japan Street", warmPicture.EmbeddedMetadata.WorldName);
+        second.OpenViewer(warmPicture);
+        Assert.Equal(2, second.ViewerPeople.Count);
+    }
+
+    [Fact]
+    public async Task ImportedHistoryRefreshesPicturesWithoutRescanning()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "VRChat_2026-11-08_23-43-13.492_1920x1080.png");
+        File.WriteAllBytes(path, BuildPng());
+
+        var picture = new MediaItem(path, "VRChat", new DateTime(2026, 11, 8, 23, 43, 13));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · November 2026", "VRChat", new DateTime(2026, 11, 1), new[] { picture })
+        };
+        var sessions = Array.Empty<Models.InstanceHistoryEntry>();
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"),
+            photoCachePath: Path.Combine(root, "photo-cache.json"))
+        {
+            HistoryProvider = () => sessions,
+            PersonFetcher = _ => Task.FromResult<MediaPersonInfo?>(null)
+        };
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(picture);
+        Assert.False(viewModel.HasViewerContext);
+
+        // An import from VRCX-0/VRCX/VRCNext adds a session that covers this shot.
+        sessions = new[]
+        {
+            new Models.InstanceHistoryEntry
+            {
+                Id = "continuity:1",
+                AccountUserId = "usr_self",
+                Location = JapanId + ":12345",
+                WorldId = JapanId,
+                InstanceId = "12345",
+                WorldName = "Japan Street",
+                JoinedAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 33, 0)),
+                LeftAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 44, 0)),
+                LastSeenAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 44, 0))
+            }
+        };
+        viewModel.RefreshHistory();
+        await viewModel.PhotoContextsTask;
+
+        Assert.True(viewModel.HasViewerContext);
+        Assert.Equal("Japan Street", viewModel.ViewerWorldName);
+        Assert.Equal("SESSION", viewModel.ViewerSessionTitle);
+    }
+
+    [Fact]
     public async Task OldPictureGetsItsWorldFromTheVrcx0Cache()
     {
         // 2023 pictures predate VRChat's in-file world metadata. VRCX-0 has

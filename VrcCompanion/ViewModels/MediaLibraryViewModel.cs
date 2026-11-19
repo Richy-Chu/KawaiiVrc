@@ -26,6 +26,9 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private readonly Func<string, IProgress<int>?, IReadOnlyList<MediaGroup>> _scan;
     private readonly Action<string> _openPath;
     private readonly string _cachePath;
+    private readonly string _photoCachePath;
+    private Dictionary<string, MediaPhotoCacheEntry>? _photoCache;
+    private bool _photoCacheDirty;
     private const int PageSize = 48;
     // The dropdowns scroll, so a session with a big roster is still filterable.
     private const int MaximumWorldFilters = 80;
@@ -54,12 +57,16 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         string? root = null,
         Func<string, IProgress<int>?, IReadOnlyList<MediaGroup>>? scan = null,
         Action<string>? openPath = null,
-        string? cachePath = null)
+        string? cachePath = null,
+        string? photoCachePath = null)
     {
         RootPath = string.IsNullOrWhiteSpace(root) ? MediaLibraryScanner.DefaultRoot : root;
         _scan = scan ?? ((path, progress) => MediaLibraryScanner.Scan(path, progress));
         _openPath = openPath ?? DefaultOpenPath;
         _cachePath = string.IsNullOrWhiteSpace(cachePath) ? MediaIndexCache.DefaultPath : cachePath;
+        _photoCachePath = string.IsNullOrWhiteSpace(photoCachePath)
+            ? MediaPhotoCache.DefaultPath
+            : photoCachePath;
 
         RefreshCommand = new AsyncRelayCommand(() => LoadAsync(force: true), () => !IsBusy);
         OpenFolderCommand = new RelayCommand(OpenFolder);
@@ -450,6 +457,10 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     /// VRChat's own in-file metadata.</summary>
     public Func<string, CachedPhotoWorld?>? PhotoWorldLookup { get; set; }
 
+    /// <summary>True once the library has been scanned, so import handlers can
+    /// refresh without forcing a load.</summary>
+    public bool HasLoadedPictures => _loaded && _allItems.Count > 0;
+
     /// <summary>The viewer's world/player lookups; exposed so tests can await them.</summary>
     internal Task ViewerHydration { get; private set; } = Task.CompletedTask;
 
@@ -558,7 +569,6 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                 ? string.Empty
                 : LaunchService.GetInstanceIdFromLocation(location) ?? location,
             WorldName = metadata.WorldName,
-            WorldAuthorName = metadata.AuthorName,
             JoinedAt = taken,
             LeftAt = taken,
             LastSeenAt = taken,
@@ -674,10 +684,10 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             return null;
         }
 
-        var candidates = _allItems
+        var inFolder = ItemsInFolder(folder);
+        var candidates = inFolder
             .Where(other =>
                 !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
-                string.Equals(Path.GetDirectoryName(other.Path), folder, StringComparison.OrdinalIgnoreCase) &&
                 Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes) <= 30)
             .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
             .Take(16);
@@ -693,10 +703,9 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         if (own is { HasWorld: true })
         {
             return ClosestWithPlayers(
-                _allItems
+                inFolder
                     .Where(other =>
                         !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
-                        string.Equals(Path.GetDirectoryName(other.Path), folder, StringComparison.OrdinalIgnoreCase) &&
                         Math.Abs((other.TakenAt - item.TakenAt).TotalHours) <= 6)
                     .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
                     .Take(48),
@@ -706,10 +715,9 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         // No world in the file: VRChat writes pictures in capture order, so the
         // nearest roster in this folder within a few hours is still that session.
         return ClosestWithPlayers(
-            _allItems
+            inFolder
                 .Where(other =>
                     !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
-                    string.Equals(Path.GetDirectoryName(other.Path), folder, StringComparison.OrdinalIgnoreCase) &&
                     Math.Abs((other.TakenAt - item.TakenAt).TotalHours) <= 3)
                 .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
                 .Take(48),
@@ -725,10 +733,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             return null;
         }
 
-        var candidates = _allItems
-            .Where(other =>
-                !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
-                string.Equals(Path.GetDirectoryName(other.Path), folder, StringComparison.OrdinalIgnoreCase))
+        var candidates = ItemsInFolder(folder)
+            .Where(other => !string.Equals(other.Path, item.Path, StringComparison.Ordinal))
             .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
             .ToList();
 
@@ -1398,9 +1404,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         _photoContextCancellation = cancellation;
         var token = cancellation.Token;
 
-        // Every VRChat screenshot is read: pictures without a session need a
-        // context built, and pictures whose session the log only half recorded
-        // need the roster and author stored in the file itself.
+                // Pictures without a session need a context built, and pictures whose
+        // session the log only half recorded need the roster stored in the file.
         var pending = items
             .Where(item => item.IsVrChatPicture &&
                            (item.Context is null || item.Context is { IsPhotoMetadata: false }))
@@ -1411,17 +1416,16 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         }
 
         const int batchSize = 40;
+        var batchesSinceRebuild = 0;
         for (var offset = 0; offset < pending.Count; offset += batchSize)
         {
             var batch = pending.GetRange(offset, Math.Min(batchSize, pending.Count - offset));
-            IReadOnlyList<(MediaItem Item, MediaContext Context)> results;
+            IReadOnlyList<(MediaItem Item, MediaContext? Context)> results;
             try
             {
                 results = await Task.Run(
                     () => batch
                         .Select(item => (Item: item, Context: BuildPhotoContext(item)))
-                        .Where(pair => pair.Context is not null)
-                        .Select(pair => (pair.Item, pair.Context!))
                         .ToList(),
                     token);
             }
@@ -1443,10 +1447,14 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             var changed = false;
             foreach (var (item, context) in results)
             {
+                RememberMetadata(item);
                 if (item.Context is null)
                 {
-                    item.Context = context;
-                    changed = true;
+                    if (context is not null)
+                    {
+                        item.Context = context;
+                        changed = true;
+                    }
                     continue;
                 }
 
@@ -1466,12 +1474,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                         changed = true;
                     }
 
-                    if (string.IsNullOrWhiteSpace(session.WorldAuthorName) &&
-                        !string.IsNullOrWhiteSpace(photo.WorldAuthorName))
-                    {
-                        session.ApplyWorldInfo(null, null, photo.WorldAuthorName);
-                        changed = true;
-                    }
+
                 }
             }
 
@@ -1480,8 +1483,16 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                 continue;
             }
 
-            RebuildFilters();
-            ApplyFilters();
+            // Rebuilding the filters re-groups every picture, so do it at most
+            // every few batches instead of 24 times in a row on the UI thread.
+            // Only the dropdowns change while metadata is read; rebuilding the
+            // grid here would decode another page of thumbnails on every batch.
+            if (++batchesSinceRebuild >= 6)
+            {
+                batchesSinceRebuild = 0;
+                RebuildFilters();
+            }
+
             OnPropertyChanged(nameof(ViewerContext));
             OnPropertyChanged(nameof(ViewerShowsPhotoNote));
             OnPropertyChanged(nameof(ViewerContextNote));
@@ -1494,7 +1505,131 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             OnPropertyChanged(nameof(ViewerContextNote));
         }
 
+        RebuildFilters();
+        ApplyFilters();
+
+        if (_photoCacheDirty)
+        {
+            _photoCacheDirty = false;
+            var snapshot = _photoCache is null
+                ? null
+                : new Dictionary<string, MediaPhotoCacheEntry>(_photoCache, StringComparer.OrdinalIgnoreCase);
+            if (snapshot is not null)
+            {
+                await Task.Run(() => MediaPhotoCache.Save(snapshot, _photoCachePath), token);
+            }
+        }
+
         await HydrateWorldImagesAsync(token);
+    }
+
+    /// <summary>
+    /// Fills every picture from the previous visit's reads. A warm Media tab
+    /// then opens without decoding a single PNG; changed files fall through to
+    /// the background pass as usual.
+    /// </summary>
+    private Dictionary<string, List<MediaItem>> _itemsByFolder =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Groups the library by folder once, because the neighbour lookups run for
+    /// hundreds of pictures and scanning the whole library each time made the
+    /// metadata pass take tens of seconds.
+    /// </summary>
+    private void IndexByFolder()
+    {
+        var byFolder = new Dictionary<string, List<MediaItem>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in _allItems)
+        {
+            var folder = Path.GetDirectoryName(item.Path);
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                continue;
+            }
+
+            if (!byFolder.TryGetValue(folder, out var list))
+            {
+                list = new List<MediaItem>();
+                byFolder[folder] = list;
+            }
+
+            list.Add(item);
+        }
+
+        _itemsByFolder = byFolder;
+    }
+
+    private IReadOnlyList<MediaItem> ItemsInFolder(string folder)
+        => _itemsByFolder.TryGetValue(folder, out var items) ? items : Array.Empty<MediaItem>();
+
+    private void SeedCachedMetadata()
+    {
+        _photoCache ??= MediaPhotoCache.Load(_photoCachePath);
+        if (_photoCache.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var item in _allItems)
+        {
+            if (!item.IsVrChatPicture ||
+                !_photoCache.TryGetValue(item.Path, out var entry) ||
+                !entry.Matches(item.Path))
+            {
+                continue;
+            }
+
+            if (entry.NoMetadata)
+            {
+                item.MarkMetadataAbsent();
+            }
+            else
+            {
+                item.SeedMetadata(entry.ToMetadata());
+            }
+        }
+    }
+
+    private void RememberMetadata(MediaItem item)
+    {
+        if (!item.IsVrChatPicture)
+        {
+            return;
+        }
+
+        _photoCache ??= new Dictionary<string, MediaPhotoCacheEntry>(StringComparer.OrdinalIgnoreCase);
+        _photoCache[item.Path] = item.EmbeddedMetadata is { } metadata
+            ? MediaPhotoCache.FromMetadata(item.Path, metadata)
+            : MediaPhotoCache.FromAbsent(item.Path);
+        _photoCacheDirty = true;
+    }
+
+    /// <summary>
+    /// Re-resolves every picture after a history import (VRCX-0, VRCX, VRCNext
+    /// or our own log). File metadata is already cached, so this is a fast
+    /// in-memory pass rather than another library scan.
+    /// </summary>
+    public void RefreshHistory()
+    {
+        if (!HasLoadedPictures)
+        {
+            return;
+        }
+
+        foreach (var item in _allItems)
+        {
+            item.Context = null;
+        }
+
+        AttachContexts();
+        RebuildFilters();
+        ApplyFilters();
+        PhotoContextsTask = BuildPhotoContextsAsync(_allItems.ToList());
+
+        if (SelectedMedia is { } selected)
+        {
+            OpenViewer(selected);
+        }
     }
 
     /// <summary>
@@ -1568,6 +1703,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         // Keep the scanner's order (newest first); filtering re-groups without
         // re-sorting so a page never shuffles under the pointer.
         _allItems = groups.SelectMany(group => group.Items).ToList();
+        IndexByFolder();
+        SeedCachedMetadata();
         AttachContexts();
         _loaded = true;
         RebuildFilters();
