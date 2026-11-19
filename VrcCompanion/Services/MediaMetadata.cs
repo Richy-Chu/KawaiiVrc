@@ -144,8 +144,10 @@ public sealed class MediaContext
     /// Adds the people saved inside the picture to a session's roster without
     /// losing the join/leave times the log already knows for shared names.
     /// </summary>
-    public void ApplyPhotoRoster(IEnumerable<VrcPhotoPlayer> roster, DateTimeOffset takenAt)
+    /// <returns>True when at least one player was added or upgraded.</returns>
+    public bool ApplyPhotoRoster(IEnumerable<VrcPhotoPlayer> roster, DateTimeOffset takenAt)
     {
+        var changed = false;
         foreach (var player in roster)
         {
             var name = player.DisplayName?.Trim() ?? string.Empty;
@@ -163,7 +165,6 @@ public sealed class MediaContext
             if (index >= 0)
             {
                 var existing = _people[index];
-                HasPhotoRoster = true;
 
                 // A name-only log row can be upgraded once the picture supplies
                 // the account id, keeping the times it already had.
@@ -176,13 +177,21 @@ public sealed class MediaContext
                         existing.IsSelf,
                         existing.JoinedAt,
                         existing.LeftAt);
+                    changed = true;
                 }
                 continue;
             }
 
             _people.Add(new MediaPersonItem(userId, name, string.Empty, isSelf: false, takenAt, takenAt));
+            changed = true;
+        }
+
+        if (changed)
+        {
             HasPhotoRoster = true;
         }
+
+        return changed;
     }
 
     /// <summary>Every stored session id this row represents (merged visits).</summary>

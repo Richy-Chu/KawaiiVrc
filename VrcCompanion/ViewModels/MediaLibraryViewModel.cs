@@ -378,6 +378,13 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public bool HasViewerContext => ViewerContext is not null;
 
+    /// <summary>True for a sticker or another game's screenshot: it is shown as
+    /// a plain picture, with no VRChat world or session panel.</summary>
+    public bool ViewerIsPlainPicture =>
+        _selectedMedia is { IsVrChatPicture: false, Context: null };
+
+    public bool ViewerShowsMetaPanel => !ViewerIsPlainPicture;
+
     /// <summary>True when the picture predates any recorded session.</summary>
     public bool ViewerShowsNoContext => !HasViewerContext;
 
@@ -486,7 +493,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         {
             item.Context = BuildPhotoContext(item);
         }
-        else if (item.Context is { IsPhotoMetadata: false } session)
+        else if (item.IsVrChatPicture && item.Context is { IsPhotoMetadata: false } session)
         {
             // The log recorded the visit but not who was there. The picture
             // itself has VRCX's roster, so merge it into the session instead of
@@ -500,6 +507,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
         _photoContext = null;
         SelectedMedia = item;
+        OnPropertyChanged(nameof(ViewerIsPlainPicture));
+        OnPropertyChanged(nameof(ViewerShowsMetaPanel));
         OnPropertyChanged(nameof(ViewerPeople));
         OnPropertyChanged(nameof(HasViewerPeople));
         OnPropertyChanged(nameof(ViewerShowsNoPlayers));
@@ -517,6 +526,13 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     /// </summary>
     private MediaContext? BuildPhotoContext(MediaItem item)
     {
+        // A renamed screenshot still belongs to its session as long as the file
+        // kept VRChat's metadata; a sticker has none.
+        if (!item.IsVrChatPicture && item.EmbeddedMetadata is not { HasWorld: true })
+        {
+            return null;
+        }
+
         var metadata = MetadataForViewer(item);
         if (metadata is null)
         {
@@ -534,6 +550,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                 ? string.Empty
                 : LaunchService.GetInstanceIdFromLocation(location) ?? location,
             WorldName = metadata.WorldName,
+            WorldAuthorName = metadata.AuthorName,
             JoinedAt = taken,
             LeftAt = taken,
             LastSeenAt = taken,
@@ -1330,11 +1347,12 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         _photoContextCancellation = cancellation;
         var token = cancellation.Token;
 
-        // Pictures without a session need a context built; pictures whose
-        // session recorded no players still need the roster stored in the file.
+        // Every VRChat screenshot is read: pictures without a session need a
+        // context built, and pictures whose session the log only half recorded
+        // need the roster and author stored in the file itself.
         var pending = items
-            .Where(item => item.Context is null ||
-                           item.Context is { IsPhotoMetadata: false, HasPeople: false })
+            .Where(item => item.IsVrChatPicture &&
+                           (item.Context is null || item.Context is { IsPhotoMetadata: false }))
             .ToList();
         if (pending.Count == 0)
         {
@@ -1381,17 +1399,29 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                     continue;
                 }
 
-                if (item.Context is { IsPhotoMetadata: false, HasPeople: false } session &&
+                if (item.Context is { IsPhotoMetadata: false } session &&
                     context is { HasPeople: true } photo &&
                     (string.IsNullOrWhiteSpace(photo.WorldId) ||
                      string.Equals(photo.WorldId, session.WorldId, StringComparison.OrdinalIgnoreCase)))
                 {
-                    session.ApplyPhotoRoster(photo.People.Select(person => new VrcPhotoPlayer
+                    var added = session.ApplyPhotoRoster(
+                        photo.People.Select(person => new VrcPhotoPlayer
+                        {
+                            UserId = person.UserId,
+                            DisplayName = person.DisplayName
+                        }),
+                        photo.JoinedAt);
+                    if (added)
                     {
-                        UserId = person.UserId,
-                        DisplayName = person.DisplayName
-                    }), photo.JoinedAt);
-                    changed = true;
+                        changed = true;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(session.WorldAuthorName) &&
+                        !string.IsNullOrWhiteSpace(photo.WorldAuthorName))
+                    {
+                        session.ApplyWorldInfo(null, null, photo.WorldAuthorName);
+                        changed = true;
+                    }
                 }
             }
 
@@ -1515,13 +1545,16 @@ public sealed class MediaLibraryViewModel : ViewModelBase
                 return;
             }
 
+            // Stickers and other games' screenshots are not VRChat sessions.
+
             var byPath = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
             foreach (var item in _allItems)
             {
                 byPath[item.Path] = item;
             }
 
-            foreach (var pair in MediaMetadataResolver.Build(_allItems, sessions, groupLookup: GroupLookup))
+            var pictures = _allItems.Where(item => item.IsVrChatPicture).ToList();
+            foreach (var pair in MediaMetadataResolver.Build(pictures, sessions, groupLookup: GroupLookup))
             {
                 if (byPath.TryGetValue(pair.Key, out var item))
                 {

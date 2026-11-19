@@ -44,6 +44,20 @@ public sealed class MediaItem
 
     public string FileName => System.IO.Path.GetFileName(Path);
 
+    private static readonly Regex VrChatName = new(
+        @"VRChat_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// True for VRChat's own screenshots (named VRChat_… or inside a VRChat
+    /// folder). Everything else the library finds — saved stickers, other
+    /// games' screenshots — is a plain picture and stays one: it is never
+    /// matched to a VRChat session or given a world.
+    /// </summary>
+    public bool IsVrChatPicture =>
+        VrChatName.IsMatch(FileName) ||
+        Path.Contains("\\VRChat\\", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// The world/players VRChat or VRCX wrote into the file itself, read on
     /// demand. Null for screenshots without metadata.

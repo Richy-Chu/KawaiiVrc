@@ -116,7 +116,10 @@ public class MediaMetadataTests
 
     private static MediaItem Picture(string name, int hour, int minute)
         => new(
-            Path.Combine(Path.GetTempPath(), "VrcMediaMeta", name),
+            Path.Combine(
+                Path.GetTempPath(),
+                "VrcMediaMeta",
+                $"VRChat_2025-06-02_{hour:00}-{minute:00}-00.000_1920x1080_{name}"),
             "VRChat",
             new DateTime(2025, 6, 2, hour, minute, 0));
 

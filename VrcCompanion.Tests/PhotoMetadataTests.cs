@@ -304,6 +304,102 @@ public class PhotoMetadataTests
     }
 
     [Fact]
+    public async Task EveryScreenshotMergesTheRosterFromItsFile()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "VRChat_2026-11-08_23-43-13.492_1920x1080.png");
+        var json = $$"""
+{"application":"VRCX","version":1,"author":{"id":"usr_a","displayName":"Aya"},"world":{"name":"Japan Street","id":"{{JapanId}}","instanceId":"{{JapanId}}:12345"},"players":[{"id":"usr_a","displayName":"Aya"},{"id":"usr_b","displayName":"Bob"}]}
+""";
+        File.WriteAllBytes(path, BuildPng(("Description", json)));
+
+        var session = new Models.InstanceHistoryEntry
+        {
+            Id = "s1",
+            AccountUserId = "usr_self",
+            Location = JapanId + ":12345",
+            WorldId = JapanId,
+            InstanceId = "12345",
+            WorldName = "Japan Street",
+            JoinedAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 33, 0)),
+            LeftAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 44, 0)),
+            LastSeenAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 44, 0))
+        };
+        session.GetOrAddPlayer("usr_self", "Me");
+
+        var picture = new MediaItem(path, "VRChat", new DateTime(2026, 11, 8, 23, 43, 13));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · November 2026", "VRChat", new DateTime(2026, 11, 1), new[] { picture })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"))
+        {
+            HistoryProvider = () => new[] { session },
+            PersonFetcher = _ => Task.FromResult<MediaPersonInfo?>(null)
+        };
+
+        await viewModel.LoadAsync(force: true);
+        await viewModel.PhotoContextsTask;
+
+        Assert.NotNull(picture.Context);
+        Assert.True(picture.Context!.HasPhotoRoster);
+        Assert.Equal(
+            new[] { "Aya", "Bob", "Me" },
+            picture.Context.People.Select(person => person.DisplayName).OrderBy(name => name));
+    }
+
+    [Fact]
+    public async Task StickersStayPlainPicturesWithoutAVrChatSession()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "kawaii.png");
+        // A real sticker: an image with no VRChat metadata at all.
+        File.WriteAllBytes(path, BuildPng());
+
+        var session = new Models.InstanceHistoryEntry
+        {
+            Id = "s1",
+            AccountUserId = "usr_self",
+            Location = JapanId + ":12345",
+            WorldId = JapanId,
+            InstanceId = "12345",
+            WorldName = "Japan Street",
+            JoinedAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 33, 0)),
+            LeftAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 44, 0)),
+            LastSeenAt = new DateTimeOffset(new DateTime(2026, 11, 8, 23, 44, 0))
+        };
+
+        var sticker = new MediaItem(path, "VRChat", new DateTime(2026, 11, 8, 23, 43, 13));
+        var groups = new[]
+        {
+            new MediaGroup("Pictures", "VRChat", new DateTime(2026, 11, 1), new[] { sticker })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"))
+        {
+            HistoryProvider = () => new[] { session },
+            PersonFetcher = _ => Task.FromResult<MediaPersonInfo?>(null)
+        };
+
+        await viewModel.LoadAsync(force: true);
+        await viewModel.PhotoContextsTask;
+        viewModel.OpenViewer(sticker);
+
+        Assert.False(sticker.IsVrChatPicture);
+        Assert.True(viewModel.ViewerIsPlainPicture);
+        Assert.False(viewModel.ViewerShowsMetaPanel);
+        Assert.False(viewModel.HasViewerContext);
+        Assert.DoesNotContain(viewModel.WorldFilterOptions, option => option.Key.Length > 0);
+    }
+
+    [Fact]
     public async Task SessionWithoutPlayersTakesTheRosterFromThePicture()
     {
         // The real Nov 8 shot: the log has the visit but no roster, while VRCX
@@ -504,7 +600,9 @@ public class PhotoMetadataTests
     {
         var root = Path.Combine(Path.GetTempPath(), "VrcPhotoMetadata", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        var path = Path.Combine(root, name + ".png");
+        // The library only treats VRChat's own screenshots as sessions, so the
+        // fixture gets a real screenshot name.
+        var path = Path.Combine(root, "VRChat_2026-11-08_23-43-13.492_1920x1080_" + name + ".png");
         File.WriteAllBytes(path, BuildPng(chunks));
         return path;
     }

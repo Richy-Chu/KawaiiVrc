@@ -6265,10 +6265,12 @@
                                     FontFamily="Segoe MDL2 Assets"
                                     Command="{Binding MediaViewModel.NextImageCommand}" />
 
-                            <!-- Picture metadata -->
+                            <!-- Picture metadata. A sticker or another game's shot
+                                 has no VRChat session, so the panel is hidden. -->
                             <Border Grid.Column="1"
                                     Width="286"
                                     Margin="12,0,0,0"
+                                    Visibility="{Binding MediaViewModel.ViewerShowsMetaPanel, Converter={StaticResource BoolToVis}}"
                                     Background="{StaticResource PanelBrush}"
                                     BorderBrush="{StaticResource SoftBorderBrush}"
                                     BorderThickness="1"
