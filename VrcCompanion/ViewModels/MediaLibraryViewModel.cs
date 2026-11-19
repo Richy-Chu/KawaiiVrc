@@ -33,6 +33,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private bool _isBusy;
     private int _pageIndex;
     private int _pageGeneration;
+    private CancellationTokenSource? _viewerHydration;
     private int _foundCount;
     private string? _errorMessage;
     private MediaItem? _selectedMedia;
@@ -83,6 +84,12 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     /// <summary>Fetches an unknown group so old sessions still name it.</summary>
     public Func<string, Task<(string? Name, string? IconUrl)>>? GroupFetcher { get; set; }
+
+    /// <summary>Fills in the world name/thumbnail when the log row only had the id.</summary>
+    public Func<string, Task<MediaWorldInfo?>>? WorldFetcher { get; set; }
+
+    /// <summary>Fills in a player's current avatar when the session only has their name.</summary>
+    public Func<string, Task<MediaPersonInfo?>>? PersonFetcher { get; set; }
 
     public ObservableCollection<MediaGroup> Groups { get; } = new();
 
@@ -346,9 +353,28 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     /// <summary>True when the picture predates any recorded session.</summary>
     public bool ViewerShowsNoContext => !HasViewerContext;
 
-    public string ViewerWorldName => ViewerContext?.WorldNameText
-        ?? _selectedMedia?.WorldName
-        ?? string.Empty;
+    public string ViewerWorldName
+    {
+        get
+        {
+            if (ViewerContext is { } context)
+            {
+                if (!string.IsNullOrWhiteSpace(context.WorldName))
+                {
+                    return context.WorldName;
+                }
+
+                // The log records the world id first; the name arrives from the
+                // API a moment later, so say that instead of "Unknown world".
+                if (!string.IsNullOrWhiteSpace(context.WorldId))
+                {
+                    return "Loading world…";
+                }
+            }
+
+            return _selectedMedia?.WorldName ?? string.Empty;
+        }
+    }
 
     public string ViewerWorldAuthorText => ViewerContext?.WorldAuthorText ?? string.Empty;
 
@@ -374,6 +400,9 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public string ViewerGroupName => ViewerContext?.GroupDisplayName ?? string.Empty;
 
     public string ViewerGroupIconUrl => ViewerContext?.GroupIconUrl ?? string.Empty;
+
+    /// <summary>The viewer's world/player lookups; exposed so tests can await them.</summary>
+    internal Task ViewerHydration { get; private set; } = Task.CompletedTask;
 
     public bool CanFilterByViewerWorld => !string.IsNullOrWhiteSpace(ViewerContext?.WorldName);
 
@@ -402,7 +431,113 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
         ViewerImage = item.LoadBitmap(1400);
         SelectedMedia = item;
-        _ = HydrateViewerGroupAsync(item.Context);
+        RestartViewerHydration(item.Context);
+    }
+
+    /// <summary>
+    /// The instance history stores what the log saw: a world id and player
+    /// names. Name the world and load the player icons the way the instance
+    /// history popup does, cancelling when the viewer moves on.
+    /// </summary>
+    private void RestartViewerHydration(MediaContext? context)
+    {
+        _viewerHydration?.Cancel();
+        _viewerHydration?.Dispose();
+        _viewerHydration = null;
+        if (context is null)
+        {
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        _viewerHydration = cancellation;
+        ViewerHydration = HydrateViewerAsync(context, cancellation.Token);
+    }
+
+    private async Task HydrateViewerAsync(MediaContext context, CancellationToken token)
+    {
+        try
+        {
+            await HydrateViewerGroupAsync(context, token);
+            await HydrateViewerWorldAsync(context, token);
+            await HydrateViewerPeopleAsync(context, token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task HydrateViewerWorldAsync(MediaContext context, CancellationToken token)
+    {
+        var fetcher = WorldFetcher;
+        if (fetcher is null || string.IsNullOrWhiteSpace(context.WorldId))
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(context.WorldName) &&
+            !string.IsNullOrWhiteSpace(context.WorldThumbnailUrl) &&
+            !string.IsNullOrWhiteSpace(context.WorldAuthorName))
+        {
+            return;
+        }
+
+        var world = await fetcher(context.WorldId);
+        if (world is null || token.IsCancellationRequested)
+        {
+            return;
+        }
+
+        context.ApplyWorldInfo(world.Name, world.ThumbnailUrl, world.AuthorName);
+        if (!ReferenceEquals(ViewerContext, context))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(ViewerWorldName));
+        OnPropertyChanged(nameof(ViewerWorldAuthorText));
+        OnPropertyChanged(nameof(ViewerWorldThumbnailUrl));
+        OnPropertyChanged(nameof(HasViewerWorldThumbnail));
+        OnPropertyChanged(nameof(CanOpenViewerWorld));
+        OnPropertyChanged(nameof(CanFilterByViewerWorld));
+    }
+
+    private async Task HydrateViewerPeopleAsync(MediaContext context, CancellationToken token)
+    {
+        var fetcher = PersonFetcher;
+        if (fetcher is null)
+        {
+            return;
+        }
+
+        foreach (var person in context.People)
+        {
+            if (token.IsCancellationRequested || !ReferenceEquals(ViewerContext, context))
+            {
+                return;
+            }
+
+            if (!person.HasUserId || person.HasAvatar)
+            {
+                continue;
+            }
+
+            MediaPersonInfo? info;
+            try
+            {
+                info = await fetcher(person.UserId);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"media avatar {person.UserId}: {ex.Message}");
+                continue;
+            }
+
+            if (info is not null)
+            {
+                person.ApplyProfile(info.DisplayName, info.AvatarUrl);
+            }
+        }
     }
 
     /// <summary>
@@ -410,7 +545,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     /// update the open viewer, so the panel never says "Group instance" for a
     /// group the account can still resolve.
     /// </summary>
-    private async Task HydrateViewerGroupAsync(MediaContext? context)
+    private async Task HydrateViewerGroupAsync(MediaContext? context, CancellationToken token)
     {
         if (context is null || !context.HasGroup || !string.IsNullOrWhiteSpace(context.GroupName))
         {
@@ -426,7 +561,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         try
         {
             var (name, iconUrl) = await fetcher(context.GroupId);
-            if (string.IsNullOrWhiteSpace(name))
+            if (string.IsNullOrWhiteSpace(name) || token.IsCancellationRequested)
             {
                 return;
             }
@@ -448,6 +583,9 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public void CloseViewer()
     {
+        _viewerHydration?.Cancel();
+        _viewerHydration?.Dispose();
+        _viewerHydration = null;
         SelectedMedia = null;
         ViewerImage = null;
     }

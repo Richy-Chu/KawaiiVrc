@@ -72,6 +72,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly HashSet<string> _boopHydrationIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _groupHydrationIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (string? Name, string? IconUrl)> _groupMetadataCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MediaWorldInfo?> _mediaWorldCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MediaPersonInfo> _mediaPersonCache = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _groupMetadataGate = new(3);
     private CancellationTokenSource? _notificationDetailCancellation;
     private readonly HashSet<string> _resolvedFriendRequestIds = new(StringComparer.Ordinal);
@@ -354,6 +356,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // picture is open so the viewer does not guess.
         MediaViewModel.GroupLookup = ResolveMediaGroupInfo;
         MediaViewModel.GroupFetcher = FetchMediaGroupInfoAsync;
+        // Log rows only carry a world id and player names, so the viewer fills
+        // the world thumbnail and player icons in from the API.
+        MediaViewModel.WorldFetcher = FetchMediaWorldAsync;
+        MediaViewModel.PersonFetcher = FetchMediaPersonAsync;
         UpdateViewModel = new UpdateViewModel();
         ChatboxViewModel = chatboxViewModel ?? new ChatboxViewModel();
         CreatorResourcesViewModel = new CreatorResourcesViewModel();
@@ -5642,6 +5648,146 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _groupMetadataGate.Release();
         }
     }
+
+    /// <summary>Name and thumbnail for a session's world, cached per world.</summary>
+    private async Task<MediaWorldInfo?> FetchMediaWorldAsync(string worldId)
+    {
+        if (string.IsNullOrWhiteSpace(worldId))
+        {
+            return null;
+        }
+
+        lock (_mediaWorldCache)
+        {
+            if (_mediaWorldCache.TryGetValue(worldId, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        try
+        {
+            var world = await _api.GetWorldAsync(worldId);
+            if (world is null)
+            {
+                return null;
+            }
+
+            var thumbnail = ImageUrlHelper.ToThumbnailUrl(world.ThumbnailImageUrl, 512)
+                            ?? world.ThumbnailImageUrl
+                            ?? string.Empty;
+            var info = new MediaWorldInfo(world.Name, thumbnail, world.AuthorName);
+            lock (_mediaWorldCache)
+            {
+                _mediaWorldCache[worldId] = info;
+            }
+
+            return info;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"media world {worldId}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>A player's current avatar for the media viewer's people list.</summary>
+    private async Task<MediaPersonInfo?> FetchMediaPersonAsync(string userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return null;
+        }
+
+        lock (_mediaPersonCache)
+        {
+            if (_mediaPersonCache.TryGetValue(userId, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        // Friends already carry their icon, so most sessions cost no request.
+        var friend = Friends.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, userId, StringComparison.Ordinal));
+        if (friend?.User is { } known)
+        {
+            var knownUrl = AvatarThumbnailOf(known);
+            if (!string.IsNullOrWhiteSpace(knownUrl))
+            {
+                var info = new MediaPersonInfo(known.DisplayName, knownUrl);
+                lock (_mediaPersonCache)
+                {
+                    _mediaPersonCache[userId] = info;
+                }
+
+                return info;
+            }
+        }
+
+        try
+        {
+            var user = await _api.GetUserAsync(userId);
+            if (user is not null)
+            {
+                var url = AvatarThumbnailOf(user);
+                if (!string.IsNullOrWhiteSpace(url))
+                {
+                    var info = new MediaPersonInfo(user.DisplayName, url);
+                    lock (_mediaPersonCache)
+                    {
+                        _mediaPersonCache[userId] = info;
+                    }
+
+                    return info;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"media avatar {userId}: {ex.Message}");
+        }
+
+        try
+        {
+            // Non-friends often omit the thumbnail from the user payload; the
+            // public profile still exposes it, same fallback as instance history.
+            var profile = await _api.GetProfileAsync(userId);
+            if (profile is not null)
+            {
+                var url = ImageUrlHelper.PickAvatarThumbnailUrl(
+                    profile.UserIcon,
+                    profile.IconUrl,
+                    profile.CurrentAvatarThumbnailImageUrl,
+                    profile.CurrentAvatarImageUrl,
+                    256) ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(url))
+                {
+                    var info = new MediaPersonInfo(profile.DisplayName, url);
+                    lock (_mediaPersonCache)
+                    {
+                        _mediaPersonCache[userId] = info;
+                    }
+
+                    return info;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"media profile {userId}: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private static string AvatarThumbnailOf(VrcUser user)
+        => ImageUrlHelper.PickAvatarThumbnailUrl(
+            user.UserIcon,
+            user.ProfilePicOverrideThumbnail ?? user.IconUrl,
+            user.CurrentAvatarThumbnailImageUrl,
+            user.CurrentAvatarImageUrl,
+            256) ?? string.Empty;
 
     private void OpenMediaSession(MediaContext? context)
     {

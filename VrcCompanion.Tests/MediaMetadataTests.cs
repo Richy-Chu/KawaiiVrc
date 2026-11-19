@@ -241,6 +241,54 @@ public class MediaMetadataTests
     }
 
     [Fact]
+    public async Task ViewerFillsTheMissingWorldAndPlayerIconsFromTheApi()
+    {
+        var cachePath = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N") + ".json");
+        var picture = Picture("a.png", 10, 30);
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · June 2025", "VRChat", new DateTime(2025, 6, 1), new[] { picture })
+        };
+
+        // The log only stores the world id and player names, like a real row.
+        var session = Session("s1", JapanId, string.Empty, 10, 12);
+        session.WorldThumbnailUrl = string.Empty;
+        session.WorldAuthorName = string.Empty;
+        foreach (var player in session.Players)
+        {
+            player.AvatarUrl = string.Empty;
+        }
+
+        var viewModel = new MediaLibraryViewModel(
+            "C:\\pictures",
+            (_, _) => groups,
+            cachePath: cachePath)
+        {
+            HistoryProvider = () => new[] { session },
+            WorldFetcher = worldId => Task.FromResult<MediaWorldInfo?>(
+                worldId == JapanId
+                    ? new MediaWorldInfo("Japan Street", "https://example.test/world.png", "Creator")
+                    : null),
+            PersonFetcher = userId => Task.FromResult<MediaPersonInfo?>(
+                userId == "usr_a" ? new MediaPersonInfo("Alice", "https://example.test/alice.png") : null)
+        };
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(viewModel.Groups[0].Items[0]);
+
+        await viewModel.ViewerHydration;
+
+        Assert.Equal("Japan Street", viewModel.ViewerWorldName);
+        Assert.Equal("by Creator", viewModel.ViewerWorldAuthorText);
+        Assert.Equal("https://example.test/world.png", viewModel.ViewerWorldThumbnailUrl);
+        Assert.True(viewModel.HasViewerWorldThumbnail);
+
+        var alice = viewModel.ViewerPeople.Single(person => person.UserId == "usr_a");
+        Assert.True(alice.HasAvatar);
+        Assert.Equal("https://example.test/alice.png", alice.AvatarUrl);
+    }
+
+    [Fact]
     public async Task ViewerExplainsWhenAPictureHasNoRecordedSession()
     {
         var cachePath = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N") + ".json");

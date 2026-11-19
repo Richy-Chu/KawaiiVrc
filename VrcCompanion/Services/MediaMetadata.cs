@@ -5,34 +5,65 @@ using VrcCompanion.Models;
 
 namespace VrcCompanion.Services;
 
+/// <summary>A world resolved from the API for a picture's session.</summary>
+public sealed record MediaWorldInfo(string Name, string ThumbnailUrl, string AuthorName);
+
+/// <summary>A player's current name and avatar thumbnail, resolved from the API.</summary>
+public sealed record MediaPersonInfo(string DisplayName, string AvatarUrl);
+
 /// <summary>One person who was in the world when a picture was taken.</summary>
-public sealed class MediaPersonItem
+public sealed class MediaPersonItem : ViewModels.ViewModelBase
 {
+    private string _displayName;
+    private string _avatarUrl;
+
     public MediaPersonItem(string userId, string displayName, string avatarUrl, bool isSelf)
     {
         UserId = userId ?? string.Empty;
-        DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Unknown player" : displayName.Trim();
-        AvatarUrl = avatarUrl ?? string.Empty;
+        _displayName = string.IsNullOrWhiteSpace(displayName) ? "Unknown player" : displayName.Trim();
+        _avatarUrl = avatarUrl ?? string.Empty;
         IsSelf = isSelf;
     }
 
     public string UserId { get; }
 
-    public string DisplayName { get; }
+    public string DisplayName => _displayName;
 
-    public string AvatarUrl { get; }
+    public string AvatarUrl => _avatarUrl;
 
     public bool IsSelf { get; }
 
     public bool HasUserId => !string.IsNullOrWhiteSpace(UserId);
 
-    public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarUrl);
+    public bool HasAvatar => !string.IsNullOrWhiteSpace(_avatarUrl);
 
-    public string Initial => DisplayName.Length == 0
+    public string Initial => _displayName.Length == 0
         ? "?"
-        : DisplayName[..1].ToUpperInvariant();
+        : _displayName[..1].ToUpperInvariant();
 
-    public string DisplayNameText => IsSelf ? $"{DisplayName} (you)" : DisplayName;
+    public string DisplayNameText => IsSelf ? $"{_displayName} (you)" : _displayName;
+
+    /// <summary>
+    /// The log only knows a joined player's name, so the viewer fills the icon
+    /// in afterwards from the user/profile endpoints.
+    /// </summary>
+    public void ApplyProfile(string? displayName, string? avatarUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(displayName) && displayName.Trim() != _displayName)
+        {
+            _displayName = displayName.Trim();
+            OnPropertyChanged(nameof(DisplayName));
+            OnPropertyChanged(nameof(DisplayNameText));
+            OnPropertyChanged(nameof(Initial));
+        }
+
+        if (!string.IsNullOrWhiteSpace(avatarUrl) && avatarUrl.Trim() != _avatarUrl)
+        {
+            _avatarUrl = avatarUrl.Trim();
+            OnPropertyChanged(nameof(AvatarUrl));
+            OnPropertyChanged(nameof(HasAvatar));
+        }
+    }
 }
 
 /// <summary>
@@ -73,11 +104,11 @@ public sealed class MediaContext
 
     public string WorldId { get; }
 
-    public string WorldName { get; }
+    public string WorldName { get; private set; }
 
-    public string WorldThumbnailUrl { get; }
+    public string WorldThumbnailUrl { get; private set; }
 
-    public string WorldAuthorName { get; }
+    public string WorldAuthorName { get; private set; }
 
     public DateTimeOffset JoinedAt { get; }
 
@@ -103,6 +134,26 @@ public sealed class MediaContext
     public bool HasGroup => !string.IsNullOrWhiteSpace(GroupId);
 
     public bool CanOpenGroup => HasGroup;
+
+    /// <summary>Fills world name/thumbnail/creator once the API answers, so old
+    /// log rows do not stay as "Unknown world".</summary>
+    public void ApplyWorldInfo(string? name, string? thumbnailUrl, string? authorName)
+    {
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            WorldName = name.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(thumbnailUrl))
+        {
+            WorldThumbnailUrl = thumbnailUrl.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(authorName))
+        {
+            WorldAuthorName = authorName.Trim();
+        }
+    }
 
     public string GroupDisplayName => !HasGroup
         ? string.Empty
@@ -203,7 +254,8 @@ public static class MediaMetadataResolver
     {
         var result = new Dictionary<string, MediaContext>(StringComparer.Ordinal);
         var orderedSessions = sessions
-            .Where(session => LaunchService.IsLocation(session.Location))
+            .Where(session => !string.IsNullOrWhiteSpace(session.WorldId) ||
+                              LaunchService.IsLocation(session.Location))
             .OrderBy(session => session.JoinedAt)
             .ToList();
         if (orderedSessions.Count == 0)

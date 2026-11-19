@@ -63,6 +63,10 @@ public class MediaViewerRenderTests
                     ? ("Kawaii Club", "https://example.test/group.png")
                     : default;
                 media.GroupFetcher = _ => Task.FromResult<(string?, string?)>(default);
+                media.WorldFetcher = _ => Task.FromResult<MediaWorldInfo?>(
+                    new MediaWorldInfo("Japan Street", "https://example.test/world.png", "Creator"));
+                media.PersonFetcher = userId => Task.FromResult<MediaPersonInfo?>(
+                    userId == "usr_a" ? new MediaPersonInfo("Alice", "https://example.test/alice.png") : null);
 
                 window = new MainWindow(shell, initializeOnLoad: false);
                 window.Show();
@@ -73,6 +77,9 @@ public class MediaViewerRenderTests
                 Assert.Single(media.Groups);
                 media.OpenViewer(media.Groups[0].Items[0]);
                 Assert.True(media.IsViewerOpen, "The viewer did not open.");
+                WaitUntil(
+                    () => media.ViewerHydration.IsCompleted,
+                    "world/player metadata did not resolve");
                 Assert.True(
                     media.HasViewerContext,
                     $"The viewer had no session metadata (groups={media.Groups.Count}, pictures={media.PictureCount}).");
@@ -80,7 +87,9 @@ public class MediaViewerRenderTests
                 // The metadata panel lives inside a ScrollViewer, so it only joins
                 // the visual tree after a layout pass.
                 window.UpdateLayout();
-                WaitUntil(() => FindChildren<TextBlock>(window).Any(block => block.Text == "TAKEN IN"), "metadata panel did not layout");
+                WaitUntil(
+                    () => FindChildren<TextBlock>(window).Any(block => block.Text == "TAKEN IN"),
+                    "metadata panel did not layout");
 
                 var texts = FindChildren<TextBlock>(window)
                     .Select(block => block.Text)
@@ -121,6 +130,9 @@ public class MediaViewerRenderTests
                     .Where(image => image.SourceUrl == "https://example.test/alice.png")
                     .ToList();
                 Assert.NotEmpty(avatars);
+                Assert.Contains(
+                    FindChildren<AsyncImage>(window),
+                    image => image.SourceUrl == "https://example.test/world.png");
             }
             finally
             {
@@ -145,15 +157,16 @@ public class MediaViewerRenderTests
             Location = $"{JapanId}:12345~group({GroupId})~groupAccessType(public)",
             WorldId = JapanId,
             InstanceId = $"12345~group({GroupId})~groupAccessType(public)",
-            WorldName = "Japan Street",
-            WorldThumbnailUrl = "https://example.test/world.png",
-            WorldAuthorName = "Creator",
+            // A real log row: the world id is stored, the name is not.
+            WorldName = string.Empty,
+            WorldThumbnailUrl = string.Empty,
+            WorldAuthorName = string.Empty,
             JoinedAt = new DateTimeOffset(new DateTime(2025, 6, 2, 10, 0, 0, DateTimeKind.Local)),
             LeftAt = new DateTimeOffset(new DateTime(2025, 6, 2, 12, 0, 0, DateTimeKind.Local)),
             LastSeenAt = new DateTimeOffset(new DateTime(2025, 6, 2, 12, 0, 0, DateTimeKind.Local))
         };
         session.GetOrAddPlayer("usr_00000000-0000-0000-0000-000000000000", "Me");
-        session.GetOrAddPlayer("usr_a", "Alice", "https://example.test/alice.png");
+        session.GetOrAddPlayer("usr_a", "Alice");
         return session;
     }
 
