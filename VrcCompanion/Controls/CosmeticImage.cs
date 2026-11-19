@@ -249,10 +249,8 @@ public sealed class CosmeticImage : FrameworkElement
         _frame = frames[_frameIndex];
         InvalidateVisual();
 
-        if (frames.Count <= 1 || AppPerformance.LiteMode)
+        if (frames.Count <= 1)
         {
-            // Lite mode keeps the first frame instead of driving decoration
-            // timers for every visible profile.
             StopAnimation();
             return;
         }

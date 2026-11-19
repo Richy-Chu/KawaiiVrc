@@ -800,7 +800,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     public string LiteModeDescription => AppPerformance.LiteMode
-        ? "Lite mode is on: the animated background is frozen, GIF backdrops and image fades are skipped. Everything still works, it just costs less."
+        ? "Lite mode is on: the animated background is drawn once and pictures appear without fading. GIF backdrops and decorations still animate."
         : "Lite mode is off: the background animates and images fade in. Turn it on if this PC feels slow.";
 
     public bool EnableTextSelection

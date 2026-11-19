@@ -11,8 +11,12 @@ namespace VrcCompanion.ViewModels;
 /// </summary>
 public sealed class UpdateViewModel : ViewModelBase
 {
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(3);
-    private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(20);
+    // A release can be published minutes after the previous check, and the old
+    // three-hour gap meant the bottom bar stayed empty until Settings was
+    // opened by hand. Ten minutes plus a check on window activation keeps it
+    // honest without hammering GitHub.
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(10);
 
     /// <summary>Shown next to the disabled Settings button so the state is explained.</summary>
     public const string UnsupportedText =
@@ -35,6 +39,7 @@ public sealed class UpdateViewModel : ViewModelBase
     private string _notesText = string.Empty;
     private double _progress;
     private string _statusText = string.Empty;
+    private DateTimeOffset? _lastCheckAt;
 
     public UpdateViewModel()
         : this(new AppUpdateService())
@@ -236,6 +241,27 @@ public sealed class UpdateViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// A cheap check for "did anything change while I was away": runs only when
+    /// the last result is older than <paramref name="minAge"/>. The window calls
+    /// this when it is activated, so a release published after launch reaches
+    /// the bottom bar without opening Settings.
+    /// </summary>
+    public void RequestCheckIfStale(TimeSpan minAge)
+    {
+        if (!_service.IsSupported || IsBusy)
+        {
+            return;
+        }
+
+        if (_lastCheckAt is { } last && DateTimeOffset.UtcNow - last < minAge)
+        {
+            return;
+        }
+
+        _ = CheckNowAsync(manual: false);
+    }
+
+    /// <summary>
     /// Runs a check on the UI thread. Timed checks resume on a thread-pool thread, and
     /// the properties below are bound to the window, so they must not be touched there.
     /// </summary>
@@ -343,6 +369,7 @@ public sealed class UpdateViewModel : ViewModelBase
     private void ApplyCheckResult(AppUpdateCheckResult result, bool manual)
     {
         IsChecking = false;
+        _lastCheckAt = DateTimeOffset.UtcNow;
         LifecycleLog.Write($"updater: check {(manual ? "manual" : "automatic")} -> {result.State} {result.Version}".TrimEnd());
 
         switch (result.State)

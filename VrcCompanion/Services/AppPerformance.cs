@@ -7,8 +7,8 @@ namespace VrcCompanion.Services;
 /// Decides whether the app runs its light-resource presentation. On machines
 /// with a weak render tier this turns itself on, and the Settings toggle can
 /// override it either way. Lite mode stops the continuously repainted aurora
-/// background, GIF backdrops and image fades: all small individually, but on an
-/// old PC they are the difference between smooth and sluggish.
+/// background and the image fades, which on an old PC is the difference between
+/// smooth and sluggish. Animated GIF backdrops and decorations keep playing.
 /// </summary>
 public static class AppPerformance
 {

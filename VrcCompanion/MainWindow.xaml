@@ -2130,7 +2130,7 @@
                             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                                 <StackPanel>
                                     <TextBlock Text="Performance" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="Lite mode keeps the app light on older PCs: the animated background is drawn once, GIF backdrops show their first frame, and pictures appear without fading. Nothing is removed or disabled."
+                                    <TextBlock Text="Lite mode keeps the app light on older PCs: the animated background is drawn once instead of repainting, and pictures appear without fading. GIF backdrops and decorations still play. Nothing is removed or disabled."
                                                Style="{StaticResource MutedText}"
                                                TextWrapping="Wrap"
                                                Margin="0,3,0,12" />

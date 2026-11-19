@@ -741,7 +741,21 @@ public partial class MainWindow : Window
         => _backgroundTrimTimer.Start();
 
     private void OnWindowActivated(object? sender, EventArgs e)
-        => _backgroundTrimTimer.Stop();
+    {
+        _backgroundTrimTimer.Stop();
+
+        // Returning to a window that has been out of sight is a good moment to
+        // notice a release published since the last check, so the bottom update
+        // bar fills in without opening Settings.
+        try
+        {
+            _viewModel.UpdateViewModel?.RequestCheckIfStale(TimeSpan.FromMinutes(2));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("updater activation check: " + ex.Message);
+        }
+    }
 
     private void OnWindowStateChanged(object? sender, EventArgs e)
     {
