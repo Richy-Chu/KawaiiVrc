@@ -6,14 +6,25 @@ const state = {
   friends: [],
   feed: null,
   instances: [],
+  instance: null,
+  media: [],
+  mediaOffset: 0,
+  mediaLoading: false,
+  notices: [],
+  settings: { refresh_seconds: 60, show_offline: true, animate_backdrop: true },
   query: "",
-  busy: false
+  tab: "friends",
+  busy: false,
+  timer: 0
 };
 
 const el = (id) => document.getElementById(id);
 const activityList = el("activity-list");
 const instanceList = el("instance-list");
+const instanceBody = el("instance-body");
 const roster = el("roster");
+const mediaList = el("media-list");
+const noticeList = el("notification-list");
 const status = el("status");
 const search = el("search");
 const chips = el("chips");
@@ -49,8 +60,10 @@ const clock = (value) => {
   });
 };
 
-const avatar = (url) =>
+const remoteImage = (url) =>
   url ? `http://kawaii.localhost/avatar?u=${encodeURIComponent(url)}` : "";
+const localImage = (path) =>
+  path ? `http://kawaii.localhost/avatar?f=${encodeURIComponent(path)}` : "";
 
 const dotClass = (status) => `dot-${String(status || "offline").replace(/\s+/g, "-")}`;
 
@@ -81,7 +94,7 @@ function showUser(user) {
   el("me-name").textContent = user.display_name;
   el("me-status").textContent = [user.status, user.trust].filter(Boolean).join(" · ");
   if (user.avatar) {
-    el("me").src = avatar(user.avatar);
+    el("me").src = remoteImage(user.avatar);
   } else {
     el("me").removeAttribute("src");
   }
@@ -92,7 +105,8 @@ function renderChips(summary) {
     `<span class="chip"><b>${summary.accounts}</b> accounts</span>`,
     `<span class="chip">activity <b>${bytes(summary.activity_bytes)}</b></span>`,
     `<span class="chip">history <b>${bytes(summary.history_bytes)}</b></span>`,
-    `<span class="chip">media index <b>${bytes(summary.media_bytes)}</b></span>`
+    `<span class="chip">media index <b>${bytes(summary.media_bytes)}</b></span>`,
+    `<span class="chip">shell events <b>${summary.logged_events}</b></span>`
   ].join("");
 }
 
@@ -105,7 +119,7 @@ function friendRow(friend) {
   return `
     <article class="row friend">
       <span class="status-dot ${dotClass(friend.status)}" title="${escape(friend.status)}"></span>
-      ${friend.avatar ? `<img class="avatar" loading="lazy" src="${avatar(friend.avatar)}" alt="" />` : `<span class="avatar"></span>`}
+      ${friend.avatar ? `<img class="avatar" loading="lazy" src="${remoteImage(friend.avatar)}" alt="" />` : `<span class="avatar"></span>`}
       <div class="body">
         <div class="title">
           <strong>${escape(friend.name)}</strong>
@@ -139,18 +153,11 @@ function renderRoster() {
   const offline = matches.filter((friend) => !friend.online);
   const byName = (a, b) => a.name.localeCompare(b.name);
 
-  // A few thousand offline rows in the DOM costs more than it shows; the
-  // search box reaches every friend, the collapsed list shows the first 300.
   const offlineShown = query ? offline.slice(0, 600) : offline.slice(0, 300);
-
   const groups = [
-    ["In game", inGame.sort(byName), true],
-    ["Online", online.sort(byName), false],
-    [
-      `Offline (${offline.length})`,
-      offlineShown.sort(byName),
-      false
-    ]
+    ["In game", inGame.sort(byName)],
+    ["Online", online.sort(byName)],
+    [`Offline (${offline.length})`, state.settings.show_offline ? offlineShown.sort(byName) : []]
   ];
 
   roster.innerHTML = groups
@@ -169,7 +176,6 @@ async function loadFriends() {
   try {
     const result = await invoke("friends");
     state.friends = result.items;
-    state.live = result.live;
     accountLine.textContent = `${result.total.toLocaleString()} friends · ${result.online} online · ${state.user?.display_name ?? ""}`;
     renderRoster();
     status.textContent = result.live
@@ -185,6 +191,69 @@ async function loadFriends() {
     }
   } finally {
     setBusy(false);
+  }
+}
+
+// ----------------------------------------------------------------- instance
+
+function renderInstance() {
+  const view = state.instance;
+  if (!view) {
+    instanceBody.innerHTML = `<div class="empty">Sign in to see the instance you are in.</div>`;
+    return;
+  }
+  if (!view.in_instance) {
+    instanceBody.innerHTML = `<div class="empty">You are not in a world right now (${escape(view.location || "offline")}).</div>`;
+    return;
+  }
+
+  const cover = view.world_thumbnail
+    ? `<img class="cover" loading="lazy" src="${remoteImage(view.world_thumbnail)}" alt="" />`
+    : "";
+  const players = view.players.length
+    ? view.players
+        .map(
+          (player) => `
+      <article class="row">
+        ${player.avatar ? `<img class="avatar" loading="lazy" src="${remoteImage(player.avatar)}" alt="" />` : `<span class="avatar"></span>`}
+        <div class="body">
+          <div class="title">
+            <strong>${escape(player.name)}</strong>
+            ${player.is_friend ? `<span class="chip trust">friend</span>` : ""}
+            ${player.trust ? `<span class="chip trust">${escape(player.trust)}</span>` : ""}
+          </div>
+          <div class="sub">${escape(player.status)}</div>
+        </div>
+      </article>`
+        )
+        .join("")
+    : `<div class="empty">${escape(view.notice || "VRChat returned no players for this instance.")}</div>`;
+
+  instanceBody.innerHTML = `
+    <article class="world-card">
+      ${cover}
+      <div class="body">
+        <h2>${escape(view.world_name || view.world_id)}</h2>
+        <p class="sub">${escape(view.instance_type)} · ${view.players.length}${
+    view.capacity > 0 ? ` / ${view.capacity}` : ""
+  } players</p>
+        ${view.notice ? `<p class="error">${escape(view.notice)}</p>` : ""}
+      </div>
+    </article>
+    <div class="group-head">Players</div>
+    ${players}`;
+}
+
+async function loadInstance() {
+  if (!state.signedIn) {
+    renderInstance();
+    return;
+  }
+  try {
+    state.instance = await invoke("instance");
+    renderInstance();
+  } catch (error) {
+    instanceBody.innerHTML = `<div class="empty">${escape(error)}</div>`;
   }
 }
 
@@ -208,7 +277,7 @@ function renderActivity() {
     .map(
       (item) => `
       <article class="row">
-        ${item.avatar ? `<img class="avatar" loading="lazy" src="${avatar(item.avatar)}" alt="" />` : `<span class="avatar"></span>`}
+        ${item.avatar ? `<img class="avatar" loading="lazy" src="${remoteImage(item.avatar)}" alt="" />` : `<span class="avatar"></span>`}
         <div class="body">
           <div class="title">
             <strong>${escape(item.name || "Someone")}</strong>
@@ -221,6 +290,87 @@ function renderActivity() {
     )
     .join("");
 }
+
+// ---------------------------------------------------------------------- media
+
+function renderMedia(reset = false) {
+  if (reset) mediaList.innerHTML = "";
+  const query = state.query.trim().toLowerCase();
+  const items = state.media.filter(
+    (entry) => !query || `${entry.world} ${entry.path}`.toLowerCase().includes(query)
+  );
+  mediaList.innerHTML = items
+    .map(
+      (entry) => `
+      <figure class="tile">
+        <img loading="lazy" src="${localImage(entry.path)}" alt="" />
+        <figcaption>${escape(entry.world || "VRChat")} · ${escape(clock(entry.taken_at))}</figcaption>
+      </figure>`
+    )
+    .join("");
+  if (items.length === 0) {
+    mediaList.innerHTML = `<div class="empty">No indexed pictures yet.</div>`;
+  }
+}
+
+async function loadMedia(more = false) {
+  if (state.mediaLoading) return;
+  state.mediaLoading = true;
+  try {
+    const page = await invoke("media", { limit: 120, offset: more ? state.mediaOffset : 0 });
+    state.media = more ? state.media.concat(page) : page;
+    state.mediaOffset = more ? state.mediaOffset + page.length : page.length;
+    el("media-more").hidden = page.length < 120;
+    renderMedia(true);
+  } catch (error) {
+    mediaList.innerHTML = `<div class="empty">${escape(error)}</div>`;
+  } finally {
+    state.mediaLoading = false;
+  }
+}
+
+// -------------------------------------------------------------- notifications
+
+function renderNotifications() {
+  const query = state.query.trim().toLowerCase();
+  const items = state.notices.filter(
+    (notice) => !query || `${notice.sender} ${notice.message} ${notice.kind}`.toLowerCase().includes(query)
+  );
+  if (items.length === 0) {
+    noticeList.innerHTML = `<div class="empty">No notifications.</div>`;
+    return;
+  }
+  noticeList.innerHTML = items
+    .map(
+      (notice) => `
+      <article class="row ${notice.seen ? "" : "unread"}">
+        <div class="body">
+          <div class="title">
+            <strong>${escape(notice.sender || notice.kind)}</strong>
+            <span class="kind">${escape(notice.kind)}</span>
+          </div>
+          <div class="sub">${escape(notice.message)}</div>
+        </div>
+        <span class="at">${escape(clock(notice.created_at))}</span>
+      </article>`
+    )
+    .join("");
+}
+
+async function loadNotifications() {
+  if (!state.signedIn) {
+    noticeList.innerHTML = `<div class="empty">Sign in to load notifications.</div>`;
+    return;
+  }
+  try {
+    state.notices = await invoke("notifications");
+    renderNotifications();
+  } catch (error) {
+    noticeList.innerHTML = `<div class="empty">${escape(error)}</div>`;
+  }
+}
+
+// --------------------------------------------------------------- history pane
 
 function renderInstances() {
   if (state.instances.length === 0) {
@@ -242,12 +392,51 @@ function renderInstances() {
     .join("");
 }
 
-function renderActive() {
-  if (state.query.length > 0) {
-    renderRoster();
-    renderActivity();
-  }
+// ------------------------------------------------------------------- settings
+
+let refreshTimer = 0;
+
+function startRefreshTimer() {
+  clearInterval(refreshTimer);
+  const seconds = Math.max(15, Number(state.settings.refresh_seconds) || 60);
+  refreshTimer = setInterval(() => {
+    if (state.signedIn && document.visibilityState === "visible" && !state.busy) {
+      loadFriends();
+      if (state.tab === "instance") loadInstance();
+    }
+  }, seconds * 1000);
 }
+
+function fillSettings() {
+  el("refresh-seconds").value = state.settings.refresh_seconds;
+  el("show-offline").checked = state.settings.show_offline;
+  el("animate-backdrop").checked = state.settings.animate_backdrop;
+}
+
+async function loadSettings() {
+  state.settings = await invoke("settings_get");
+  fillSettings();
+  startRefreshTimer();
+}
+
+el("settings-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const next = {
+    refresh_seconds: Number(el("refresh-seconds").value) || 60,
+    show_offline: el("show-offline").checked,
+    animate_backdrop: el("animate-backdrop").checked
+  };
+  try {
+    await invoke("settings_save", { next });
+    state.settings = next;
+    fillSettings();
+    startRefreshTimer();
+    renderRoster();
+    el("settings-message").textContent = "Saved.";
+  } catch (error) {
+    el("settings-message").textContent = String(error);
+  }
+});
 
 // ----------------------------------------------------------------------- auth
 
@@ -287,10 +476,7 @@ twoFactorForm.addEventListener("submit", async (event) => {
   el("twofactor-error").textContent = "";
   setBusy(true, "Verifying the code…");
   try {
-    const user = await invoke("verify_two_factor", {
-      code: el("code").value,
-      method: "totp"
-    });
+    const user = await invoke("verify_two_factor", { code: el("code").value, method: "totp" });
     el("code").value = "";
     showUser(user);
     await loadFriends();
@@ -305,36 +491,45 @@ twoFactorForm.addEventListener("submit", async (event) => {
 el("signout").addEventListener("click", async () => {
   await invoke("sign_out");
   state.user = null;
+  state.notices = [];
+  state.instance = null;
   accountLine.textContent = "signed out";
   showAuth();
-  status.textContent = "Signed out of the shell. The WPF app's saved session is untouched.";
+  status.textContent = "Signed out of the shell. The other app's saved session is untouched.";
 });
 
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
-    document
-      .querySelectorAll(".tab")
-      .forEach((other) => other.classList.toggle("active", other === tab));
-    document
-      .querySelectorAll(".pane")
-      .forEach((pane) => pane.classList.toggle("active", pane.id === tab.dataset.tab));
-    search.placeholder = tab.dataset.tab === "friends" ? "Filter friends…" : "Filter…";
+    state.tab = tab.dataset.tab;
+    document.querySelectorAll(".tab").forEach((other) => other.classList.toggle("active", other === tab));
+    document.querySelectorAll(".pane").forEach((pane) => pane.classList.toggle("active", pane.id === state.tab));
+    search.placeholder = `Filter ${state.tab}…`;
+    if (state.tab === "instance") loadInstance();
+    if (state.tab === "media" && state.media.length === 0) loadMedia();
+    if (state.tab === "notifications") loadNotifications();
   });
 });
 
 search.addEventListener("input", () => {
   state.query = search.value;
-  renderActive();
+  if (state.tab === "friends") renderRoster();
+  else if (state.tab === "activity") renderActivity();
+  else if (state.tab === "media") renderMedia(true);
+  else if (state.tab === "notifications") renderNotifications();
 });
 
 el("refresh").addEventListener("click", () => {
-  if (state.signedIn) {
-    loadFriends();
-  }
+  if (!state.signedIn) return;
+  if (state.tab === "instance") loadInstance();
+  else if (state.tab === "notifications") loadNotifications();
+  else loadFriends();
 });
+
+el("media-more").addEventListener("click", () => loadMedia(true));
 
 async function start() {
   try {
+    await loadSettings();
     const [summary, feed, instances] = await Promise.all([
       invoke("summary"),
       invoke("feed", { account: null, limit: 400 }),
@@ -356,17 +551,10 @@ async function start() {
       accountLine.textContent = "not signed in";
       status.textContent = "Rust core ready — sign in to load friends.";
     }
+    renderInstance();
   } catch (error) {
     status.textContent = `Rust core error: ${error}`;
   }
 }
-
-// Refreshing the roster while the window is visible keeps it close to live
-// without hammering VRChat when the app sits in the background.
-setInterval(() => {
-  if (state.signedIn && document.visibilityState === "visible" && !state.busy) {
-    loadFriends();
-  }
-}, 60000);
 
 start();

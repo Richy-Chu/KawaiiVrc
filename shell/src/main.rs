@@ -1,16 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod activity;
 mod session;
+mod settings;
 mod vrchat;
 
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Manager;
-use vrchat::{Api, LoginStart, Roster, UserInfo};
+use vrchat::{Api, InstanceView, LoginStart, Notice, Roster, UserInfo};
 
 fn data_dir() -> PathBuf {
     session::local_app_data().join("VrcCompanion")
@@ -24,18 +27,6 @@ fn text(value: &Value, key: &str) -> String {
         .to_string()
 }
 
-/// One line per command call, so a run can be checked without a console window.
-fn trace(command: &str) {
-    use std::io::Write;
-    if let Ok(mut file) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("shell-ui.log")
-    {
-        let _ = writeln!(file, "{command}");
-    }
-}
-
 #[derive(Serialize)]
 struct Summary {
     activity_bytes: u64,
@@ -43,11 +34,11 @@ struct Summary {
     media_bytes: u64,
     friend_bytes: u64,
     accounts: usize,
+    logged_events: usize,
 }
 
 #[tauri::command]
 fn summary() -> Summary {
-    trace("summary");
     let dir = data_dir();
     let size = |name: &str| fs::metadata(dir.join(name)).map(|meta| meta.len()).unwrap_or(0);
     let accounts = fs::read_to_string(dir.join("activity.json"))
@@ -66,6 +57,7 @@ fn summary() -> Summary {
         media_bytes: size("media-index.json"),
         friend_bytes: size("friend-avatars.json"),
         accounts,
+        logged_events: activity::ActivityLog::new().count(),
     }
 }
 
@@ -104,9 +96,17 @@ const KINDS: [&str; 14] = [
     "avatar changed",
 ];
 
+fn kind_label(kind: u32) -> String {
+    KINDS
+        .get(kind as usize)
+        .copied()
+        .unwrap_or("event")
+        .to_string()
+}
+
+/// The WPF history plus the events the shell observed itself, newest first.
 #[tauri::command]
 fn feed(account: Option<String>, limit: Option<usize>) -> Result<Feed, String> {
-    trace("feed");
     let path = data_dir().join("activity.json");
     let raw = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     let root: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
@@ -137,11 +137,9 @@ fn feed(account: Option<String>, limit: Option<usize>) -> Result<Feed, String> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let limit = limit.unwrap_or(200).clamp(1, 1000);
 
-    let items = entries
+    let mut items: Vec<ActivityItem> = entries
         .iter()
-        .take(limit)
         .map(|entry| {
             let display = text(entry, "displayName");
             ActivityItem {
@@ -149,10 +147,8 @@ fn feed(account: Option<String>, limit: Option<usize>) -> Result<Feed, String> {
                 kind: entry
                     .get("type")
                     .and_then(Value::as_u64)
-                    .and_then(|kind| KINDS.get(kind as usize))
-                    .copied()
-                    .unwrap_or("event")
-                    .to_string(),
+                    .map(|kind| kind_label(kind as u32))
+                    .unwrap_or_else(|| "event".to_string()),
                 name: if display.is_empty() {
                     text(entry, "userName")
                 } else {
@@ -180,9 +176,26 @@ fn feed(account: Option<String>, limit: Option<usize>) -> Result<Feed, String> {
         })
         .collect();
 
+    for event in activity::ActivityLog::new().load(500) {
+        items.push(ActivityItem {
+            id: event.id,
+            kind: kind_label(event.kind),
+            name: event.display_name,
+            details: event.details,
+            at: event.timestamp,
+            avatar: event.avatar,
+            location: event.location,
+        });
+    }
+
+    items.sort_by(|left, right| right.at.cmp(&left.at));
+    let mut seen = HashSet::new();
+    items.retain(|item| seen.insert(item.id.clone()));
+    items.truncate(limit.unwrap_or(200).clamp(1, 1000));
+
     Ok(Feed {
         account: id,
-        total: entries.len(),
+        total: entries.len() + activity::ActivityLog::new().count(),
         items,
     })
 }
@@ -198,7 +211,6 @@ struct InstanceRow {
 
 #[tauri::command]
 fn instances(limit: Option<usize>) -> Result<Vec<InstanceRow>, String> {
-    trace("instances");
     let path = data_dir().join("instance-history.db");
     if !path.exists() {
         return Ok(Vec::new());
@@ -236,6 +248,76 @@ fn instances(limit: Option<usize>) -> Result<Vec<InstanceRow>, String> {
     Ok(out)
 }
 
+// -------------------------------------------------------------------- media
+
+#[derive(Serialize)]
+struct MediaEntry {
+    path: String,
+    world: String,
+    taken_at: String,
+}
+
+fn media_index() -> Option<Value> {
+    let raw = fs::read_to_string(data_dir().join("media-index.json")).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn media_root() -> Option<String> {
+    media_index()
+        .and_then(|root| root.get("root").and_then(Value::as_str).map(str::to_string))
+}
+
+#[tauri::command]
+fn media(limit: Option<usize>, offset: Option<usize>) -> Result<Vec<MediaEntry>, String> {
+    let Some(root) = media_index() else {
+        return Ok(Vec::new());
+    };
+    let entries = root
+        .get("entries")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(120).clamp(1, 500);
+
+    Ok(entries
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|entry| MediaEntry {
+            path: text(entry, "path"),
+            world: text(entry, "world"),
+            taken_at: text(entry, "takenAt"),
+        })
+        .collect())
+}
+
+/// Local pictures are served only when they sit inside the indexed media root.
+fn local_media_path(path: &str) -> Option<PathBuf> {
+    let root = media_root()?;
+    let candidate = PathBuf::from(path);
+    if !candidate.starts_with(Path::new(&root)) || !candidate.is_file() {
+        return None;
+    }
+    Some(candidate)
+}
+
+fn mime_for(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => "image/png",
+    }
+}
+
 // ------------------------------------------------------------------ account
 
 #[derive(Serialize)]
@@ -247,7 +329,6 @@ struct AuthState {
 
 #[tauri::command]
 async fn auth_state(api: tauri::State<'_, Arc<Api>>) -> Result<AuthState, String> {
-    trace("auth_state");
     let user = api.restore().await;
     if user.is_some() {
         let inner = api.inner().clone();
@@ -266,7 +347,6 @@ async fn sign_in(
     username: String,
     password: String,
 ) -> Result<LoginStart, String> {
-    trace("sign_in");
     if username.trim().is_empty() || password.is_empty() {
         return Err("Enter your VRChat username and password.".to_string());
     }
@@ -284,7 +364,6 @@ async fn verify_two_factor(
     code: String,
     method: Option<String>,
 ) -> Result<UserInfo, String> {
-    trace("verify_two_factor");
     let code = code.trim();
     if code.is_empty() {
         return Err("Enter the code from your authenticator.".to_string());
@@ -299,15 +378,35 @@ async fn verify_two_factor(
 
 #[tauri::command]
 async fn sign_out(api: tauri::State<'_, Arc<Api>>) -> Result<(), String> {
-    trace("sign_out");
     api.sign_out().await;
     Ok(())
 }
 
 #[tauri::command]
 async fn friends(api: tauri::State<'_, Arc<Api>>) -> Result<Roster, String> {
-    trace("friends");
     api.friends().await
+}
+
+#[tauri::command]
+async fn instance(api: tauri::State<'_, Arc<Api>>) -> Result<InstanceView, String> {
+    api.instance().await
+}
+
+#[tauri::command]
+async fn notifications(api: tauri::State<'_, Arc<Api>>) -> Result<Vec<Notice>, String> {
+    api.notifications().await
+}
+
+// ----------------------------------------------------------------- settings
+
+#[tauri::command]
+fn settings_get() -> settings::ShellSettings {
+    settings::load()
+}
+
+#[tauri::command]
+fn settings_save(next: settings::ShellSettings) -> Result<(), String> {
+    settings::save(&next)
 }
 
 // -------------------------------------------------------------------- report
@@ -319,12 +418,13 @@ fn dump_report() {
     let mut out = String::new();
     let summary = summary();
     out.push_str(&format!(
-        "accounts={} activity={}MB history={}MB media={}MB avatars={}MB\n",
+        "accounts={} activity={}MB history={}MB media={}MB avatars={}MB logged_events={}\n",
         summary.accounts,
         summary.activity_bytes / (1024 * 1024),
         summary.history_bytes / (1024 * 1024),
         summary.media_bytes / (1024 * 1024),
-        summary.friend_bytes / (1024 * 1024)
+        summary.friend_bytes / (1024 * 1024),
+        summary.logged_events
     ));
 
     match feed(None, Some(3)) {
@@ -350,13 +450,32 @@ fn dump_report() {
             out.push_str(&format!("instances shown={}\n", rows.len()));
             for row in &rows {
                 out.push_str(&format!(
-                    "  world={} last_seen={} location={}\n",
-                    row.world, row.last_seen, row.location
+                    "  world={} last_seen={}\n",
+                    row.world, row.last_seen
                 ));
             }
         }
         Err(error) => out.push_str(&format!("instances error: {error}\n")),
     }
+
+    match media(Some(3), Some(0)) {
+        Ok(rows) => {
+            out.push_str(&format!("media shown={}\n", rows.len()));
+            for row in &rows {
+                out.push_str(&format!(
+                    "  {} | {} | {}\n",
+                    row.world, row.taken_at, row.path
+                ));
+            }
+        }
+        Err(error) => out.push_str(&format!("media error: {error}\n")),
+    }
+
+    let current = settings::load();
+    out.push_str(&format!(
+        "settings: refresh={}s show_offline={} animate={}\n",
+        current.refresh_seconds, current.show_offline, current.animate_backdrop
+    ));
 
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -389,12 +508,13 @@ fn dump_report() {
             api.event_counts(),
             api.last_error()
         ));
+        out.push_str(&format!("location: {}\n", api.location()));
 
         match api.friends().await {
             Ok(roster) => {
                 out.push_str(&format!(
-                    "roster: {} total, {} online, live={} presence_matched={}\n",
-                    roster.total, roster.online, roster.live, roster.presence_matched
+                    "roster: {} total, {} online, live={}\n",
+                    roster.total, roster.online, roster.live
                 ));
                 for friend in roster.items.iter().filter(|friend| friend.online).take(8) {
                     out.push_str(&format!(
@@ -404,6 +524,30 @@ fn dump_report() {
                 }
             }
             Err(error) => out.push_str(&format!("roster error: {error}\n")),
+        }
+
+        match api.instance().await {
+            Ok(view) => out.push_str(&format!(
+                "instance: in_instance={} world={} type={} players={} notice={}\n",
+                view.in_instance,
+                view.world_name,
+                view.instance_type,
+                view.players.len(),
+                view.notice
+            )),
+            Err(error) => out.push_str(&format!("instance error: {error}\n")),
+        }
+
+        match api.notifications().await {
+            Ok(notices) => {
+                let unread = notices.iter().filter(|notice| !notice.seen).count();
+                out.push_str(&format!(
+                    "notifications: {} total, {} unread\n",
+                    notices.len(),
+                    unread
+                ));
+            }
+            Err(error) => out.push_str(&format!("notifications error: {error}\n")),
         }
     });
 
@@ -421,34 +565,48 @@ fn main() {
         .register_asynchronous_uri_scheme_protocol("kawaii", |context, request, responder| {
             let app = context.app_handle().clone();
             tauri::async_runtime::spawn(async move {
-                let url = request.uri().query().and_then(|query| {
-                    url::form_urlencoded::parse(query.as_bytes())
-                        .find(|(key, _)| key == "u")
-                        .map(|(_, value)| value.into_owned())
-                });
-
-                let response = match url {
-                    Some(url) => {
-                        let api = app.state::<Arc<Api>>().inner().clone();
-                        match api.image(&url).await {
-                            Ok((mime, bytes)) => {
-                                trace("image");
-                                tauri::http::Response::builder()
-                                    .header("Content-Type", mime)
-                                    .header("Cache-Control", "private, max-age=600")
-                                    .body(bytes)
-                                    .unwrap()
-                            }
-                            Err(_) => tauri::http::Response::builder()
-                                .status(404)
-                                .body(Vec::new())
-                                .unwrap(),
-                        }
+                let query = request.uri().query().unwrap_or_default().to_string();
+                let mut image_url = None;
+                let mut file_path = None;
+                for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+                    match key.as_ref() {
+                        "u" => image_url = Some(value.into_owned()),
+                        "f" => file_path = Some(value.into_owned()),
+                        _ => {}
                     }
-                    None => tauri::http::Response::builder()
+                }
+
+                let response = if let Some(url) = image_url {
+                    let api = app.state::<Arc<Api>>().inner().clone();
+                    match api.image(&url).await {
+                        Ok((mime, bytes)) => tauri::http::Response::builder()
+                            .header("Content-Type", mime)
+                            .header("Cache-Control", "private, max-age=600")
+                            .body(bytes)
+                            .unwrap(),
+                        Err(_) => tauri::http::Response::builder()
+                            .status(404)
+                            .body(Vec::new())
+                            .unwrap(),
+                    }
+                } else if let Some(path) = file_path.and_then(|path| local_media_path(&path)) {
+                    let mime = mime_for(&path);
+                    match tokio::fs::read(&path).await {
+                        Ok(bytes) => tauri::http::Response::builder()
+                            .header("Content-Type", mime)
+                            .header("Cache-Control", "private, max-age=600")
+                            .body(bytes)
+                            .unwrap(),
+                        Err(_) => tauri::http::Response::builder()
+                            .status(404)
+                            .body(Vec::new())
+                            .unwrap(),
+                    }
+                } else {
+                    tauri::http::Response::builder()
                         .status(400)
                         .body(Vec::new())
-                        .unwrap(),
+                        .unwrap()
                 };
 
                 responder.respond(response);
@@ -458,13 +616,17 @@ fn main() {
             summary,
             feed,
             instances,
+            media,
             auth_state,
             sign_in,
             verify_two_factor,
             sign_out,
-            friends
+            friends,
+            instance,
+            notifications,
+            settings_get,
+            settings_save
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the KawaiiVrc shell");
 }
-

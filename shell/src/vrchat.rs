@@ -22,6 +22,40 @@ pub struct UserInfo {
     pub avatar: String,
     pub status: String,
     pub trust: String,
+    pub location: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct Player {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub avatar: String,
+    pub is_friend: bool,
+    pub trust: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct InstanceView {
+    pub in_instance: bool,
+    pub location: String,
+    pub world_id: String,
+    pub world_name: String,
+    pub world_thumbnail: String,
+    pub instance_type: String,
+    pub capacity: i64,
+    pub players: Vec<Player>,
+    pub notice: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct Notice {
+    pub id: String,
+    pub kind: String,
+    pub message: String,
+    pub sender: String,
+    pub created_at: String,
+    pub seen: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -44,7 +78,6 @@ pub struct Roster {
     pub total: usize,
     pub online: usize,
     pub live: bool,
-    pub presence_matched: usize,
 }
 
 #[derive(Serialize)]
@@ -69,6 +102,8 @@ pub struct Api {
     user: Mutex<Option<UserInfo>>,
     worlds: Mutex<HashMap<String, String>>,
     presence: Mutex<HashMap<String, Presence>>,
+    self_location: Mutex<String>,
+    activity: crate::activity::ActivityLog,
     events: Mutex<HashMap<String, u32>>,
     realtime_error: Mutex<String>,
     live: AtomicBool,
@@ -88,6 +123,8 @@ impl Api {
             user: Mutex::new(None),
             worlds: Mutex::new(HashMap::new()),
             presence: Mutex::new(HashMap::new()),
+            self_location: Mutex::new(String::new()),
+            activity: crate::activity::ActivityLog::new(),
             events: Mutex::new(HashMap::new()),
             realtime_error: Mutex::new(String::new()),
             live: AtomicBool::new(false),
@@ -229,6 +266,11 @@ impl Api {
             return Err("VRChat still wants a two-factor code.".to_string());
         }
         let user = user_info(&body);
+        if !user.location.is_empty() {
+            if let Ok(mut location) = self.self_location.lock() {
+                *location = user.location.clone();
+            }
+        }
         self.set_user(Some(user.clone()));
         Ok(user)
     }
@@ -315,6 +357,7 @@ impl Api {
             .iter()
             .map(|user| map_friend(user, &HashMap::new()))
             .collect();
+        let _ = &mut items;
 
         // The friends endpoint reports every friend as offline; live presence
         // only arrives on the pipeline, so overlay whatever it has told us.
@@ -323,12 +366,10 @@ impl Api {
             .lock()
             .map(|guard| guard.clone())
             .unwrap_or_default();
-        let mut presence_matched = 0usize;
         for friend in &mut items {
             let Some(entry) = presence.get(&friend.id) else {
                 continue;
             };
-            presence_matched += 1;
             if !entry.location.is_empty() {
                 friend.location = entry.location.clone();
             }
@@ -359,7 +400,6 @@ impl Api {
             total: items.len(),
             online: items.iter().filter(|friend| friend.online).count(),
             live: self.live.load(Ordering::SeqCst),
-            presence_matched,
             items,
         })
     }
@@ -565,81 +605,248 @@ impl Api {
     }
 
     fn handle_realtime(&self, raw: &str) {
-        let Ok(message) = serde_json::from_str::<Value>(raw) else {
-            return;
-        };
-        let Some(kind) = message.get("type").and_then(Value::as_str) else {
+        let Some(event) = parse_pipeline_event(raw) else {
             return;
         };
         if let Ok(mut counts) = self.events.lock() {
-            *counts.entry(kind.to_string()).or_insert(0) += 1;
+            *counts.entry(event.kind.clone()).or_insert(0) += 1;
         }
 
-        // The pipeline sends `content` either as an object or as a JSON string,
-        // depending on the event; both shapes appear in the same session.
-        let content = match message.get("content") {
-            Some(Value::String(raw)) => serde_json::from_str::<Value>(raw).unwrap_or(Value::Null),
-            Some(value) => value.clone(),
-            None => Value::Null,
-        };
-        let embedded = content.get("user").cloned().unwrap_or(Value::Null);
-        let user_id = {
-            let top = text(&content, "userId");
-            if top.is_empty() {
-                text(&embedded, "id")
-            } else {
-                top
+        match event.kind.as_str() {
+            "user-location" | "user-update" => {
+                if !event.location.is_empty() {
+                    if let Ok(mut location) = self.self_location.lock() {
+                        *location = event.location.clone();
+                    }
+                }
             }
-        };
-        if user_id.is_empty() {
-            return;
-        }
-
-        match kind {
             "friend-offline" => {
                 if let Ok(mut presence) = self.presence.lock() {
-                    let entry = presence.entry(user_id).or_default();
+                    let entry = presence.entry(event.user_id.clone()).or_default();
                     entry.location = "offline".to_string();
                     entry.online = false;
                 }
+                self.record_activity(1, &event, "went offline");
             }
             "friend-online" | "friend-active" | "friend-location" | "friend-update" => {
-                let location = pick(&content, &embedded, "location");
-                let status = pick(&content, &embedded, "status");
-                let description = pick(&content, &embedded, "statusDescription");
-                let avatar = {
-                    let thumbnail = pick(&content, &embedded, "currentAvatarThumbnailImageUrl");
-                    if thumbnail.is_empty() {
-                        pick(&content, &embedded, "currentAvatarImageUrl")
-                    } else {
-                        thumbnail
-                    }
-                };
-
+                let mut previous_avatar = String::new();
                 if let Ok(mut presence) = self.presence.lock() {
-                    let entry = presence.entry(user_id).or_default();
-                    if !location.is_empty() {
-                        entry.online = location != "offline";
-                        entry.location = location;
+                    let entry = presence.entry(event.user_id.clone()).or_default();
+                    previous_avatar = entry.avatar.clone();
+                    if !event.location.is_empty() {
+                        entry.online = event.location != "offline";
+                        entry.location = event.location.clone();
                     }
-                    if !status.is_empty() {
-                        entry.status = status;
+                    if !event.status.is_empty() {
+                        entry.status = event.status.clone();
                     }
-                    if !description.is_empty() {
-                        entry.status_description = description;
+                    if !event.status_description.is_empty() {
+                        entry.status_description = event.status_description.clone();
                     }
-                    if !avatar.is_empty() {
-                        entry.avatar = avatar;
+                    if !event.avatar.is_empty() {
+                        entry.avatar = event.avatar.clone();
                     }
+                }
+
+                if event.kind == "friend-online" {
+                    self.record_activity(0, &event, "came online");
+                }
+                if !event.avatar.is_empty()
+                    && !previous_avatar.is_empty()
+                    && previous_avatar != event.avatar
+                {
+                    self.record_activity(13, &event, "changed avatar");
                 }
             }
             "friend-delete" => {
                 if let Ok(mut presence) = self.presence.lock() {
-                    presence.remove(&user_id);
+                    presence.remove(&event.user_id);
                 }
             }
             _ => {}
         }
+    }
+
+    fn record_activity(&self, kind: u32, event: &PipelineEvent, details: &str) {
+        let timestamp = crate::activity::now_iso();
+        self.activity.record(&crate::activity::LoggedEvent {
+            id: format!("{kind}-{}-{timestamp}", event.user_id),
+            kind,
+            user_id: event.user_id.clone(),
+            display_name: event.display_name.clone(),
+            avatar: event.avatar.clone(),
+            location: event.location.clone(),
+            timestamp,
+            details: details.to_string(),
+        });
+    }
+
+    // -------------------------------------------------------------- instance
+
+    pub fn location(&self) -> String {
+        self.self_location
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    pub async fn instance(&self) -> Result<InstanceView, String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let location = self.location();
+        if !location.starts_with("wrld_") {
+            return Ok(InstanceView {
+                in_instance: false,
+                location,
+                world_id: String::new(),
+                world_name: String::new(),
+                world_thumbnail: String::new(),
+                instance_type: String::new(),
+                capacity: 0,
+                players: Vec::new(),
+                notice: String::new(),
+            });
+        }
+
+        // The instance endpoint wants `world:instance` without the trailing
+        // `~region(...)` style tags the location string carries.
+        let trimmed = location.split('~').next().unwrap_or(&location).to_string();
+        let world_id = trimmed.split(':').next().unwrap_or_default().to_string();
+        let instance_type = instance_label(&location);
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("instances/{trimmed}"),
+                Some(&cookie),
+                None,
+            )
+            .await?;
+
+        if !status.is_success() {
+            let worlds = self.resolve_worlds(vec![world_id.clone()], &cookie).await;
+            return Ok(InstanceView {
+                in_instance: true,
+                location,
+                world_name: worlds.get(&world_id).cloned().unwrap_or_default(),
+                world_id,
+                world_thumbnail: String::new(),
+                instance_type,
+                capacity: 0,
+                players: Vec::new(),
+                notice: match status.as_u16() {
+                    403 => "VRChat hides the player list for this instance.".to_string(),
+                    404 => "That instance is no longer available.".to_string(),
+                    code => format!("VRChat returned {code}."),
+                },
+            });
+        }
+
+        let body: Value = serde_json::from_str(&body_text)
+            .map_err(|_| "VRChat returned an unexpected instance payload.".to_string())?;
+        let world = body.get("world").cloned().unwrap_or(Value::Null);
+        let thumbnail = {
+            let candidate = text(&world, "thumbnailImageUrl");
+            if candidate.is_empty() {
+                text(&world, "imageUrl")
+            } else {
+                candidate
+            }
+        };
+        let capacity = body
+            .get("capacity")
+            .and_then(Value::as_i64)
+            .or_else(|| world.get("capacity").and_then(Value::as_i64))
+            .unwrap_or(0);
+
+        let mut players: Vec<Player> = body
+            .get("players")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| Player {
+                        id: text(row, "id"),
+                        name: display_name(row),
+                        status: text(row, "status"),
+                        avatar: pick_avatar(row),
+                        is_friend: row
+                            .get("isFriend")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        trust: trust_label(row),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        players.sort_by(|left, right| {
+            right
+                .is_friend
+                .cmp(&left.is_friend)
+                .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+        });
+
+        Ok(InstanceView {
+            in_instance: true,
+            location,
+            world_id,
+            world_name: text(&world, "name"),
+            world_thumbnail: thumbnail,
+            instance_type,
+            capacity,
+            players,
+            notice: String::new(),
+        })
+    }
+
+    // --------------------------------------------------------- notifications
+
+    pub async fn notifications(&self) -> Result<Vec<Notice>, String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::GET,
+                "auth/user/notifications?n=100",
+                Some(&cookie),
+                None,
+            )
+            .await?;
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err("Your session expired. Sign in again.".to_string());
+        }
+        if !status.is_success() {
+            return Err(format!(
+                "VRChat returned {} while loading notifications.",
+                status.as_u16()
+            ));
+        }
+        let rows: Vec<Value> = serde_json::from_str(&body_text).unwrap_or_default();
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let sender = {
+                    let display = text(row, "senderDisplayName");
+                    if display.is_empty() {
+                        text(row, "senderUsername")
+                    } else {
+                        display
+                    }
+                };
+                let created = {
+                    let modern = text(row, "createdAt");
+                    if modern.is_empty() {
+                        text(row, "created_at")
+                    } else {
+                        modern
+                    }
+                };
+                Notice {
+                    id: text(row, "id"),
+                    kind: text(row, "type"),
+                    message: text(row, "message"),
+                    sender,
+                    created_at: created,
+                    seen: row.get("seen").and_then(Value::as_bool).unwrap_or(false),
+                }
+            })
+            .collect())
     }
 
     // ----------------------------------------------------------------- image
@@ -794,7 +1001,76 @@ fn user_info(value: &Value) -> UserInfo {
         avatar: pick_avatar(value),
         status: text(value, "status"),
         trust: trust_label(value),
+        location: own_location(value),
     }
+}
+
+/// `auth/user` no longer carries a top-level `location`; the account's own
+/// presence lives in `presence.world` + `presence.instance`.
+fn own_location(value: &Value) -> String {
+    let Some(presence) = value.get("presence") else {
+        return text(value, "location");
+    };
+    let world = text(presence, "world");
+    let instance = text(presence, "instance");
+    if world.is_empty() || instance.is_empty() {
+        text(value, "location")
+    } else {
+        format!("{world}:{instance}")
+    }
+}
+
+/// A pipeline frame reduced to the fields the roster and activity log need.
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) struct PipelineEvent {
+    pub kind: String,
+    pub user_id: String,
+    pub location: String,
+    pub status: String,
+    pub status_description: String,
+    pub avatar: String,
+    pub display_name: String,
+}
+
+/// The pipeline sends `content` either as an object or as a JSON string,
+/// sometimes with the user nested under `user`; all three shapes are real.
+pub(crate) fn parse_pipeline_event(raw: &str) -> Option<PipelineEvent> {
+    let message: Value = serde_json::from_str(raw).ok()?;
+    let kind = message.get("type").and_then(Value::as_str)?.to_string();
+    let content = match message.get("content") {
+        Some(Value::String(inner)) => serde_json::from_str::<Value>(inner).unwrap_or(Value::Null),
+        Some(value) => value.clone(),
+        None => Value::Null,
+    };
+    let embedded = content.get("user").cloned().unwrap_or(Value::Null);
+    let user_id = {
+        let top = text(&content, "userId");
+        if top.is_empty() {
+            text(&embedded, "id")
+        } else {
+            top
+        }
+    };
+    if user_id.is_empty() {
+        return None;
+    }
+
+    let thumbnail = pick(&content, &embedded, "currentAvatarThumbnailImageUrl");
+    let avatar = if thumbnail.is_empty() {
+        pick(&content, &embedded, "currentAvatarImageUrl")
+    } else {
+        thumbnail
+    };
+
+    Some(PipelineEvent {
+        kind,
+        user_id,
+        location: pick(&content, &embedded, "location"),
+        status: pick(&content, &embedded, "status"),
+        status_description: pick(&content, &embedded, "statusDescription"),
+        avatar,
+        display_name: pick(&content, &embedded, "displayName"),
+    })
 }
 
 fn map_friend(value: &Value, worlds: &HashMap<String, String>) -> Friend {
@@ -865,5 +1141,190 @@ fn network_error(error: reqwest::Error) -> String {
         "Could not reach VRChat. Check the connection.".to_string()
     } else {
         format!("Network error: {error}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::{HeaderMap, HeaderValue, SET_COOKIE};
+
+    fn cookie_headers(values: &[&str]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(SET_COOKIE, HeaderValue::from_str(value).expect("valid header"));
+        }
+        headers
+    }
+
+    fn friend(location: &str) -> Friend {
+        Friend {
+            id: "usr_1".to_string(),
+            name: "One".to_string(),
+            status: "active".to_string(),
+            status_description: String::new(),
+            location: location.to_string(),
+            world: String::new(),
+            instance: String::new(),
+            avatar: String::new(),
+            online: false,
+            trust: String::new(),
+        }
+    }
+
+    #[test]
+    fn reads_the_auth_cookie_beside_other_cookies() {
+        let headers = cookie_headers(&[
+            "theme=dark; Path=/",
+            "auth=abc123; Path=/; HttpOnly",
+            "twoFactorAuth=xyz; Path=/",
+        ]);
+        assert_eq!(auth_cookie(&headers), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn ignores_headers_without_an_auth_cookie() {
+        let headers = cookie_headers(&["theme=dark; Path=/", "auth=; Path=/"]);
+        assert_eq!(auth_cookie(&headers), None);
+        assert_eq!(auth_cookie(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn trims_quoted_auth_cookie_values() {
+        let headers = cookie_headers(&["auth=\"quoted-value\"; Path=/"]);
+        assert_eq!(auth_cookie(&headers), Some("quoted-value".to_string()));
+    }
+
+    #[test]
+    fn detects_two_factor_methods() {
+        let body: Value = serde_json::json!({ "requiresTwoFactorAuth": ["totp", "otp"] });
+        assert_eq!(
+            two_factor_methods(&body),
+            Some(vec!["totp".to_string(), "otp".to_string()])
+        );
+    }
+
+    #[test]
+    fn finds_no_two_factor_without_the_field() {
+        let body: Value = serde_json::json!({ "id": "usr_1", "displayName": "One" });
+        assert_eq!(two_factor_methods(&body), None);
+    }
+
+    #[test]
+    fn parses_object_content() {
+        let raw = r#"{"type":"friend-location","content":{"userId":"usr_2","location":"wrld_a:1~hidden(u)","status":"join me","statusDescription":"hi","displayName":"Two"}}"#;
+        let event = parse_pipeline_event(raw).expect("event");
+        assert_eq!(event.kind, "friend-location");
+        assert_eq!(event.user_id, "usr_2");
+        assert_eq!(event.location, "wrld_a:1~hidden(u)");
+        assert_eq!(event.status, "join me");
+        assert_eq!(event.status_description, "hi");
+        assert_eq!(event.display_name, "Two");
+    }
+
+    #[test]
+    fn parses_string_content() {
+        let raw = r#"{"type":"friend-online","content":"{\"userId\":\"usr_3\",\"location\":\"wrld_b:2\",\"currentAvatarThumbnailImageUrl\":\"https://api.vrchat.cloud/thumb.png\"}"}"#;
+        let event = parse_pipeline_event(raw).expect("event");
+        assert_eq!(event.kind, "friend-online");
+        assert_eq!(event.user_id, "usr_3");
+        assert_eq!(event.location, "wrld_b:2");
+        assert_eq!(event.avatar, "https://api.vrchat.cloud/thumb.png");
+    }
+
+    #[test]
+    fn reads_the_id_from_the_embedded_user() {
+        let raw = r#"{"type":"friend-update","content":{"user":{"id":"usr_4","displayName":"Four","currentAvatarImageUrl":"https://api.vrchat.cloud/a.png"}}}"#;
+        let event = parse_pipeline_event(raw).expect("event");
+        assert_eq!(event.user_id, "usr_4");
+        assert_eq!(event.display_name, "Four");
+        assert_eq!(event.avatar, "https://api.vrchat.cloud/a.png");
+    }
+
+    #[test]
+    fn offline_events_parse_without_a_location() {
+        let raw = r#"{"type":"friend-offline","content":{"userId":"usr_5"}}"#;
+        let event = parse_pipeline_event(raw).expect("event");
+        assert_eq!(event.kind, "friend-offline");
+        assert_eq!(event.location, "");
+    }
+
+    #[test]
+    fn rejects_frames_without_an_id_or_type() {
+        assert!(parse_pipeline_event(r#"{"type":"friend-online","content":{}}"#).is_none());
+        assert!(parse_pipeline_event(r#"{"content":{"userId":"usr_1"}}"#).is_none());
+        assert!(parse_pipeline_event("not json").is_none());
+    }
+
+    #[test]
+    fn reads_the_account_location_from_presence() {
+        let body: Value = serde_json::json!({
+            "id": "usr_1",
+            "presence": {
+                "world": "wrld_x",
+                "instance": "12345~hidden(usr_9)",
+                "instanceType": "hidden"
+            }
+        });
+        assert_eq!(own_location(&body), "wrld_x:12345~hidden(usr_9)");
+    }
+
+    #[test]
+    fn falls_back_to_the_location_field_when_presence_is_empty() {
+        let offline: Value =
+            serde_json::json!({ "id": "usr_1", "presence": { "world": "", "instance": "" } });
+        assert_eq!(own_location(&offline), "");
+
+        let legacy: Value = serde_json::json!({ "id": "usr_1", "location": "offline" });
+        assert_eq!(own_location(&legacy), "offline");
+    }
+
+    #[test]
+    fn maps_instance_types() {
+        assert_eq!(instance_label("wrld_a:123~hidden(usr_1)"), "friends+");
+        assert_eq!(instance_label("wrld_a:123~friends(usr_1)"), "friends");
+        assert_eq!(
+            instance_label("wrld_a:123~private(usr_1)~region(us)"),
+            "private"
+        );
+        assert_eq!(
+            instance_label("wrld_a:123~canRequestInvite~region(eu)"),
+            "invite+"
+        );
+        assert_eq!(instance_label("wrld_a:123~region(us)"), "public");
+        assert_eq!(instance_label("wrld_a"), "");
+    }
+
+    #[test]
+    fn locates_a_friend_in_a_resolved_world() {
+        let mut located = friend("wrld_x:1~hidden(usr_9)");
+        let worlds = HashMap::from([("wrld_x".to_string(), "Test World".to_string())]);
+        locate(&mut located, &worlds);
+        assert!(located.online);
+        assert_eq!(located.world, "Test World");
+        assert_eq!(located.instance, "friends+");
+    }
+
+    #[test]
+    fn falls_back_to_the_world_id_when_the_name_is_unknown() {
+        let mut located = friend("wrld_unknown:1");
+        locate(&mut located, &HashMap::new());
+        assert!(located.online);
+        assert_eq!(located.world, "wrld_unknown");
+        assert_eq!(located.instance, "public");
+    }
+
+    #[test]
+    fn offline_and_private_locations_are_not_worlds() {
+        let mut offline = friend("offline");
+        locate(&mut offline, &HashMap::new());
+        assert!(!offline.online);
+        assert_eq!(offline.world, "");
+
+        let mut private = friend("private");
+        locate(&mut private, &HashMap::new());
+        assert!(private.online);
+        assert_eq!(private.world, "Private world");
+        assert_eq!(private.instance, "private");
     }
 }

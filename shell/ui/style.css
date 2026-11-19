@@ -408,3 +408,90 @@ footer {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.grid {
+  height: 100%;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  padding-bottom: 12px;
+  align-content: start;
+}
+
+.tile {
+  margin: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.tile img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--panel-soft);
+}
+
+.tile figcaption {
+  padding: 6px 9px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.more {
+  margin: 4px auto 16px;
+  display: block;
+}
+
+.world-card {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.world-card .cover {
+  width: 220px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 12px;
+  background: var(--panel-soft);
+  flex: none;
+}
+
+.world-card h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.world-card p {
+  margin: 0;
+}
+
+.row.unread {
+  border-color: rgba(255, 143, 211, 0.45);
+  background: linear-gradient(90deg, rgba(255, 143, 211, 0.08), var(--panel) 55%);
+}
+
+.auth label.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.auth input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}

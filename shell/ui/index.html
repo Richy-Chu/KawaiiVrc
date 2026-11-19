@@ -28,9 +28,13 @@
 
     <nav class="tabs">
       <button class="tab active" data-tab="friends">Friends</button>
+      <button class="tab" data-tab="instance">Instance</button>
       <button class="tab" data-tab="activity">Activity</button>
-      <button class="tab" data-tab="instances">Instance history</button>
-      <input id="search" type="search" placeholder="Filter…" autocomplete="off" />
+      <button class="tab" data-tab="media">Media</button>
+      <button class="tab" data-tab="notifications">Notifications</button>
+      <button class="tab" data-tab="instances">History</button>
+      <button class="tab" data-tab="settings">Settings</button>
+      <input id="search" type="search" placeholder="Filter friends…" autocomplete="off" />
       <button id="refresh" class="ghost">Refresh</button>
     </nav>
 
@@ -56,12 +60,46 @@
         <div id="roster" class="list"></div>
       </section>
 
+      <section id="instance" class="pane">
+        <div id="instance-body" class="list"></div>
+      </section>
+
       <section id="activity" class="pane">
         <div id="activity-list" class="list"></div>
       </section>
 
+      <section id="media" class="pane">
+        <div id="media-list" class="grid"></div>
+        <button id="media-more" class="ghost more" hidden>Load more pictures</button>
+      </section>
+
+      <section id="notifications" class="pane">
+        <div id="notification-list" class="list"></div>
+      </section>
+
       <section id="instances" class="pane">
         <div id="instance-list" class="list"></div>
+      </section>
+
+      <section id="settings" class="pane">
+        <form id="settings-form" class="auth">
+          <h2>Shell settings</h2>
+          <p class="hint">Stored in %LOCALAPPDATA%\KawaiiVrcShell\settings.json. The other app's settings are untouched.</p>
+          <label>
+            Refresh friends every (seconds)
+            <input id="refresh-seconds" type="number" min="15" max="900" step="15" />
+          </label>
+          <label class="inline">
+            <input id="show-offline" type="checkbox" />
+            Show offline friends
+          </label>
+          <label class="inline">
+            <input id="animate-backdrop" type="checkbox" />
+            Animate the background
+          </label>
+          <button class="primary" type="submit">Save settings</button>
+          <p class="error" id="settings-message"></p>
+        </form>
       </section>
     </main>
 
