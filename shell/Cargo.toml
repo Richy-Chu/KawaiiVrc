@@ -1,8 +1,8 @@
 [package]
 name = "kawaii-shell"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Experimental Rust + WebView2 core for KawaiiVrc (rewrite stage 1)"
+description = "Experimental Rust + WebView2 core for KawaiiVrc (rewrite stage 2: auth and roster)"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -12,6 +12,12 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "brotli", "rustls-tls", "charset"] }
+futures = "0.3"
+url = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [profile.release]
 opt-level = "s"

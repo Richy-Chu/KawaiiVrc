@@ -15,19 +15,51 @@
           <p id="account">reading your local data…</p>
         </div>
       </div>
+      <div class="userbox" id="userbox" hidden>
+        <img id="me" class="me" alt="" />
+        <div class="me-text">
+          <strong id="me-name"></strong>
+          <span id="me-status"></span>
+        </div>
+        <button id="signout" class="ghost small">Sign out</button>
+      </div>
       <div class="chips" id="chips"></div>
     </header>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="activity">Activity</button>
+      <button class="tab active" data-tab="friends">Friends</button>
+      <button class="tab" data-tab="activity">Activity</button>
       <button class="tab" data-tab="instances">Instance history</button>
-      <input id="search" type="search" placeholder="Filter activity…" autocomplete="off" />
+      <input id="search" type="search" placeholder="Filter…" autocomplete="off" />
+      <button id="refresh" class="ghost">Refresh</button>
     </nav>
 
     <main>
-      <section id="activity" class="pane active">
+      <section id="friends" class="pane active">
+        <form id="signin" class="auth" hidden>
+          <h2>Sign in to VRChat</h2>
+          <p class="hint">Your password is sent straight to VRChat and never written to disk.</p>
+          <label>Username or email<input id="username" autocomplete="username" required /></label>
+          <label>Password<input id="password" type="password" autocomplete="current-password" required /></label>
+          <button id="signin-button" class="primary" type="submit">Sign in</button>
+          <p class="error" id="auth-error"></p>
+        </form>
+
+        <form id="twofactor" class="auth" hidden>
+          <h2>Two-factor code</h2>
+          <p class="hint" id="twofactor-hint">Enter the code from your authenticator app.</p>
+          <label>Code<input id="code" inputmode="numeric" autocomplete="one-time-code" required /></label>
+          <button id="verify-button" class="primary" type="submit">Verify</button>
+          <p class="error" id="twofactor-error"></p>
+        </form>
+
+        <div id="roster" class="list"></div>
+      </section>
+
+      <section id="activity" class="pane">
         <div id="activity-list" class="list"></div>
       </section>
+
       <section id="instances" class="pane">
         <div id="instance-list" class="list"></div>
       </section>
