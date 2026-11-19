@@ -37,6 +37,12 @@ public sealed class AsyncImage : FrameworkElement
         typeof(AsyncImage),
         new FrameworkPropertyMetadata(0d, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty StretchProperty = DependencyProperty.Register(
+        nameof(Stretch),
+        typeof(Stretch),
+        typeof(AsyncImage),
+        new FrameworkPropertyMetadata(Stretch.UniformToFill, FrameworkPropertyMetadataOptions.AffectsRender));
+
     private CancellationTokenSource? _cancellation;
     private ImageSource? _image;
     private bool _isLoaded;
@@ -76,6 +82,17 @@ public sealed class AsyncImage : FrameworkElement
         set => SetValue(ImageOpacityProperty, value);
     }
 
+    /// <summary>
+    /// How the artwork fills the element. The default covers the whole surface
+    /// and crops the overflow (avatars, thumbnails); Uniform letterboxes
+    /// instead so an odd-shaped image is never cut off.
+    /// </summary>
+    public Stretch Stretch
+    {
+        get => (Stretch)GetValue(StretchProperty);
+        set => SetValue(StretchProperty, value);
+    }
+
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
@@ -91,12 +108,35 @@ public sealed class AsyncImage : FrameworkElement
         drawingContext.PushClip(new RectangleGeometry(bounds, radius, radius));
         drawingContext.PushOpacity(ImageOpacity);
 
-        // Uniform-to-fill: scale up to cover, then center-crop with the clip.
         var imageWidth = image.Width > 0 ? image.Width : ActualWidth;
         var imageHeight = image.Height > 0 ? image.Height : ActualHeight;
-        var scale = Math.Max(ActualWidth / imageWidth, ActualHeight / imageHeight);
-        var drawWidth = imageWidth * scale;
-        var drawHeight = imageHeight * scale;
+
+        double drawWidth;
+        double drawHeight;
+        switch (Stretch)
+        {
+            case System.Windows.Media.Stretch.Uniform:
+                // Fit the whole image inside the element.
+                var fit = Math.Min(ActualWidth / imageWidth, ActualHeight / imageHeight);
+                drawWidth = imageWidth * fit;
+                drawHeight = imageHeight * fit;
+                break;
+            case System.Windows.Media.Stretch.Fill:
+                drawWidth = ActualWidth;
+                drawHeight = ActualHeight;
+                break;
+            case System.Windows.Media.Stretch.None:
+                drawWidth = imageWidth;
+                drawHeight = imageHeight;
+                break;
+            default:
+                // Uniform-to-fill: scale up to cover, then center-crop with the clip.
+                var cover = Math.Max(ActualWidth / imageWidth, ActualHeight / imageHeight);
+                drawWidth = imageWidth * cover;
+                drawHeight = imageHeight * cover;
+                break;
+        }
+
         drawingContext.DrawImage(
             image,
             new Rect(

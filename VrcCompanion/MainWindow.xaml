@@ -1654,10 +1654,11 @@
                             </Button.Template>
                         </Button>
 
-                        <Border Width="680"
-                                MaxHeight="760"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center"
+                        <Border Margin="28"
+                                MaxWidth="760"
+                                MaxHeight="820"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
                                 Background="{StaticResource PanelBrush}"
                                 BorderBrush="{StaticResource BorderBrush}"
                                 BorderThickness="1"
@@ -1709,7 +1710,8 @@
                                         MinHeight="300">
                                     <controls:AsyncImage SourceUrl="{Binding BoopImageUrl}"
                                                          DecodeWidth="1600"
-                                                         CornerRadius="12" />
+                                                         CornerRadius="12"
+                                                         Stretch="Uniform" />
                                 </Border>
                             </Grid>
                         </Border>
