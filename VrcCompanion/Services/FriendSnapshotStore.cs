@@ -98,6 +98,19 @@ public sealed class FriendSnapshotStore
     public FriendSnapshotStore(string? path = null)
     {
         _path = string.IsNullOrWhiteSpace(path) ? DefaultPath() : path;
+        if (!string.IsNullOrWhiteSpace(path) || !File.Exists(_path))
+        {
+            return;
+        }
+
+        // Warm the parse off the UI thread; the launch diff then reads memory.
+        _ = System.Threading.Tasks.Task.Run(() =>
+        {
+            lock (_sync)
+            {
+                LoadFile();
+            }
+        });
     }
 
     public FriendSnapshot? Load(string? accountId)
@@ -204,6 +217,12 @@ public sealed class FriendSnapshotStore
         "VrcCompanion",
         "friend-snapshots.json");
 
+    // Parsed once and reused until the file changes; both Save and the launch
+    // read otherwise re-parse the whole snapshot on the UI thread.
+    private StoredFile? _cachedFile;
+    private long _cachedLength = -1;
+    private DateTime _cachedWritten;
+
     private StoredFile LoadFile()
     {
         try
@@ -213,9 +232,20 @@ public sealed class FriendSnapshotStore
                 return new StoredFile();
             }
 
+            var info = new FileInfo(_path);
+            if (_cachedFile is not null &&
+                info.Length == _cachedLength &&
+                info.LastWriteTimeUtc == _cachedWritten)
+            {
+                return _cachedFile;
+            }
+
             var file = JsonSerializer.Deserialize<StoredFile>(File.ReadAllText(_path), JsonOptions);
             file ??= new StoredFile();
             file.Accounts ??= new Dictionary<string, FriendSnapshot>(StringComparer.Ordinal);
+            _cachedFile = file;
+            _cachedLength = info.Length;
+            _cachedWritten = info.LastWriteTimeUtc;
             return file;
         }
         catch (Exception ex)
@@ -236,6 +266,11 @@ public sealed class FriendSnapshotStore
         var temp = _path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(file, JsonOptions));
         File.Move(temp, _path, overwrite: true);
+
+        var info = new FileInfo(_path);
+        _cachedFile = file;
+        _cachedLength = info.Exists ? info.Length : -1;
+        _cachedWritten = info.Exists ? info.LastWriteTimeUtc : default;
     }
 
     private sealed class StoredFile

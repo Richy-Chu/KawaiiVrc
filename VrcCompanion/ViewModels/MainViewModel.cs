@@ -2495,7 +2495,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ActivityFeedViewModel.FilterChanged += RememberActivityFilter;
         ActivityFeedViewModel.SetDefaultFilter(ActivityDefaultFilter);
         ActivityFeedViewModel.ShowOfflineFriends = ActivityShowOfflineFriends;
-        _instanceHistoryStore.Load();
+        // Opening/creating the SQLite database and migrating the old JSON file
+        // is disk work; keep it off the UI thread so launch stays responsive.
+        await Task.Run(() => _instanceHistoryStore.Load());
         _instanceHistoryRecorder = new InstanceHistoryRecorder(_instanceHistoryStore);
         InstanceHistoryViewModel = new InstanceHistoryViewModel(_api, _instanceHistoryStore)
         {
@@ -2598,6 +2600,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 return;
             }
 
+            // Grouping the log events is the most expensive local read; do it
+            // before the first screen asks for it, while the UI stays free.
+            await WarmLocalCachesAsync(user.Id);
             ApplyCurrentUser(user);
             IsLoggedIn = true;
             _realtime.Start();
@@ -5236,16 +5241,27 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // it there keeps a crashed/closed client from looking live forever.
             if (!_logPlayerService.IsGameRunning)
             {
-                _instanceHistoryStore.CloseOpenSessions(user.Id);
-
                 foreach (var open in imported.Where(entry => entry.LeftAt is null))
                 {
                     open.Close(open.LastSeenAt);
                 }
             }
 
-            _instanceHistoryStore.Merge(imported);
-            _instanceHistoryStore.Save();
+            // Thousands of imported events against a 25 MB database: doing this
+            // on the UI thread was the freeze right after launch.
+            await Task.Run(() =>
+            {
+                if (!_logPlayerService.IsGameRunning)
+                {
+                    _instanceHistoryStore.CloseOpenSessions(user.Id);
+                }
+
+                _instanceHistoryStore.Merge(imported);
+                _instanceHistoryStore.Save();
+                // Rebuild the grouping cache off the UI thread so the next tab
+                // that asks for history does not pay the 0.5 s pass.
+                _instanceHistoryStore.ForAccount(user.Id);
+            });
             _instanceHistoryRecorder?.SetAccount(user);
             _historyReady = true;
 
@@ -8165,6 +8181,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         LoadNotificationAccount(user.Id);
 
         CurrentUser = user;
+        WarmLocalCaches(user.Id);
         if (!string.IsNullOrWhiteSpace(user.Id) &&
             !_lastLoggedAvatars.ContainsKey(user.Id))
         {
@@ -8237,6 +8254,38 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// buckets. They resolve friends whose location is VRChat's stale "private"
     /// sentinel, which otherwise looks Offline in a profile card.
     /// </summary>
+    private readonly HashSet<string> _warmedAccounts = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Reads the three large local stores once on a background thread right
+    /// after sign-in. The first screen to ask for them (Context, Activity,
+    /// History) then hits a warm cache instead of blocking the UI for the
+    /// ~0.5 s it takes to group 27k log events or parse a 14 MB feed.
+    /// </summary>
+    private void WarmLocalCaches(string? accountId) => _ = WarmLocalCachesAsync(accountId);
+
+    private Task WarmLocalCachesAsync(string? accountId)
+    {
+        if (string.IsNullOrWhiteSpace(accountId) || !_warmedAccounts.Add(accountId))
+        {
+            return Task.CompletedTask;
+        }
+
+        return Task.Run(() =>
+        {
+            try
+            {
+                _instanceHistoryStore.ForAccount(accountId);
+                ActivityStore.Shared.Load(accountId);
+                FriendSnapshotStore.Shared.Load(accountId);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("cache warm: " + ex.Message);
+            }
+        });
+    }
+
     private void ApplyCurrentUserPresenceSets(VrcUser user)
     {
         _onlineFriendIds.Clear();
@@ -8341,6 +8390,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// friends that are absent from this batch, which is used while the offline
     /// pages are still loading.
     /// </summary>
+    private string? _friendsSignature;
+
     private void UpdateFriends(IReadOnlyList<VrcUser> users, bool keepMissing = false)
     {
         var existingById = Friends
@@ -8385,6 +8436,19 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             var incoming = new HashSet<string>(desired.Select(friend => friend.Id), StringComparer.Ordinal);
             desired.AddRange(Friends.Where(friend => !incoming.Contains(friend.Id)));
         }
+
+        // The five-second poll almost always returns exactly the list already on
+        // screen. Re-sorting, re-syncing the collection and refreshing the view
+        // for that made large friend lists tick every few seconds, so stop here
+        // when nothing visible changed.
+        var signature = string.Concat(desired.Select(friend =>
+            $"{friend.Id}|{friend.DisplayName}|{friend.Location}|{friend.AvatarUrl}|{friend.StatusRank}|{friend.PresenceSortRank}|{friend.IsFavorite}\n"));
+        if (string.Equals(signature, _friendsSignature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _friendsSignature = signature;
 
         // The list is rebuilt underneath the user, so hold on to whatever popup
         // is open and put the highlight back once the rows exist again.

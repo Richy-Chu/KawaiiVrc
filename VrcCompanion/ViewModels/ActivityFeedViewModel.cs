@@ -1515,6 +1515,10 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         QueueAvatarHydration();
     }
 
+    /// <summary>
+    /// The store keeps the new rows in memory immediately and writes the ~14 MB
+    /// file on a worker thread, so this call is cheap on the UI thread.
+    /// </summary>
     private void SaveHistory()
     {
         if (_accountId is not null)
@@ -1522,6 +1526,9 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             _store.Save(_accountId, _allEntries);
         }
     }
+
+    /// <summary>Waits for queued feed writes; used by tests and shutdown.</summary>
+    internal Task FlushSaveAsync() => _store.FlushAsync();
 
     private const int MaxRetainedEntries = 20_000;
 
@@ -1540,10 +1547,39 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             byId[entry.Id] = entry;
         }
 
+        // Only avatar-change rows can be duplicates, so index those by user
+        // instead of scanning the whole 20k timeline for every fresh row.
+        var avatarByUser = new Dictionary<string, List<ActivityEntry>>(StringComparer.Ordinal);
+        void IndexAvatar(ActivityEntry entry)
+        {
+            if (entry.Type != ActivityType.AvatarChanged || string.IsNullOrWhiteSpace(entry.UserId))
+            {
+                return;
+            }
+
+            if (!avatarByUser.TryGetValue(entry.UserId, out var list))
+            {
+                list = new List<ActivityEntry>();
+                avatarByUser[entry.UserId] = list;
+            }
+
+            list.Add(entry);
+        }
+
+        foreach (var entry in byId.Values)
+        {
+            IndexAvatar(entry);
+        }
+
         foreach (var entry in fresh)
         {
-            var duplicate = byId.Values.FirstOrDefault(existing =>
-                IsSameAvatarSwitch(existing, entry));
+            ActivityEntry? duplicate = null;
+            if (entry.Type == ActivityType.AvatarChanged &&
+                !string.IsNullOrWhiteSpace(entry.UserId) &&
+                avatarByUser.TryGetValue(entry.UserId, out var candidates))
+            {
+                duplicate = candidates.FirstOrDefault(existing => IsSameAvatarSwitch(existing, entry));
+            }
             if (duplicate is not null)
             {
                 // Prefer the row that already has the real avatar id/picture.
@@ -1557,7 +1593,10 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 continue;
             }
 
-            byId.TryAdd(entry.Id, entry);
+            if (byId.TryAdd(entry.Id, entry))
+            {
+                IndexAvatar(entry);
+            }
         }
 
         return byId.Values

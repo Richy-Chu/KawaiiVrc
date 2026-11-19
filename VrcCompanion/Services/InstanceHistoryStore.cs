@@ -103,8 +103,45 @@ public sealed class InstanceHistoryStore
         lock (_gate)
         {
             EnsureInitialized();
+            // Grouping 27k join/leave events takes ~460 ms. Every screen that
+            // shows sessions asks for the same rows within seconds of the last
+            // write, so keep the last result until the database files change.
+            var signature = DatabaseSignature();
+            if (_cachedEntries is not null &&
+                string.Equals(_cachedAccount, accountUserId, StringComparison.Ordinal) &&
+                string.Equals(_cachedSignature, signature, StringComparison.Ordinal))
+            {
+                return new List<InstanceHistoryEntry>(_cachedEntries);
+            }
+
             using var connection = OpenConnection();
-            return BuildEntries(connection, accountUserId);
+            var entries = BuildEntries(connection, accountUserId);
+            _cachedEntries = entries;
+            _cachedAccount = accountUserId;
+            _cachedSignature = signature;
+            return new List<InstanceHistoryEntry>(entries);
+        }
+    }
+
+    private IReadOnlyList<InstanceHistoryEntry>? _cachedEntries;
+    private string? _cachedAccount;
+    private string? _cachedSignature;
+
+    private string DatabaseSignature()
+    {
+        try
+        {
+            var info = new FileInfo(_databasePath);
+            var length = info.Exists ? info.Length : 0;
+            var written = info.Exists ? info.LastWriteTimeUtc.Ticks : 0;
+            var wal = new FileInfo(_databasePath + "-wal");
+            var walLength = wal.Exists ? wal.Length : 0;
+            var walWritten = wal.Exists ? wal.LastWriteTimeUtc.Ticks : 0;
+            return $"{length}:{written}:{walLength}:{walWritten}";
+        }
+        catch
+        {
+            return string.Empty;
         }
     }
 
@@ -122,6 +159,14 @@ public sealed class InstanceHistoryStore
             return BuildEntries(connection, accountUserId: null)
                 .FirstOrDefault(entry => string.Equals(entry.Id, id, StringComparison.Ordinal));
         }
+    }
+
+    /// <summary>Drops the read cache after a write from this instance.</summary>
+    private void InvalidateCache()
+    {
+        _cachedEntries = null;
+        _cachedAccount = null;
+        _cachedSignature = null;
     }
 
     public InstanceHistoryEntry? FindOpen(string accountUserId, string location)
@@ -158,6 +203,7 @@ public sealed class InstanceHistoryStore
             UpsertLocation(connection, transaction, entry);
             WriteEntryEvents(connection, transaction, entry);
             transaction.Commit();
+            InvalidateCache();
 
             return BuildEntries(connection, entry.AccountUserId)
                        .FirstOrDefault(candidate => string.Equals(candidate.Id, entry.Id, StringComparison.Ordinal))
@@ -185,7 +231,8 @@ public sealed class InstanceHistoryStore
                 WriteEntryEvents(connection, transaction, entry);
             }
 
-            transaction.Commit();
+                            transaction.Commit();
+            InvalidateCache();
             return usable.Count;
         }
     }
@@ -195,6 +242,7 @@ public sealed class InstanceHistoryStore
         lock (_gate)
         {
             EnsureInitialized();
+            InvalidateCache();
             using var connection = OpenConnection();
             var entry = BuildEntries(connection, accountUserId: null)
                 .FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.Ordinal));
@@ -300,6 +348,7 @@ public sealed class InstanceHistoryStore
 
     public int AssignPlayerUserId(string accountUserId, string displayName, string userId)
     {
+        InvalidateCache();
         if (string.IsNullOrWhiteSpace(accountUserId) ||
             string.IsNullOrWhiteSpace(displayName) ||
             string.IsNullOrWhiteSpace(userId))
@@ -440,6 +489,7 @@ public sealed class InstanceHistoryStore
         lock (_gate)
         {
             EnsureInitialized();
+            InvalidateCache();
             using var connection = OpenConnection();
             var entries = BuildEntries(connection, accountUserId: null)
                 .Where(entry => wanted.Contains(entry.Id))
@@ -485,6 +535,7 @@ public sealed class InstanceHistoryStore
     /// <summary>Closes any live session left open by a crashed/closed client.</summary>
     public int CloseOpenSessions(string accountUserId, DateTimeOffset? at = null)
     {
+        InvalidateCache();
         if (string.IsNullOrWhiteSpace(accountUserId))
         {
             return 0;
@@ -525,6 +576,7 @@ public sealed class InstanceHistoryStore
 
     public int CloseOpenSessionsOlderThan(string accountUserId, DateTimeOffset cutoff)
     {
+        InvalidateCache();
         if (string.IsNullOrWhiteSpace(accountUserId))
         {
             return 0;
@@ -560,6 +612,7 @@ public sealed class InstanceHistoryStore
     /// <summary>No-op for compatibility: events are written immediately.</summary>
     public void Save()
     {
+        InvalidateCache();
         lock (_gate)
         {
             EnsureInitialized();
@@ -580,6 +633,7 @@ public sealed class InstanceHistoryStore
         bool joined,
         DateTimeOffset at)
     {
+        InvalidateCache();
         if (string.IsNullOrWhiteSpace(accountUserId) ||
             !LaunchService.IsLocation(location))
         {
@@ -603,6 +657,7 @@ public sealed class InstanceHistoryStore
     /// <summary>Closes one live session with a real self leave event.</summary>
     public void CloseSession(InstanceHistoryEntry entry, DateTimeOffset at)
     {
+        InvalidateCache();
         if (entry is null || string.IsNullOrWhiteSpace(entry.AccountUserId))
         {
             return;
@@ -623,6 +678,7 @@ public sealed class InstanceHistoryStore
     /// <summary>Persists API-enriched world/creator metadata for a history row.</summary>
     public void UpsertMetadata(InstanceHistoryEntry entry)
     {
+        InvalidateCache();
         if (!IsUsable(entry))
         {
             return;

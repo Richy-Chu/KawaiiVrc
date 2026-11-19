@@ -64,9 +64,15 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         _scan = scan ?? ((path, progress) => MediaLibraryScanner.Scan(path, progress));
         _openPath = openPath ?? DefaultOpenPath;
         _cachePath = string.IsNullOrWhiteSpace(cachePath) ? MediaIndexCache.DefaultPath : cachePath;
-        _photoCachePath = string.IsNullOrWhiteSpace(photoCachePath)
-            ? MediaPhotoCache.DefaultPath
-            : photoCachePath;
+        _photoCachePath = !string.IsNullOrWhiteSpace(photoCachePath)
+            ? photoCachePath
+            : string.IsNullOrWhiteSpace(cachePath)
+                ? MediaPhotoCache.DefaultPath
+                // A caller that redirects the index cache gets its own photo
+                // cache too, so tests never touch the signed-in user's file.
+                : Path.Combine(
+                    Path.GetDirectoryName(cachePath) ?? Path.GetTempPath(),
+                    Path.GetFileNameWithoutExtension(cachePath) + "-photos.json");
 
         RefreshCommand = new AsyncRelayCommand(() => LoadAsync(force: true), () => !IsBusy);
         OpenFolderCommand = new RelayCommand(OpenFolder);
@@ -1339,12 +1345,23 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     // ------------------------------------------------------------- loading
 
+    private DateTimeOffset _lastScanAt;
+
     public async Task EnsureLoadedAsync()
     {
+        // Reopening the tab within a few minutes must not walk the picture
+        // folder again; the cache already shows the same rows.
+        if (_loaded && DateTimeOffset.UtcNow - _lastScanAt < TimeSpan.FromMinutes(5))
+        {
+            return;
+        }
+
         if (!_loaded && !IsBusy)
         {
             // Instant paint from the last scan; the live scan below corrects it.
-            var cached = MediaIndexCache.Load(RootPath, _cachePath);
+            // Parsing and grouping the cache is disk work, so it runs off the UI
+            // thread and only the finished rows are applied.
+            var cached = await Task.Run(() => MediaIndexCache.Load(RootPath, _cachePath));
             if (cached.Count > 0)
             {
                 Apply(cached);
@@ -1369,6 +1386,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         {
             var progress = new Progress<int>(count => FoundCount = count);
             var groups = await Task.Run(() => _scan(RootPath, progress));
+            _lastScanAt = DateTimeOffset.UtcNow;
             Apply(groups);
             if (groups.Count > 0)
             {
@@ -1568,6 +1586,17 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         if (_photoCache.Count == 0)
         {
             return;
+        }
+
+        // Drop rows for pictures that are no longer in the library so the file
+        // cannot grow forever.
+        var present = new HashSet<string>(
+            _allItems.Select(item => item.Path),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var stale in _photoCache.Keys.Where(path => !present.Contains(path)).ToList())
+        {
+            _photoCache.Remove(stale);
+            _photoCacheDirty = true;
         }
 
         foreach (var item in _allItems)

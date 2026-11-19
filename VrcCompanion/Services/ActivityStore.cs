@@ -33,6 +33,21 @@ public sealed class ActivityStore
     public ActivityStore(string? path = null)
     {
         _path = string.IsNullOrWhiteSpace(path) ? DefaultPath() : path;
+        if (!string.IsNullOrWhiteSpace(path) || !File.Exists(_path))
+        {
+            // A custom (test) path stays lazy so tests see an empty store.
+            return;
+        }
+
+        // Parse the feed once in the background as the app starts so signing in
+        // does not pay for it on the UI thread.
+        _ = System.Threading.Tasks.Task.Run(() =>
+        {
+            lock (_sync)
+            {
+                LoadFile();
+            }
+        });
     }
 
     public string FilePath => _path;
@@ -87,13 +102,98 @@ public sealed class ActivityStore
                     .OrderByDescending(entry => entry.Timestamp)
                     .Take(MaximumEntries)
                     .ToList();
-                WriteFile(file);
+                // Memory is updated inline so the next read (another view, a
+                // restart test) sees the rows immediately; the 14 MB disk write
+                // happens on a worker thread instead of the UI thread.
+                QueueWrite(file);
             }
             catch (Exception ex)
             {
                 // Losing history must never take the activity feed down.
                 Debug.WriteLine($"activity store save {_path}: {ex.Message}");
             }
+        }
+    }
+
+    private string? _pendingJson;
+    private bool _writing;
+    private Task _writeTask = Task.CompletedTask;
+
+    /// <summary>Serialises the newest snapshot off-thread, coalescing bursts.</summary>
+    private void QueueWrite(StoredFile file)
+    {
+        _pendingJson = JsonSerializer.Serialize(file, JsonOptions);
+        if (_writing)
+        {
+            return;
+        }
+
+        _writing = true;
+        _writeTask = Task.Run(async () =>
+        {
+            while (true)
+            {
+                string? json;
+                lock (_sync)
+                {
+                    json = _pendingJson;
+                    _pendingJson = null;
+                    if (json is null)
+                    {
+                        _writing = false;
+                        return;
+                    }
+                }
+
+                WriteJson(json);
+            }
+        });
+    }
+
+    /// <summary>Completes once every queued write has reached the file.</summary>
+    public async Task FlushAsync()
+    {
+        while (true)
+        {
+            Task pending;
+            lock (_sync)
+            {
+                if (!_writing && _pendingJson is null)
+                {
+                    return;
+                }
+
+                pending = _writeTask;
+            }
+
+            await pending.ConfigureAwait(false);
+        }
+    }
+
+    private void WriteJson(string json)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(_path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var temp = _path + ".tmp";
+            File.WriteAllText(temp, json);
+            File.Move(temp, _path, overwrite: true);
+
+            lock (_sync)
+            {
+                var info = new FileInfo(_path);
+                _cachedLength = info.Exists ? info.Length : -1;
+                _cachedWritten = info.Exists ? info.LastWriteTimeUtc : default;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"activity store write {_path}: {ex.Message}");
         }
     }
 
@@ -151,7 +251,7 @@ public sealed class ActivityStore
                         group => group.Key,
                         group => group.First().Value,
                         StringComparer.Ordinal);
-                WriteFile(file);
+                QueueWrite(file);
             }
             catch (Exception ex)
             {
@@ -165,18 +265,41 @@ public sealed class ActivityStore
         "VrcCompanion",
         "activity.json");
 
+    // The feed file is ~14 MB once it holds months of rows; parsing it for every
+    // read made opening Activity and every bio poll cost hundreds of ms on the
+    // UI thread. The parsed copy is kept until the file itself changes.
+    private StoredFile? _cachedFile;
+    private long _cachedLength = -1;
+    private DateTime _cachedWritten;
+
     private StoredFile LoadFile()
     {
         try
         {
             if (!File.Exists(_path))
             {
-                return new StoredFile();
+                // Keep one empty instance so a save updates what the next read
+                // sees, even before the file exists on disk.
+                _cachedFile ??= new StoredFile();
+                _cachedLength = -1;
+                _cachedWritten = default;
+                return _cachedFile;
+            }
+
+            var info = new FileInfo(_path);
+            if (_cachedFile is not null &&
+                info.Length == _cachedLength &&
+                info.LastWriteTimeUtc == _cachedWritten)
+            {
+                return _cachedFile;
             }
 
             var file = JsonSerializer.Deserialize<StoredFile>(File.ReadAllText(_path), JsonOptions);
             file ??= new StoredFile();
             file.Accounts ??= new Dictionary<string, StoredAccount>(StringComparer.Ordinal);
+            _cachedFile = file;
+            _cachedLength = info.Length;
+            _cachedWritten = info.LastWriteTimeUtc;
             return file;
         }
         catch (Exception ex)
@@ -186,18 +309,7 @@ public sealed class ActivityStore
         }
     }
 
-    private void WriteFile(StoredFile file)
-    {
-        var directory = Path.GetDirectoryName(_path);
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
 
-        var temp = _path + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(file, JsonOptions));
-        File.Move(temp, _path, overwrite: true);
-    }
 
     private sealed class StoredFile
     {

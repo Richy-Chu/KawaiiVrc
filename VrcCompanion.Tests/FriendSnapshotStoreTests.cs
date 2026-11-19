@@ -200,6 +200,10 @@ public sealed class FriendSnapshotStoreTests : IDisposable
         Assert.Contains("detected on next launch", addedRow.TimestampText);
         Assert.Contains("detected on next launch", removedRow.TimestampText);
 
+        // Feed writes now happen on a worker thread so the UI never serialises
+        // the 14 MB file; wait for them before reloading from disk.
+        await feed.FlushSaveAsync();
+
         var reloaded = new ActivityFeedViewModel(api, new ActivityStore(_activityPath));
         reloaded.SetAccount("usr_owner");
         Assert.True(Assert.Single(reloaded.Entries, entry =>
