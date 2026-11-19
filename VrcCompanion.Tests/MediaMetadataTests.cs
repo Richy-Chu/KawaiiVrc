@@ -208,6 +208,55 @@ public class MediaMetadataTests
     }
 
     [Fact]
+    public async Task DropdownsFilterByWorldAndPerson()
+    {
+        var cachePath = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N") + ".json");
+        var inside = Picture("a.png", 10, 30);
+        var insideToo = Picture("b.png", 11, 15);
+        var outside = Picture("c.png", 18, 0);
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · June 2025", "VRChat", new DateTime(2025, 6, 1), new[] { inside, insideToo, outside })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            "C:\\pictures",
+            (_, _) => groups,
+            cachePath: cachePath)
+        {
+            HistoryProvider = () => new[] { Session("s1", JapanId, "Japan Street", 10, 12) }
+        };
+
+        await viewModel.LoadAsync(force: true);
+
+        Assert.Equal("All worlds", viewModel.WorldFilterOptions[0].Label);
+        Assert.Equal("All people", viewModel.PeopleFilterOptions[0].Label);
+        Assert.Same(viewModel.WorldFilterOptions[0], viewModel.SelectedWorldFilter);
+        Assert.Same(viewModel.PeopleFilterOptions[0], viewModel.SelectedPeopleFilter);
+
+        var japan = viewModel.WorldFilterOptions.Single(option => option.Label == "Japan Street");
+        viewModel.SelectedWorldFilter = japan;
+        Assert.True(japan.IsSelected);
+        Assert.Equal(2, viewModel.PictureCount);
+
+        // A person pick replaces the world pick, like the gallery filters.
+        var alice = viewModel.PeopleFilterOptions.Single(option => option.Label == "Alice");
+        viewModel.SelectedPeopleFilter = alice;
+        Assert.Same(viewModel.WorldFilterOptions[0], viewModel.SelectedWorldFilter);
+        Assert.False(japan.IsSelected);
+        Assert.True(alice.IsSelected);
+        Assert.Equal(2, viewModel.PictureCount);
+
+        viewModel.SelectedPeopleFilter = viewModel.PeopleFilterOptions[0];
+        Assert.Equal(3, viewModel.PictureCount);
+        Assert.False(alice.IsSelected);
+
+        viewModel.SelectedWorldFilter = japan;
+        viewModel.SelectedWorldFilter = viewModel.WorldFilterOptions[0];
+        Assert.Equal(3, viewModel.PictureCount);
+        Assert.False(japan.IsSelected);
+    }
+
+    [Fact]
     public async Task ViewerShowsWorldSessionAndPeopleForAPicture()
     {
         var cachePath = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N") + ".json");

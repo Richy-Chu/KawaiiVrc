@@ -80,30 +80,60 @@ public static class PhotoMetadataReader
                 return null;
             }
 
+            // A picture can carry both: VRChat writes XMP, VRCX-0 appends its
+            // own JSON chunk with the instance and the players. Read every text
+            // chunk and merge them, otherwise the first one hides the players.
+            VrcPhotoMetadata? json = null;
+            VrcPhotoMetadata? xmp = null;
             foreach (var text in ReadTextChunks(bytes))
             {
-                var fromJson = TryReadJson(text);
-                if (fromJson is not null)
+                json ??= TryReadJson(text);
+                xmp ??= TryReadXmp(text);
+                if (json is not null && xmp is not null)
                 {
-                    return fromJson;
-                }
-
-                var fromXmp = TryReadXmp(text);
-                if (fromXmp is not null)
-                {
-                    return fromXmp;
+                    break;
                 }
             }
 
             // JPEG (and anything else) keeps the XMP packet as plain text; the
             // PNG chunk loop above does not apply, so look for the packet.
-            return TryReadXmp(Encoding.UTF8.GetString(bytes));
+            xmp ??= TryReadXmp(Encoding.UTF8.GetString(bytes));
+
+            return Merge(json, xmp);
         }
         catch (Exception)
         {
             return null;
         }
     }
+
+    /// <summary>JSON (VRCX) wins where it has data; XMP fills the rest.</summary>
+    private static VrcPhotoMetadata? Merge(VrcPhotoMetadata? json, VrcPhotoMetadata? xmp)
+    {
+        if (json is null)
+        {
+            return xmp;
+        }
+
+        if (xmp is null)
+        {
+            return json;
+        }
+
+        return new VrcPhotoMetadata
+        {
+            WorldId = FirstNonEmpty(json.WorldId, xmp.WorldId),
+            WorldName = FirstNonEmpty(json.WorldName, xmp.WorldName),
+            InstanceId = FirstNonEmpty(json.InstanceId, xmp.InstanceId),
+            AuthorId = FirstNonEmpty(json.AuthorId, xmp.AuthorId),
+            AuthorName = FirstNonEmpty(json.AuthorName, xmp.AuthorName),
+            TakenAt = json.TakenAt ?? xmp.TakenAt,
+            Players = json.Players.Count > 0 ? json.Players : xmp.Players
+        };
+    }
+
+    private static string FirstNonEmpty(string first, string second)
+        => string.IsNullOrWhiteSpace(first) ? second : first;
 
     private static byte[] ReadHead(Stream stream)
     {

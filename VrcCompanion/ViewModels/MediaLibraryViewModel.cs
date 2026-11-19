@@ -27,7 +27,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private readonly Action<string> _openPath;
     private readonly string _cachePath;
     private const int PageSize = 48;
-    private const int MaximumFilterChips = 14;
+    // The dropdowns scroll, so a session with a big roster is still filterable.
+    private const int MaximumFilterChips = 60;
 
     private bool _loaded;
     private bool _isBusy;
@@ -35,6 +36,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private int _pageGeneration;
     private CancellationTokenSource? _viewerHydration;
     private MediaContext? _photoContext;
+    private MediaFilterOption? _selectedWorldFilter;
+    private MediaFilterOption? _selectedPeopleFilter;
     private int _foundCount;
     private string? _errorMessage;
     private MediaItem? _selectedMedia;
@@ -97,6 +100,24 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public ObservableCollection<MediaFilterOption> WorldFilters { get; } = new();
 
     public ObservableCollection<MediaFilterOption> PeopleFilters { get; } = new();
+
+    /// <summary>What the world dropdown lists: "All worlds" first, then each world.</summary>
+    public ObservableCollection<MediaFilterOption> WorldFilterOptions { get; } = new();
+
+    /// <summary>What the person dropdown lists: "All people" first, then each person.</summary>
+    public ObservableCollection<MediaFilterOption> PeopleFilterOptions { get; } = new();
+
+    public MediaFilterOption? SelectedWorldFilter
+    {
+        get => _selectedWorldFilter;
+        set => SelectWorldFilter(value);
+    }
+
+    public MediaFilterOption? SelectedPeopleFilter
+    {
+        get => _selectedPeopleFilter;
+        set => SelectPeopleFilter(value);
+    }
 
     /// <summary>
     /// The fixed 48 card slots used by the page. Cards are reused across pages
@@ -907,9 +928,27 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             _personFilterKey = string.Empty;
         }
 
+        RebuildFilterOptions();
         SyncFilterSelection();
         OnPropertyChanged(nameof(HasWorldFilters));
         OnPropertyChanged(nameof(HasPeopleFilters));
+    }
+
+    private void RebuildFilterOptions()
+    {
+        WorldFilterOptions.Clear();
+        WorldFilterOptions.Add(new MediaFilterOption(string.Empty, "All worlds", string.Empty, TotalPictureCount));
+        foreach (var option in WorldFilters)
+        {
+            WorldFilterOptions.Add(option);
+        }
+
+        PeopleFilterOptions.Clear();
+        PeopleFilterOptions.Add(new MediaFilterOption(string.Empty, "All people", string.Empty, TotalPictureCount));
+        foreach (var option in PeopleFilters)
+        {
+            PeopleFilterOptions.Add(option);
+        }
     }
 
     private void SyncFilterSelection()
@@ -923,6 +962,72 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         {
             option.IsSelected = string.Equals(option.Key, _personFilterKey, StringComparison.OrdinalIgnoreCase);
         }
+
+        var world = WorldFilterOptions.FirstOrDefault(option =>
+                        string.Equals(option.Key, _worldFilterKey, StringComparison.OrdinalIgnoreCase))
+                    ?? WorldFilterOptions.FirstOrDefault();
+        if (!ReferenceEquals(_selectedWorldFilter, world))
+        {
+            _selectedWorldFilter = world;
+            OnPropertyChanged(nameof(SelectedWorldFilter));
+        }
+
+        var person = PeopleFilterOptions.FirstOrDefault(option =>
+                         string.Equals(option.Key, _personFilterKey, StringComparison.OrdinalIgnoreCase))
+                     ?? PeopleFilterOptions.FirstOrDefault();
+        if (!ReferenceEquals(_selectedPeopleFilter, person))
+        {
+            _selectedPeopleFilter = person;
+            OnPropertyChanged(nameof(SelectedPeopleFilter));
+        }
+    }
+
+    private void SelectWorldFilter(MediaFilterOption? option)
+    {
+        if (ReferenceEquals(_selectedWorldFilter, option))
+        {
+            return;
+        }
+
+        _selectedWorldFilter = option;
+        OnPropertyChanged(nameof(SelectedWorldFilter));
+        var key = option?.Key ?? string.Empty;
+        if (string.Equals(_worldFilterKey, key, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _worldFilterKey = key;
+        if (key.Length > 0)
+        {
+            _personFilterKey = string.Empty;
+        }
+
+        ApplyFilters();
+    }
+
+    private void SelectPeopleFilter(MediaFilterOption? option)
+    {
+        if (ReferenceEquals(_selectedPeopleFilter, option))
+        {
+            return;
+        }
+
+        _selectedPeopleFilter = option;
+        OnPropertyChanged(nameof(SelectedPeopleFilter));
+        var key = option?.Key ?? string.Empty;
+        if (string.Equals(_personFilterKey, key, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _personFilterKey = key;
+        if (key.Length > 0)
+        {
+            _worldFilterKey = string.Empty;
+        }
+
+        ApplyFilters();
     }
 
     private static string WorldKeyFor(string? worldId, string? worldName) =>

@@ -2,6 +2,131 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:controls="clr-namespace:VrcCompanion.Controls">
 
+    <!-- One row in the world/person filter dropdowns. -->
+    <DataTemplate x:Key="MediaFilterOptionTemplate">
+        <StackPanel Orientation="Horizontal" Margin="2,1">
+            <Border Width="20" Height="20"
+                    CornerRadius="6"
+                    ClipToBounds="True"
+                    Background="{StaticResource InputBrush}"
+                    VerticalAlignment="Center">
+                <Grid>
+                    <TextBlock Text="{Binding Initial}"
+                               FontSize="8.5"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource MutedBrush}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                    <controls:AsyncImage SourceUrl="{Binding ImageUrl}"
+                                         DecodeWidth="48"
+                                         CornerRadius="6" />
+                </Grid>
+            </Border>
+            <TextBlock Text="{Binding Label}"
+                       FontSize="11"
+                       Foreground="{StaticResource TextBrush}"
+                       VerticalAlignment="Center"
+                       Margin="8,0,0,0"
+                       MaxWidth="190"
+                       TextTrimming="CharacterEllipsis" />
+            <TextBlock Text="{Binding CountText}"
+                       FontSize="9.5"
+                       Foreground="{StaticResource MutedBrush}"
+                       VerticalAlignment="Center"
+                       Margin="7,0,0,0" />
+        </StackPanel>
+    </DataTemplate>
+
+    <!-- Dropdown row in the filter popup. -->
+    <Style x:Key="MediaFilterComboItem" TargetType="ComboBoxItem">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Row"
+                            Background="Transparent"
+                            CornerRadius="7"
+                            Padding="6,4">
+                        <ContentPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Row" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Row" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Compact dark dropdown used by the Media filter bar. -->
+    <Style x:Key="MediaFilterCombo" TargetType="ComboBox">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Height" Value="30" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource MediaFilterComboItem}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton Focusable="False"
+                                      ClickMode="Press"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="{StaticResource InputBrush}"
+                                            BorderBrush="{StaticResource SoftBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="9,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <ContentPresenter Grid.Column="0"
+                                                              Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                              ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                              VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="&#xE70D;"
+                                                       FontFamily="Segoe MDL2 Assets"
+                                                       FontSize="9"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       VerticalAlignment="Center"
+                                                       Margin="6,0,0,0" />
+                                        </Grid>
+                                    </Border>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <Popup x:Name="PART_Popup"
+                               IsOpen="{TemplateBinding IsDropDownOpen}"
+                               Placement="Bottom"
+                               AllowsTransparency="True"
+                               Focusable="False"
+                               PopupAnimation="Slide">
+                            <Border Background="{StaticResource PanelBrush}"
+                                    BorderBrush="{StaticResource SoftBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="4"
+                                    Margin="0,4,0,0"
+                                    MinWidth="{TemplateBinding ActualWidth}"
+                                    MaxHeight="320">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <StackPanel IsItemsHost="True" />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- A world or player chip in the Media filter bar. -->
     <Style x:Key="MediaFilterChip" TargetType="Button" BasedOn="{StaticResource ChipButton}">
         <Setter Property="Padding" Value="9,5" />

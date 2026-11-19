@@ -75,6 +75,15 @@ public class MediaViewerRenderTests
                 WaitUntil(() => !media.IsBusy && media.PictureCount == 1, "Media page did not load.");
 
                 Assert.Single(media.Groups);
+
+                // The filters are dropdowns now, and both list the world/person.
+                var filters = FindChildren<System.Windows.Controls.ComboBox>(window).ToList();
+                Assert.True(filters.Count >= 2, $"expected two filter dropdowns, found {filters.Count}");
+                Assert.Contains(filters, box => box.Items.Count >= 2 &&
+                    box.Items.Cast<MediaFilterOption>().Any(option => option.Label == "Japan Street"));
+                Assert.Contains(filters, box => box.Items.Count >= 2 &&
+                    box.Items.Cast<MediaFilterOption>().Any(option => option.Label == "Alice"));
+
                 media.OpenViewer(media.Groups[0].Items[0]);
                 Assert.True(media.IsViewerOpen, "The viewer did not open.");
                 WaitUntil(

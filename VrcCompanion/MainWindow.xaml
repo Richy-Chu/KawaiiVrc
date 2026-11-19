@@ -6091,113 +6091,27 @@
                                    Margin="2,7,0,0"
                                    Visibility="{Binding MediaViewModel.HasFilterSummary, Converter={StaticResource BoolToVis}}" />
 
-                        <TextBlock Text="WORLDS"
-                                   Style="{StaticResource FieldLabel}"
-                                   Margin="2,10,0,6"
-                                   Visibility="{Binding MediaViewModel.HasWorldFilters, Converter={StaticResource BoolToVis}}" />
-                        <ItemsControl ItemsSource="{Binding MediaViewModel.WorldFilters}"
-                                      Visibility="{Binding MediaViewModel.HasWorldFilters, Converter={StaticResource BoolToVis}}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <WrapPanel />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Button Style="{StaticResource MediaFilterChip}"
-                                            Margin="0,0,7,6"
-                                            Command="{Binding DataContext.MediaViewModel.ToggleWorldFilterCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            CommandParameter="{Binding}"
-                                            ToolTip="{Binding Label}">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Border Width="18" Height="18"
-                                                    CornerRadius="5"
-                                                    ClipToBounds="True"
-                                                    Background="{StaticResource InputBrush}"
-                                                    VerticalAlignment="Center">
-                                                <Grid>
-                                                    <TextBlock Text="&#xE909;"
-                                                               FontFamily="Segoe MDL2 Assets"
-                                                               FontSize="8"
-                                                               Foreground="{StaticResource MutedBrush}"
-                                                               HorizontalAlignment="Center"
-                                                               VerticalAlignment="Center" />
-                                                    <controls:AsyncImage SourceUrl="{Binding ImageUrl}"
-                                                                         DecodeWidth="48"
-                                                                         CornerRadius="5" />
-                                                </Grid>
-                                            </Border>
-                                            <TextBlock Text="{Binding Label}"
-                                                       FontSize="10.5"
-                                                       FontWeight="SemiBold"
-                                                       VerticalAlignment="Center"
-                                                       Margin="6,0,0,0"
-                                                       MaxWidth="150"
-                                                       TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{Binding CountText}"
-                                                       FontSize="9.5"
-                                                       Foreground="{StaticResource MutedBrush}"
-                                                       VerticalAlignment="Center"
-                                                       Margin="6,0,0,0" />
-                                        </StackPanel>
-                                    </Button>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                                <TextBlock Text="WORLD" Style="{StaticResource FieldLabel}" Margin="2,0,0,5" />
+                                <ComboBox Style="{StaticResource MediaFilterCombo}"
+                                          ItemsSource="{Binding MediaViewModel.WorldFilterOptions}"
+                                          ItemTemplate="{StaticResource MediaFilterOptionTemplate}"
+                                          SelectedItem="{Binding MediaViewModel.SelectedWorldFilter, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                <TextBlock Text="PERSON" Style="{StaticResource FieldLabel}" Margin="2,0,0,5" />
+                                <ComboBox Style="{StaticResource MediaFilterCombo}"
+                                          ItemsSource="{Binding MediaViewModel.PeopleFilterOptions}"
+                                          ItemTemplate="{StaticResource MediaFilterOptionTemplate}"
+                                          SelectedItem="{Binding MediaViewModel.SelectedPeopleFilter, Mode=TwoWay}" />
+                            </StackPanel>
+                        </Grid>
 
-                        <TextBlock Text="PEOPLE"
-                                   Style="{StaticResource FieldLabel}"
-                                   Margin="2,8,0,6"
-                                   Visibility="{Binding MediaViewModel.HasPeopleFilters, Converter={StaticResource BoolToVis}}" />
-                        <ItemsControl ItemsSource="{Binding MediaViewModel.PeopleFilters}"
-                                      Visibility="{Binding MediaViewModel.HasPeopleFilters, Converter={StaticResource BoolToVis}}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <WrapPanel />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Button Style="{StaticResource MediaFilterChip}"
-                                            Margin="0,0,7,6"
-                                            Command="{Binding DataContext.MediaViewModel.TogglePersonFilterCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            CommandParameter="{Binding}"
-                                            ToolTip="{Binding Label}">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Border Width="18" Height="18"
-                                                    CornerRadius="9"
-                                                    ClipToBounds="True"
-                                                    Background="{StaticResource InputBrush}"
-                                                    VerticalAlignment="Center">
-                                                <Grid>
-                                                    <TextBlock Text="{Binding Initial}"
-                                                               FontSize="8"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="{StaticResource MutedBrush}"
-                                                               HorizontalAlignment="Center"
-                                                               VerticalAlignment="Center" />
-                                                    <controls:AsyncImage SourceUrl="{Binding ImageUrl}"
-                                                                         DecodeWidth="48"
-                                                                         CornerRadius="9" />
-                                                </Grid>
-                                            </Border>
-                                            <TextBlock Text="{Binding Label}"
-                                                       FontSize="10.5"
-                                                       FontWeight="SemiBold"
-                                                       VerticalAlignment="Center"
-                                                       Margin="6,0,0,0"
-                                                       MaxWidth="150"
-                                                       TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{Binding CountText}"
-                                                       FontSize="9.5"
-                                                       Foreground="{StaticResource MutedBrush}"
-                                                       VerticalAlignment="Center"
-                                                       Margin="6,0,0,0" />
-                                        </StackPanel>
-                                    </Button>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
                     </StackPanel>
                 </Border>
 

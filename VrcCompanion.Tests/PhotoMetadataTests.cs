@@ -33,7 +33,7 @@ public class PhotoMetadataTests
 """;
 
     private static string Json(string instanceId) => $$"""
-{"application":"VRCX","version":1,"author":{"id":"usr_61cc28f3-76ea-41b4-a9da-ede327ef3703","displayName":"RichyTru"},"world":{"name":"Anthro Heat Lockers and Sauna","id":"{{JapanId}}","instanceId":"{{instanceId}}"},"players":[{"id":"usr_a","displayName":"Alice"},{"id":"usr_b","displayName":"Bob"}]}
+{"application":"VRCX-0","version":1,"author":{"id":"usr_61cc28f3-76ea-41b4-a9da-ede327ef3703","displayName":"ЯichψTru"},"world":{"name":"Anthro Heat Lockers and Sauna","id":"{{JapanId}}","instanceId":"{{instanceId}}"},"players":[{"id":"usr_a","displayName":"Alice"},{"id":"usr_b","displayName":"Bob"}]}
 """;
 
     [Fact]
@@ -55,11 +55,34 @@ public class PhotoMetadataTests
     }
 
     [Fact]
+    public void MergesVrchatAndVrcxChunksInTheSamePicture()
+    {
+        // This is what a real VRCX-0 photo looks like: VRChat's XMP chunk first,
+        // then VRCX's own chunk with the instance and the players.
+        var path = WritePng(
+            "merged",
+            new[]
+            {
+                ("XML:com.adobe.xmp", Xmp),
+                ("Description", Json($"{JapanId}:12345~group({GroupId})~groupAccessType(plus)"))
+            });
+
+        var metadata = PhotoMetadataReader.Read(path);
+
+        Assert.NotNull(metadata);
+        Assert.Equal(JapanId, metadata!.WorldId);
+        Assert.Equal("Anthro Heat Lockers and Sauna", metadata.WorldName);
+        Assert.Equal("ЯichψTru", metadata.AuthorName);
+        Assert.Contains("groupAccessType(plus)", metadata.InstanceId, StringComparison.Ordinal);
+        Assert.Equal(new[] { "Alice", "Bob" }, metadata.Players.Select(player => player.DisplayName));
+    }
+
+    [Fact]
     public void ReadsTheMetadataVrcxWritesIncludingPlayers()
     {
         var path = WritePng(
             "vrcx",
-            "VRCX",
+            "Description",
             Json($"{JapanId}:12345~group({GroupId})~groupAccessType(public)"));
 
         var metadata = PhotoMetadataReader.Read(path);
@@ -87,9 +110,7 @@ public class PhotoMetadataTests
         var picturePath = Path.Combine(root, "VRChat_2026-11-06_23-23-27.108_1920x1080.png");
         File.WriteAllBytes(
             picturePath,
-            BuildPng(
-                "VRCX",
-                Json($"{JapanId}:12345~group({GroupId})~groupAccessType(public)")));
+            BuildPng(("Description", Json($"{JapanId}:12345~group({GroupId})~groupAccessType(public)"))));
 
         var picture = new MediaItem(picturePath, "VRChat", new DateTime(2026, 11, 6, 23, 23, 27));
         var groups = new[]
@@ -130,16 +151,19 @@ public class PhotoMetadataTests
     }
 
     private static string WritePng(string name, string keyword, string text)
+        => WritePng(name, new[] { (keyword, text) });
+
+    private static string WritePng(string name, (string Keyword, string Text)[] chunks)
     {
         var root = Path.Combine(Path.GetTempPath(), "VrcPhotoMetadata", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var path = Path.Combine(root, name + ".png");
-        File.WriteAllBytes(path, BuildPng(keyword, text));
+        File.WriteAllBytes(path, BuildPng(chunks));
         return path;
     }
 
-    /// <summary>A minimal PNG whose only text lives in one iTXt chunk.</summary>
-    private static byte[] BuildPng(string keyword, string text)
+    /// <summary>A minimal PNG whose text lives in one or more iTXt chunks.</summary>
+    private static byte[] BuildPng(params (string Keyword, string Text)[] chunks)
     {
         using var output = new MemoryStream();
         output.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
@@ -151,11 +175,14 @@ public class PhotoMetadataTests
         header[9] = 6;
         WriteChunk(output, "IHDR", header);
 
-        var payload = new List<byte>();
-        payload.AddRange(Encoding.UTF8.GetBytes(keyword));
-        payload.AddRange(new byte[] { 0, 0, 0, 0, 0 });
-        payload.AddRange(Encoding.UTF8.GetBytes(text));
-        WriteChunk(output, "iTXt", payload.ToArray());
+        foreach (var (keyword, text) in chunks)
+        {
+            var payload = new List<byte>();
+            payload.AddRange(Encoding.UTF8.GetBytes(keyword));
+            payload.AddRange(new byte[] { 0, 0, 0, 0, 0 });
+            payload.AddRange(Encoding.UTF8.GetBytes(text));
+            WriteChunk(output, "iTXt", payload.ToArray());
+        }
 
         WriteChunk(output, "IEND", Array.Empty<byte>());
         return output.ToArray();
