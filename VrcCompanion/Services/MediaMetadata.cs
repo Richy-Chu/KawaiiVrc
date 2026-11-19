@@ -250,6 +250,41 @@ public sealed class MediaContext
             ? "Read from the picture itself: VRChat saved the world, VRCX saved the players."
             : "Read from the picture itself: VRChat saved the world and author, but VRCX saved no player list.";
 
+    /// <summary>
+    /// A logged session can be reopened in the history popup, and so can a
+    /// picture's own metadata: the photo supplies the world, time and roster.
+    /// </summary>
+    public bool CanOpenSessionView => HasSession || (IsPhotoMetadata && HasWorld);
+
+    /// <summary>Packages the context as a history row the popup can display.</summary>
+    public InstanceHistoryEntry ToHistoryEntry()
+    {
+        var instanceId = string.IsNullOrWhiteSpace(Location)
+            ? string.Empty
+            : LaunchService.GetInstanceIdFromLocation(Location) ?? string.Empty;
+
+        return new InstanceHistoryEntry
+        {
+            Id = SessionId,
+            Location = Location,
+            WorldId = WorldId,
+            InstanceId = instanceId,
+            WorldName = WorldName,
+            WorldThumbnailUrl = WorldThumbnailUrl,
+            WorldAuthorName = WorldAuthorName,
+            JoinedAt = JoinedAt,
+            LeftAt = LeftAt ?? LastSeenAt,
+            LastSeenAt = LastSeenAt,
+            Players = People
+                .Select(person => new InstanceHistoryPlayer
+                {
+                    UserId = person.UserId,
+                    DisplayName = person.DisplayName
+                })
+                .ToList()
+        };
+    }
+
     public bool HasPeople => People.Count > 0;
 
     public string PeopleCountText => People.Count switch

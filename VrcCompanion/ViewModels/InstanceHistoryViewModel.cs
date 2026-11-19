@@ -279,6 +279,55 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
         _ = SelectSessionAsync(sessionId ?? string.Empty, location ?? string.Empty, joinedAt);
     }
 
+    /// <summary>
+    /// Opens the popup on a session that only exists inside a picture. The row
+    /// is built from the photo's metadata and lives only this once.
+    /// </summary>
+    public void ShowPhotoSession(InstanceHistoryEntry entry)
+    {
+        if (entry is null)
+        {
+            return;
+        }
+
+        Show();
+        var item = new InstanceHistoryItem(
+            entry,
+            _accountUserId ?? string.Empty,
+            launch: null,
+            openInGame: null,
+            selfInvite: _ => Task.CompletedTask,
+            copyInstanceId: _ => { },
+            delete: _ => { },
+            open: _ => { },
+            openPlayer: PlayerProfileRequested);
+        _ = ShowPhotoSessionAsync(item);
+    }
+
+    private async Task ShowPhotoSessionAsync(InstanceHistoryItem item)
+    {
+        // Show() starts a refresh that clears the list, so wait it out first.
+        for (var attempt = 0; attempt < 50 && IsOpen; attempt++)
+        {
+            if (!IsLoading)
+            {
+                break;
+            }
+
+            await Task.Delay(100);
+        }
+
+        if (!IsOpen)
+        {
+            return;
+        }
+
+        _entries.Insert(0, item);
+        OnEntryStateChanged();
+        SelectedEntry = item;
+        IsPlayersTab = true;
+    }
+
     private async Task SelectSessionAsync(string sessionId, string location, DateTimeOffset joinedAt)
     {
         // Rows are rebuilt from SQLite asynchronously, so wait for the refresh

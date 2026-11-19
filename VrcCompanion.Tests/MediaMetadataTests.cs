@@ -50,6 +50,22 @@ public class MediaMetadataTests
     }
 
     [Fact]
+    public void ContextBecomesAHistoryRowForTheSessionPopup()
+    {
+        var session = Session("s1", JapanId, "Japan Street", 10, 12);
+        var context = MediaMetadataResolver.FindContext(Picture("row.png", 11, 0).TakenAt, new[] { session }, AccountId)!;
+
+        var entry = context.ToHistoryEntry();
+
+        Assert.Equal(context.Location, entry.Location);
+        Assert.Equal(JapanId, entry.WorldId);
+        Assert.Equal("12345", entry.InstanceId);
+        Assert.Equal(context.JoinedAt, entry.JoinedAt);
+        Assert.Equal(new[] { "Me", "Alice", "Bob" }, entry.Players.Select(player => player.DisplayName));
+        Assert.True(context.CanOpenSessionView);
+    }
+
+    [Fact]
     public void SessionListOnlyKeepsPlayersWhoWereThereForThePicture()
     {
         var session = Session("s1", JapanId, "Japan Street", 20, 23);

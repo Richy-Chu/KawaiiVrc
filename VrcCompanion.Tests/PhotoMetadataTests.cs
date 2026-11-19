@@ -140,7 +140,8 @@ public class PhotoMetadataTests
         Assert.Equal("Kawaii Club", viewModel.ViewerGroupName);
         Assert.StartsWith("Taken ", viewModel.ViewerSessionText);
         Assert.Equal("PHOTO", viewModel.ViewerSessionTitle);
-        Assert.False(viewModel.CanOpenViewerSession);
+        // The photo carries the world, so its session card can be opened.
+        Assert.True(viewModel.CanOpenViewerSession);
         Assert.True(viewModel.ViewerShowsPhotoNote);
         Assert.Equal("Read from the picture itself: VRChat saved the world, VRCX saved the players.", viewModel.ViewerContextNote);
         Assert.True(viewModel.ViewerShowsPeopleCount);
@@ -172,11 +173,44 @@ public class PhotoMetadataTests
 
         Assert.Equal("PHOTO", viewModel.ViewerSessionTitle);
         Assert.StartsWith("Taken ", viewModel.ViewerSessionText);
-        Assert.False(viewModel.CanOpenViewerSession);
+        // Opening the session card shows the world and time from the file.
+        Assert.True(viewModel.CanOpenViewerSession);
         Assert.True(viewModel.ViewerShowsNoPlayers);
         Assert.False(viewModel.ViewerShowsPeopleCount);
         Assert.Equal("VRCX didn't save who was there for this picture.", viewModel.ViewerNoPlayersText);
         Assert.Contains("no player list", viewModel.ViewerContextNote);
+    }
+
+    [Fact]
+    public async Task ViewerBorrowsPlayersFromAnotherShotOfTheSameWorldLaterThatDay()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        // Three hours into the same PokoPoko session one shot got VRCX's chunk.
+        var withPlayers = Path.Combine(root, "VRChat_2026-10-28_21-40-00.000_2560x1440.png");
+        File.WriteAllBytes(
+            withPlayers,
+            BuildPng(("Description", Json($"{JapanId}:12345~groupAccessType(public)"))));
+        var xmpOnly = Path.Combine(root, "VRChat_2026-10-28_18-47-46.273_2560x1440.png");
+        File.WriteAllBytes(xmpOnly, BuildPng(("XML:com.adobe.xmp", Xmp)));
+
+        var picture = new MediaItem(xmpOnly, "VRChat", new DateTime(2026, 10, 28, 18, 47, 46));
+        var later = new MediaItem(withPlayers, "VRChat", new DateTime(2026, 10, 28, 21, 40, 0));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · October 2026", "VRChat", new DateTime(2026, 10, 1), new[] { picture, later })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"));
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(picture);
+
+        Assert.Equal(new[] { "Alice", "Bob" }, viewModel.ViewerPeople.Select(person => person.DisplayName));
+        Assert.Equal("Anthro Heat Lockers and Sauna", viewModel.ViewerWorldName);
     }
 
     [Fact]

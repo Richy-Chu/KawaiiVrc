@@ -446,7 +446,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public string ViewerNoPlayersText => ViewerContext?.NoPlayersText
         ?? "No players were recorded for this session.";
 
-    public bool CanOpenViewerSession => ViewerContext?.HasSession == true;
+    public bool CanOpenViewerSession => ViewerContext?.CanOpenSessionView == true;
 
     public IReadOnlyList<MediaPersonItem> ViewerPeople =>
         ViewerContext?.People ?? (IReadOnlyList<MediaPersonItem>)Array.Empty<MediaPersonItem>();
@@ -582,6 +582,29 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
             .Take(16);
 
+        var nearby = ClosestWithPlayers(candidates, own);
+        if (nearby is not null)
+        {
+            return nearby;
+        }
+
+        // Long sessions matter too: one shot may carry the VRCX chunk while the
+        // rest have only VRChat's world, so widen to the same world that day.
+        return own is { HasWorld: true }
+            ? ClosestWithPlayers(
+                _allItems
+                    .Where(other =>
+                        !string.Equals(other.Path, item.Path, StringComparison.Ordinal) &&
+                        string.Equals(Path.GetDirectoryName(other.Path), folder, StringComparison.OrdinalIgnoreCase) &&
+                        Math.Abs((other.TakenAt - item.TakenAt).TotalHours) <= 6)
+                    .OrderBy(other => Math.Abs((other.TakenAt - item.TakenAt).TotalMinutes))
+                    .Take(48),
+                own)
+            : null;
+    }
+
+    private static VrcPhotoMetadata? ClosestWithPlayers(IEnumerable<MediaItem> candidates, VrcPhotoMetadata? own)
+    {
         foreach (var candidate in candidates)
         {
             var metadata = candidate.EmbeddedMetadata;

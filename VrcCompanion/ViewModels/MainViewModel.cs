@@ -515,7 +515,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             context => context is { HasWorld: true } && !IsBusy));
         OpenMediaSessionCommand = Track(new RelayCommand<MediaContext>(
             OpenMediaSession,
-            context => context is { HasSession: true }));
+            context => context is { CanOpenSessionView: true }));
         OpenMediaGroupCommand = Track(new RelayCommand<MediaContext>(
             OpenMediaGroup,
             context => context is { CanOpenGroup: true }));
@@ -5791,13 +5791,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private void OpenMediaSession(MediaContext? context)
     {
-        if (context is null || InstanceHistoryViewModel is null || !context.HasSession)
+        if (context is null || InstanceHistoryViewModel is null || !context.CanOpenSessionView)
         {
             return;
         }
 
         ProfileZIndex = 30;
-        InstanceHistoryViewModel.ShowSession(context.SessionId, context.Location, context.JoinedAt);
+        if (context.HasSession)
+        {
+            InstanceHistoryViewModel.ShowSession(context.SessionId, context.Location, context.JoinedAt);
+            return;
+        }
+
+        // The picture carried the world, instance and roster itself; show that
+        // as a session card even though no log row exists for it.
+        InstanceHistoryViewModel.ShowPhotoSession(context.ToHistoryEntry());
     }
 
     private void OpenContinuitySession(ContinuitySessionItem session)
