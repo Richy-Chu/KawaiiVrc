@@ -45,6 +45,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     private int _checkedFriendCount;
     private readonly HashSet<string> _profileAvatarLookups = new(StringComparer.Ordinal);
     private readonly HashSet<string> _loggedAvatarLookups = new(StringComparer.Ordinal);
+    // Avatar ids whose name the API has already answered for this session, and
+    // avatar images the community index already failed to match. Both stop a
+    // long timeline from asking the same question on every refresh.
+    private readonly Dictionary<string, string?> _resolvedAvatarNames = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _unresolvedAvatarImages = new(StringComparer.Ordinal);
+    private const int MaxAvatarNameLookupsPerPass = 24;
+    private const int MaxUnresolvedAvatarImages = 4_000;
     private Dictionary<string, BioBaseline> _bioBaselines = new(StringComparer.Ordinal);
     private VrcUser? _previousSelfUser;
 
@@ -317,6 +324,8 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         CheckedFriendCount = 0;
         _profileAvatarLookups.Clear();
         _loggedAvatarLookups.Clear();
+        _resolvedAvatarNames.Clear();
+        _unresolvedAvatarImages.Clear();
         _previousFriends = null;
         _previousSelfUser = null;
         _bioBaselines = _accountId is null
@@ -345,6 +354,8 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         CheckedFriendCount = 0;
         _profileAvatarLookups.Clear();
         _loggedAvatarLookups.Clear();
+        _resolvedAvatarNames.Clear();
+        _unresolvedAvatarImages.Clear();
         _bioBaselines = new Dictionary<string, BioBaseline>(StringComparer.Ordinal);
         _allEntries = new List<ActivityEntry>();
         _previousFriends = null;
@@ -1686,30 +1697,52 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 unresolved.AvatarAuthor);
         }
 
-        foreach (var entry in avatarEntries.Where(entry => entry.HasAvatar))
+        // Ask the API only for the avatars this feed is still missing a name
+        // for. This loop used to call GetAvatarAsync once per avatar row on
+        // every refresh, so a deep timeline fired hundreds of requests for names
+        // it already had. Group by id, remember the answers, and spend at most a
+        // bounded number of lookups per pass.
+        var pendingNames = avatarEntries
+            .Where(entry => entry.HasAvatar &&
+                            !entry.HasAvatarName &&
+                            !_resolvedAvatarNames.ContainsKey(entry.AvatarId))
+            .GroupBy(entry => entry.AvatarId, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Max(entry => entry.Timestamp))
+            .Take(MaxAvatarNameLookupsPerPass)
+            .ToList();
+
+        foreach (var group in pendingNames)
         {
-            if (!names.TryGetValue(entry.AvatarId, out var name))
+            if (!_resolvedAvatarNames.TryGetValue(group.Key, out var name) ||
+                string.IsNullOrWhiteSpace(name))
             {
-                name = null;
-            }
-
-            try
-            {
-                var avatar = await _api.GetAvatarAsync(entry.AvatarId);
-                if (!string.IsNullOrWhiteSpace(avatar?.Name))
+                if (!names.TryGetValue(group.Key, out name) || string.IsNullOrWhiteSpace(name))
                 {
-                    name = avatar.Name;
+                    name = null;
+                    try
+                    {
+                        name = (await _api.GetAvatarAsync(group.Key))?.Name;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine(ex);
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine(ex);
+
+                _resolvedAvatarNames[group.Key] = name;
             }
 
-            names[entry.AvatarId] = name;
-            var before = entry.Details;
-            entry.SetAvatarName(name);
-            changed |= !string.Equals(before, entry.Details, StringComparison.Ordinal);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            foreach (var entry in group)
+            {
+                var before = entry.Details;
+                entry.SetAvatarName(name);
+                changed |= !string.Equals(before, entry.Details, StringComparison.Ordinal);
+            }
         }
 
         if (changed)
@@ -1811,6 +1844,11 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     {
         var pending = entries
             .Where(entry => !entry.HasAvatar && entry.HasAvatarImage)
+            .Where(entry =>
+            {
+                var fileId = ImageUrlHelper.ExtractFileId(entry.AvatarUrl);
+                return string.IsNullOrWhiteSpace(fileId) || !_unresolvedAvatarImages.Contains(fileId);
+            })
             .ToList();
         if (pending.Count == 0)
         {
@@ -1841,12 +1879,12 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 var avatar = await _api.ResolveCommunityAvatarByImageAsync(
                     lookup.Value.Url,
                     lookup.Value.UserId);
-                return (lookup.Key, Avatar: avatar);
+                return (lookup.Key, Avatar: avatar, Failed: false);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
-                return (lookup.Key, Avatar: (Avatar?)null);
+                return (lookup.Key, Avatar: (Avatar?)null, Failed: true);
             }
             finally
             {
@@ -1859,6 +1897,19 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             .Where(result => result.Avatar is not null &&
                              !string.IsNullOrWhiteSpace(result.Avatar.Id))
             .ToDictionary(result => result.Key, result => result.Avatar!, StringComparer.Ordinal);
+
+        // A clean "no match" is final for this session; a failed request is not,
+        // so it is retried on the next refresh.
+        if (_unresolvedAvatarImages.Count < MaxUnresolvedAvatarImages)
+        {
+            foreach (var result in resolved)
+            {
+                if (!result.Failed && result.Avatar is null)
+                {
+                    _unresolvedAvatarImages.Add(result.Key);
+                }
+            }
+        }
 
         var changed = false;
         foreach (var entry in pending)
