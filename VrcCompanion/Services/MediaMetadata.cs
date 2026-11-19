@@ -316,17 +316,38 @@ public static class MediaMetadataResolver
             }
         }
 
-        return match is null ? null : Describe(match, accountUserId, groupLookup);
+        return match is null ? null : Describe(match, accountUserId, groupLookup, takenAtLocal);
     }
 
     public static MediaContext Describe(
         InstanceHistoryEntry session,
         string? accountUserId,
-        Func<string, (string? Name, string? IconUrl)>? groupLookup = null)
+        Func<string, (string? Name, string? IconUrl)>? groupLookup = null,
+        DateTime? atLocal = null)
     {
+        // VRCX shows the people who were in the instance when the picture was
+        // taken, not everyone who visited during a long session.
+        var roster = session.Players;
+        if (atLocal is { } at)
+        {
+            var present = session.Players
+                .Where(player =>
+                    // No join/leave rows means the log never saw them move, so
+                    // they stay (this is how the account owner usually appears).
+                    player.Visits.Count == 0 ||
+                    player.Visits.Any(visit =>
+                        visit.JoinedAt.ToLocalTime().DateTime <= at &&
+                        (visit.LeftAt is null || visit.LeftAt.Value.ToLocalTime().DateTime >= at)))
+                .ToList();
+            if (present.Count > 0)
+            {
+                roster = present;
+            }
+        }
+
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var people = new List<MediaPersonItem>();
-        foreach (var player in session.Players
+        foreach (var player in roster
                      .OrderByDescending(player => string.Equals(
                          player.UserId,
                          accountUserId,

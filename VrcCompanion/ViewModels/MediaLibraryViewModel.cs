@@ -658,33 +658,51 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             return;
         }
 
-        foreach (var person in context.People)
+        // A session can list a big roster; fetch a few icons at a time so the
+        // visible rows fill in quickly instead of one every round trip.
+        const int concurrency = 4;
+        var queue = new Queue<MediaPersonItem>(context.People
+            .Where(person => person.HasUserId && !person.HasAvatar));
+        var running = new List<Task>();
+
+        while (queue.Count > 0 || running.Count > 0)
         {
             if (token.IsCancellationRequested || !ReferenceEquals(ViewerContext, context))
             {
                 return;
             }
 
-            if (!person.HasUserId || person.HasAvatar)
+            while (running.Count < concurrency && queue.Count > 0)
             {
-                continue;
+                running.Add(LoadAvatarAsync(queue.Dequeue(), fetcher, token));
             }
 
-            MediaPersonInfo? info;
-            try
+            if (running.Count == 0)
             {
-                info = await fetcher(person.UserId);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"media avatar {person.UserId}: {ex.Message}");
-                continue;
+                return;
             }
 
-            if (info is not null)
+            var finished = await Task.WhenAny(running);
+            running.Remove(finished);
+        }
+    }
+
+    private static async Task LoadAvatarAsync(
+        MediaPersonItem person,
+        Func<string, Task<MediaPersonInfo?>> fetcher,
+        CancellationToken token)
+    {
+        try
+        {
+            var info = await fetcher(person.UserId);
+            if (info is not null && !token.IsCancellationRequested)
             {
                 person.ApplyProfile(info.DisplayName, info.AvatarUrl);
             }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"media avatar {person.UserId}: {ex.Message}");
         }
     }
 

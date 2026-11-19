@@ -49,6 +49,29 @@ public class MediaMetadataTests
         return session;
     }
 
+    [Fact]
+    public void SessionListOnlyKeepsPlayersWhoWereThereForThePicture()
+    {
+        var session = Session("s1", JapanId, "Japan Street", 20, 23);
+        session.Players.Single(player => player.DisplayName == "Alice").Visits.Add(new InstanceHistoryVisit
+        {
+            JoinedAt = Local(2025, 6, 2, 20, 0),
+            LeftAt = Local(2025, 6, 2, 20, 30),
+            LastSeenAt = Local(2025, 6, 2, 20, 30)
+        });
+        session.Players.Single(player => player.DisplayName == "Bob").Visits.Add(new InstanceHistoryVisit
+        {
+            JoinedAt = Local(2025, 6, 2, 20, 50),
+            LastSeenAt = Local(2025, 6, 2, 22, 59)
+        });
+
+        var late = MediaMetadataResolver.FindContext(Picture("late.png", 21, 0).TakenAt, new[] { session }, AccountId);
+        var early = MediaMetadataResolver.FindContext(Picture("early.png", 20, 10).TakenAt, new[] { session }, AccountId);
+
+        Assert.Equal(new[] { "Me", "Bob" }, late!.People.Select(person => person.DisplayName));
+        Assert.Equal(new[] { "Me", "Alice" }, early!.People.Select(person => person.DisplayName));
+    }
+
     private static MediaItem Picture(string name, int hour, int minute)
         => new(
             Path.Combine(Path.GetTempPath(), "VrcMediaMeta", name),
