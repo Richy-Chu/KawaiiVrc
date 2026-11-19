@@ -6410,7 +6410,9 @@
 
                                         <Border Height="1" Background="{StaticResource SoftBorderBrush}" Margin="0,12,0,10" />
 
-                                        <TextBlock Text="SESSION" Style="{StaticResource FieldLabel}" />
+                                        <TextBlock Text="{Binding MediaViewModel.ViewerSessionTitle}"
+                                                   Style="{StaticResource FieldLabel}"
+                                                   Visibility="{Binding MediaViewModel.HasViewerContext, Converter={StaticResource BoolToVis}}" />
                                         <TextBlock Text="{Binding MediaViewModel.ViewerSessionText}"
                                                    FontSize="10.5"
                                                    Foreground="{StaticResource MutedBrush}"
@@ -6443,7 +6445,8 @@
                                             <TextBlock Text="{Binding MediaViewModel.ViewerPeopleCountText}"
                                                        FontSize="9.5"
                                                        Foreground="{StaticResource DimBrush}"
-                                                       HorizontalAlignment="Right" />
+                                                       HorizontalAlignment="Right"
+                                                       Visibility="{Binding MediaViewModel.ViewerShowsPeopleCount, Converter={StaticResource BoolToVis}}" />
                                         </Grid>
 
                                         <ItemsControl ItemsSource="{Binding MediaViewModel.ViewerPeople}"
@@ -6508,7 +6511,7 @@
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
 
-                                        <TextBlock Text="No players were recorded for this session."
+                                        <TextBlock Text="{Binding MediaViewModel.ViewerNoPlayersText}"
                                                    FontSize="10"
                                                    Foreground="{StaticResource DimBrush}"
                                                    TextWrapping="Wrap"

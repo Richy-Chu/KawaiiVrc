@@ -13,6 +13,7 @@ public sealed class MediaItem
     private BitmapImage? _thumbnail;
     private VrcPhotoMetadata? _embeddedMetadata;
     private bool _metadataRead;
+    private readonly object _metadataLock = new();
 
     public MediaItem(string path, string worldName, DateTime takenAt)
     {
@@ -51,13 +52,18 @@ public sealed class MediaItem
     {
         get
         {
-            if (!_metadataRead)
+            // The background metadata pass and the viewer can ask at the same
+            // time; without the lock one of them would see an empty answer.
+            lock (_metadataLock)
             {
-                _metadataRead = true;
-                _embeddedMetadata = PhotoMetadataReader.Read(Path);
-            }
+                if (!_metadataRead)
+                {
+                    _metadataRead = true;
+                    _embeddedMetadata = PhotoMetadataReader.Read(Path);
+                }
 
-            return _embeddedMetadata;
+                return _embeddedMetadata;
+            }
         }
     }
 

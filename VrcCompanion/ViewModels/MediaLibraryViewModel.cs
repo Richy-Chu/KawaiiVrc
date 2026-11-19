@@ -440,6 +440,12 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public string ViewerSessionText => ViewerContext?.SessionText ?? string.Empty;
 
+    /// <summary>"SESSION" for a logged visit, "PHOTO" when the file carries it.</summary>
+    public string ViewerSessionTitle => ViewerContext?.SessionTitle ?? "SESSION";
+
+    public string ViewerNoPlayersText => ViewerContext?.NoPlayersText
+        ?? "No players were recorded for this session.";
+
     public bool CanOpenViewerSession => ViewerContext?.HasSession == true;
 
     public IReadOnlyList<MediaPersonItem> ViewerPeople =>
@@ -449,11 +455,15 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public bool ViewerShowsNoPlayers => HasViewerContext && !HasViewerPeople;
 
+    public bool ViewerShowsPeopleCount => HasViewerPeople;
+
     public string ViewerPeopleCountText => ViewerContext?.PeopleCountText ?? string.Empty;
 
-    public string ViewerContextNote => ViewerContext?.IsPhotoMetadata == true
-        ? "This picture has no recorded session, so the world, access level and players come from the metadata VRChat (or VRCX) wrote into the image itself."
-        : "VRChat does not save the world inside the picture. This one has no recorded session yet — the Companion matches pictures to your local instance history, which starts from the first world you joined with it installed.";
+    public string ViewerContextNote => ViewerContext is { } context
+        ? context.IsPhotoMetadata
+            ? context.PhotoNote
+            : string.Empty
+        : "VRChat doesn't save the world inside the picture, and this one has no recorded session yet — the Companion matches pictures to your local instance history, which begins the first time you join a world with it running.";
 
     public void OpenViewer(MediaItem? item)
     {

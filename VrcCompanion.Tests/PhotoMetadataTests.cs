@@ -138,9 +138,12 @@ public class PhotoMetadataTests
         Assert.Equal("Group public", viewModel.ViewerAccessLabel);
         Assert.True(viewModel.ViewerHasGroup);
         Assert.Equal("Kawaii Club", viewModel.ViewerGroupName);
-        Assert.StartsWith("From the photo", viewModel.ViewerSessionText);
+        Assert.StartsWith("Taken ", viewModel.ViewerSessionText);
+        Assert.Equal("PHOTO", viewModel.ViewerSessionTitle);
         Assert.False(viewModel.CanOpenViewerSession);
         Assert.True(viewModel.ViewerShowsPhotoNote);
+        Assert.Equal("Read from the picture itself: VRChat saved the world, VRCX saved the players.", viewModel.ViewerContextNote);
+        Assert.True(viewModel.ViewerShowsPeopleCount);
         Assert.Equal(new[] { "Alice", "Bob" }, viewModel.ViewerPeople.Select(person => person.DisplayName));
 
         await viewModel.ViewerHydration;
@@ -148,6 +151,32 @@ public class PhotoMetadataTests
         Assert.Equal("https://example.test/world.png", viewModel.ViewerWorldThumbnailUrl);
         Assert.Equal("by Sluggy Boi", viewModel.ViewerWorldAuthorText);
         Assert.All(viewModel.ViewerPeople, person => Assert.True(person.HasAvatar));
+    }
+
+    [Fact]
+    public async Task PhotoWithWorldOnlySaysNoPlayerListWasSaved()
+    {
+        var path = WritePng("xmp-only", "XML:com.adobe.xmp", Xmp);
+        var item = new MediaItem(path, "VRChat", new DateTime(2026, 11, 6, 23, 23, 27));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat", "VRChat", new DateTime(2026, 11, 1), new[] { item })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            Path.GetDirectoryName(path),
+            (_, _) => groups,
+            cachePath: Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".json"));
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(item);
+
+        Assert.Equal("PHOTO", viewModel.ViewerSessionTitle);
+        Assert.StartsWith("Taken ", viewModel.ViewerSessionText);
+        Assert.False(viewModel.CanOpenViewerSession);
+        Assert.True(viewModel.ViewerShowsNoPlayers);
+        Assert.False(viewModel.ViewerShowsPeopleCount);
+        Assert.Equal("VRCX didn't save who was there for this picture.", viewModel.ViewerNoPlayersText);
+        Assert.Contains("no player list", viewModel.ViewerContextNote);
     }
 
     [Fact]
@@ -236,7 +265,8 @@ public class PhotoMetadataTests
         Assert.Equal("Group+", viewModel.ViewerAccessLabel);
         Assert.Equal("Kawaii Club", viewModel.ViewerGroupName);
         Assert.Equal(new[] { "Alice", "Bob" }, viewModel.ViewerPeople.Select(person => person.DisplayName));
-        Assert.StartsWith("From the photo", viewModel.ViewerSessionText);
+        Assert.StartsWith("Taken ", viewModel.ViewerSessionText);
+        Assert.Equal("PHOTO", viewModel.ViewerSessionTitle);
     }
 
     private static string WritePng(string name, string keyword, string text)

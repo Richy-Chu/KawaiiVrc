@@ -235,19 +235,34 @@ public sealed class MediaContext
     }
 
     public string SessionText => IsPhotoMetadata
-        ? $"From the photo · {JoinedAt.ToLocalTime():MMM d, yyyy · HH:mm}"
+        ? $"Taken {JoinedAt.ToLocalTime():MMM d, yyyy · HH:mm}"
         : LeftAt is null
             ? $"Session still open · since {SessionDateText}"
             : $"Session · {SessionDateText} · {DurationText}";
+
+    /// <summary>The panel header: a recorded session, or the picture itself.</summary>
+    public string SessionTitle => IsPhotoMetadata ? "PHOTO" : "SESSION";
+
+    /// <summary>One line on where the panel's world and players came from.</summary>
+    public string PhotoNote => !IsPhotoMetadata
+        ? string.Empty
+        : HasPeople
+            ? "Read from the picture itself: VRChat saved the world, VRCX saved the players."
+            : "Read from the picture itself: VRChat saved the world and author, but VRCX saved no player list.";
 
     public bool HasPeople => People.Count > 0;
 
     public string PeopleCountText => People.Count switch
     {
-        0 => "No players recorded for this session",
+        0 => "No player list",
         1 => "1 player recorded",
         _ => $"{People.Count} players recorded"
     };
+
+    /// <summary>Shown under the player header when the roster is empty.</summary>
+    public string NoPlayersText => IsPhotoMetadata
+        ? "VRCX didn't save who was there for this picture."
+        : "No players were recorded for this session.";
 }
 
 /// <summary>
