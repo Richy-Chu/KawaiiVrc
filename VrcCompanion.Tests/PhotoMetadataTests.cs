@@ -1,0 +1,177 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using VrcCompanion.Services;
+using VrcCompanion.ViewModels;
+using Xunit;
+
+namespace VrcCompanion.Tests;
+
+public class PhotoMetadataTests
+{
+    private const string JapanId = "wrld_71873c79-8c28-4e13-a311-8af1e16bf703";
+    private const string GroupId = "grp_9f1c2b3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d";
+
+    private const string Xmp = """
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+    <rdf:Description>
+      <xmp:CreatorTool>VRChat</xmp:CreatorTool>
+      <xmp:Author>ЯichψTru</xmp:Author>
+      <xmp:CreateDate>2026-11-06T23:23:27.3318236-06:00</xmp:CreateDate>
+    </rdf:Description>
+    <rdf:Description xmlns:vrc="http://ns.vrchat.com/vrc/1.0/">
+      <vrc:WorldID>wrld_71873c79-8c28-4e13-a311-8af1e16bf703</vrc:WorldID>
+      <vrc:WorldDisplayName>Anthro Heat Lockers and Sauna</vrc:WorldDisplayName>
+      <vrc:AuthorID>usr_61cc28f3-76ea-41b4-a9da-ede327ef3703</vrc:AuthorID>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+""";
+
+    private static string Json(string instanceId) => $$"""
+{"application":"VRCX","version":1,"author":{"id":"usr_61cc28f3-76ea-41b4-a9da-ede327ef3703","displayName":"RichyTru"},"world":{"name":"Anthro Heat Lockers and Sauna","id":"{{JapanId}}","instanceId":"{{instanceId}}"},"players":[{"id":"usr_a","displayName":"Alice"},{"id":"usr_b","displayName":"Bob"}]}
+""";
+
+    [Fact]
+    public void ReadsTheMetadataVrchatWritesIntoThePicture()
+    {
+        var path = WritePng("xmp", "XML:com.adobe.xmp", Xmp);
+
+        var metadata = PhotoMetadataReader.Read(path);
+
+        Assert.NotNull(metadata);
+        Assert.Equal(JapanId, metadata!.WorldId);
+        Assert.Equal("Anthro Heat Lockers and Sauna", metadata.WorldName);
+        Assert.Equal("ЯichψTru", metadata.AuthorName);
+        Assert.Equal("usr_61cc28f3-76ea-41b4-a9da-ede327ef3703", metadata.AuthorId);
+        Assert.Equal(
+            DateTimeOffset.Parse("2026-11-06T23:23:27.3318236-06:00", System.Globalization.CultureInfo.InvariantCulture),
+            metadata.TakenAt);
+        Assert.Empty(metadata.Players);
+    }
+
+    [Fact]
+    public void ReadsTheMetadataVrcxWritesIncludingPlayers()
+    {
+        var path = WritePng(
+            "vrcx",
+            "VRCX",
+            Json($"{JapanId}:12345~group({GroupId})~groupAccessType(public)"));
+
+        var metadata = PhotoMetadataReader.Read(path);
+
+        Assert.NotNull(metadata);
+        Assert.Equal(JapanId, metadata!.WorldId);
+        Assert.Contains("~group(", metadata.InstanceId, StringComparison.Ordinal);
+        Assert.Equal(new[] { "Alice", "Bob" }, metadata.Players.Select(player => player.DisplayName));
+        Assert.Equal("usr_a", metadata.Players[0].UserId);
+    }
+
+    [Fact]
+    public void PicturesWithoutMetadataReadAsNull()
+    {
+        var path = WritePng("plain", "Comment", "just a picture");
+
+        Assert.Null(PhotoMetadataReader.Read(path));
+    }
+
+    [Fact]
+    public async Task ViewerFallsBackToThePicturesOwnMetadata()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcMediaMeta", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var picturePath = Path.Combine(root, "VRChat_2026-11-06_23-23-27.108_1920x1080.png");
+        File.WriteAllBytes(
+            picturePath,
+            BuildPng(
+                "VRCX",
+                Json($"{JapanId}:12345~group({GroupId})~groupAccessType(public)")));
+
+        var picture = new MediaItem(picturePath, "VRChat", new DateTime(2026, 11, 6, 23, 23, 27));
+        var groups = new[]
+        {
+            new MediaGroup("VRChat · November 2026", "VRChat", new DateTime(2026, 11, 1), new[] { picture })
+        };
+        var viewModel = new MediaLibraryViewModel(
+            root,
+            (_, _) => groups,
+            cachePath: Path.Combine(root, "index.json"))
+        {
+            HistoryProvider = () => Array.Empty<Models.InstanceHistoryEntry>(),
+            WorldFetcher = _ => Task.FromResult<MediaWorldInfo?>(
+                new MediaWorldInfo("Anthro Heat Lockers and Sauna", "https://example.test/world.png", "Sluggy Boi")),
+            PersonFetcher = userId => Task.FromResult<MediaPersonInfo?>(
+                new MediaPersonInfo(userId == "usr_a" ? "Alice" : "Bob", "https://example.test/" + userId + ".png"))
+        };
+        viewModel.GroupLookup = groupId => groupId == GroupId ? ("Kawaii Club", "https://example.test/group.png") : default;
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(viewModel.Groups[0].Items[0]);
+
+        Assert.True(viewModel.HasViewerContext);
+        Assert.Equal("Anthro Heat Lockers and Sauna", viewModel.ViewerWorldName);
+        Assert.Equal("Group public", viewModel.ViewerAccessLabel);
+        Assert.True(viewModel.ViewerHasGroup);
+        Assert.Equal("Kawaii Club", viewModel.ViewerGroupName);
+        Assert.StartsWith("From the photo", viewModel.ViewerSessionText);
+        Assert.False(viewModel.CanOpenViewerSession);
+        Assert.True(viewModel.ViewerShowsPhotoNote);
+        Assert.Equal(new[] { "Alice", "Bob" }, viewModel.ViewerPeople.Select(person => person.DisplayName));
+
+        await viewModel.ViewerHydration;
+
+        Assert.Equal("https://example.test/world.png", viewModel.ViewerWorldThumbnailUrl);
+        Assert.Equal("by Sluggy Boi", viewModel.ViewerWorldAuthorText);
+        Assert.All(viewModel.ViewerPeople, person => Assert.True(person.HasAvatar));
+    }
+
+    private static string WritePng(string name, string keyword, string text)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VrcPhotoMetadata", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, name + ".png");
+        File.WriteAllBytes(path, BuildPng(keyword, text));
+        return path;
+    }
+
+    /// <summary>A minimal PNG whose only text lives in one iTXt chunk.</summary>
+    private static byte[] BuildPng(string keyword, string text)
+    {
+        using var output = new MemoryStream();
+        output.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+
+        var header = new byte[13];
+        header[3] = 1;
+        header[7] = 1;
+        header[8] = 8;
+        header[9] = 6;
+        WriteChunk(output, "IHDR", header);
+
+        var payload = new List<byte>();
+        payload.AddRange(Encoding.UTF8.GetBytes(keyword));
+        payload.AddRange(new byte[] { 0, 0, 0, 0, 0 });
+        payload.AddRange(Encoding.UTF8.GetBytes(text));
+        WriteChunk(output, "iTXt", payload.ToArray());
+
+        WriteChunk(output, "IEND", Array.Empty<byte>());
+        return output.ToArray();
+    }
+
+    private static void WriteChunk(Stream stream, string type, byte[] data)
+    {
+        stream.Write(new[]
+        {
+            (byte)(data.Length >> 24),
+            (byte)(data.Length >> 16),
+            (byte)(data.Length >> 8),
+            (byte)data.Length
+        });
+        stream.Write(Encoding.ASCII.GetBytes(type));
+        stream.Write(data);
+        stream.Write(new byte[4]);
+    }
+}

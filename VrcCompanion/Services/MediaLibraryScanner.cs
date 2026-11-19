@@ -11,6 +11,8 @@ namespace VrcCompanion.Services;
 public sealed class MediaItem
 {
     private BitmapImage? _thumbnail;
+    private VrcPhotoMetadata? _embeddedMetadata;
+    private bool _metadataRead;
 
     public MediaItem(string path, string worldName, DateTime takenAt)
     {
@@ -40,6 +42,24 @@ public sealed class MediaItem
     public bool HasContext => Context is not null;
 
     public string FileName => System.IO.Path.GetFileName(Path);
+
+    /// <summary>
+    /// The world/players VRChat or VRCX wrote into the file itself, read on
+    /// demand. Null for screenshots without metadata.
+    /// </summary>
+    public VrcPhotoMetadata? EmbeddedMetadata
+    {
+        get
+        {
+            if (!_metadataRead)
+            {
+                _metadataRead = true;
+                _embeddedMetadata = PhotoMetadataReader.Read(Path);
+            }
+
+            return _embeddedMetadata;
+        }
+    }
 
     /// <summary>Small decode for the grid; loaded lazily and frozen for reuse.</summary>
     public BitmapImage? Thumbnail => _thumbnail ??= LoadBitmap(320);

@@ -110,7 +110,7 @@ public sealed class MediaContext
 
     public string WorldAuthorName { get; private set; }
 
-    public DateTimeOffset JoinedAt { get; }
+    public DateTimeOffset JoinedAt { get; private set; }
 
     public DateTimeOffset? LeftAt { get; }
 
@@ -220,9 +220,25 @@ public sealed class MediaContext
         }
     }
 
-    public string SessionText => LeftAt is null
-        ? $"Session still open · since {SessionDateText}"
-        : $"Session · {SessionDateText} · {DurationText}";
+    /// <summary>True when this context was rebuilt from the picture's own
+    /// metadata instead of a recorded instance session.</summary>
+    public bool IsPhotoMetadata { get; private set; }
+
+    /// <summary>Marks a context that came from the file, not the session log.</summary>
+    public void MarkPhotoMetadata(DateTimeOffset? takenAt)
+    {
+        IsPhotoMetadata = true;
+        if (takenAt is { } at)
+        {
+            JoinedAt = at;
+        }
+    }
+
+    public string SessionText => IsPhotoMetadata
+        ? $"From the photo · {JoinedAt.ToLocalTime():MMM d, yyyy · HH:mm}"
+        : LeftAt is null
+            ? $"Session still open · since {SessionDateText}"
+            : $"Session · {SessionDateText} · {DurationText}";
 
     public bool HasPeople => People.Count > 0;
 

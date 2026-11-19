@@ -34,6 +34,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private int _pageIndex;
     private int _pageGeneration;
     private CancellationTokenSource? _viewerHydration;
+    private MediaContext? _photoContext;
     private int _foundCount;
     private string? _errorMessage;
     private MediaItem? _selectedMedia;
@@ -317,6 +318,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             OnPropertyChanged(nameof(ViewerAccessLabel));
             OnPropertyChanged(nameof(ViewerHasGroup));
             OnPropertyChanged(nameof(ViewerShowsAccessChip));
+            OnPropertyChanged(nameof(ViewerShowsPhotoNote));
             OnPropertyChanged(nameof(CanOpenViewerGroup));
             OnPropertyChanged(nameof(ViewerGroupName));
             OnPropertyChanged(nameof(ViewerGroupIconUrl));
@@ -346,7 +348,9 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         private set => SetProperty(ref _viewerImage, value);
     }
 
-    public MediaContext? ViewerContext => _selectedMedia?.Context;
+    /// <summary>The session context, or the one rebuilt from the file's own
+    /// metadata when the log has no session for this picture.</summary>
+    public MediaContext? ViewerContext => _selectedMedia?.Context ?? _photoContext;
 
     public bool HasViewerContext => ViewerContext is not null;
 
@@ -393,7 +397,11 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     public bool ViewerHasGroup => ViewerContext?.HasGroup == true;
 
     /// <summary>The access chip is only needed when there is no group row to carry it.</summary>
-    public bool ViewerShowsAccessChip => HasViewerContext && !ViewerHasGroup;
+    public bool ViewerShowsAccessChip =>
+        HasViewerContext && !ViewerHasGroup && !string.IsNullOrWhiteSpace(ViewerAccessLabel);
+
+    /// <summary>The picture carried its own metadata (VRChat or VRCX XMP).</summary>
+    public bool ViewerShowsPhotoNote => ViewerContext?.IsPhotoMetadata == true;
 
     public bool CanOpenViewerGroup => ViewerContext?.CanOpenGroup == true;
 
@@ -419,8 +427,9 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public string ViewerPeopleCountText => ViewerContext?.PeopleCountText ?? string.Empty;
 
-    public string ViewerContextNote =>
-        "VRChat does not save the world inside the picture. This one has no recorded session yet — the Companion matches pictures to your local instance history, which starts from the first world you joined with it installed.";
+    public string ViewerContextNote => ViewerContext?.IsPhotoMetadata == true
+        ? "This picture has no recorded session, so the world, access level and players come from the metadata VRChat (or VRCX) wrote into the image itself."
+        : "VRChat does not save the world inside the picture. This one has no recorded session yet — the Companion matches pictures to your local instance history, which starts from the first world you joined with it installed.";
 
     public void OpenViewer(MediaItem? item)
     {
@@ -430,8 +439,51 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         }
 
         ViewerImage = item.LoadBitmap(1400);
+        _photoContext = item.Context is null ? BuildPhotoContext(item) : null;
         SelectedMedia = item;
-        RestartViewerHydration(item.Context);
+        RestartViewerHydration(ViewerContext);
+    }
+
+    /// <summary>
+    /// VRChat writes the world, author and capture time into the picture, and
+    /// VRCX adds the instance and players. When the log has no session for this
+    /// picture, that metadata is the only source, so turn it into the same
+    /// context the viewer already knows how to draw.
+    /// </summary>
+    private MediaContext? BuildPhotoContext(MediaItem item)
+    {
+        var metadata = item.EmbeddedMetadata;
+        if (metadata is null)
+        {
+            return null;
+        }
+
+        var taken = metadata.TakenAt ?? new DateTimeOffset(item.TakenAt);
+        var location = metadata.InstanceId;
+        var entry = new InstanceHistoryEntry
+        {
+            Id = string.Empty,
+            Location = location,
+            WorldId = metadata.WorldId,
+            InstanceId = string.IsNullOrWhiteSpace(location)
+                ? string.Empty
+                : LaunchService.GetInstanceIdFromLocation(location) ?? location,
+            WorldName = metadata.WorldName,
+            JoinedAt = taken,
+            LeftAt = taken,
+            LastSeenAt = taken,
+            Players = metadata.Players
+                .Select(player => new InstanceHistoryPlayer
+                {
+                    UserId = player.UserId,
+                    DisplayName = player.DisplayName
+                })
+                .ToList()
+        };
+
+        var context = MediaMetadataResolver.Describe(entry, null, GroupLookup);
+        context.MarkPhotoMetadata(taken);
+        return context;
     }
 
     /// <summary>
@@ -586,6 +638,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         _viewerHydration?.Cancel();
         _viewerHydration?.Dispose();
         _viewerHydration = null;
+        _photoContext = null;
         SelectedMedia = null;
         ViewerImage = null;
     }
