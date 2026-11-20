@@ -736,17 +736,44 @@ fn dump_report() {
         match api.friends().await {
             Ok(roster) => {
                 out.push_str(&format!(
-                    "roster: {} total, {} online, live={}, degraded={}, {} ms\n",
+                    "roster: {} total, {} online, live={}, degraded={}, worlds_pending={}, {} ms\n",
                     roster.total,
                     roster.online,
                     roster.live,
                     roster.degraded,
+                    roster.worlds_pending,
                     roster_started.elapsed().as_millis()
                 ));
                 for friend in roster.items.iter().filter(|friend| friend.online).take(8) {
                     out.push_str(&format!(
                         "  {} | {} | {} | {}\n",
                         friend.name, friend.status, friend.world, friend.instance
+                    ));
+                }
+
+                let missing = roster.missing_worlds.clone();
+                if missing.is_empty() {
+                    out.push_str("worlds: every online world name is cached\n");
+                } else {
+                    let resolution_started = std::time::Instant::now();
+                    api.resolve_worlds_in_background(missing.clone());
+                    let mut left = missing.len();
+                    for _ in 0..160 {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        let names = api.world_names();
+                        left = missing
+                            .iter()
+                            .filter(|id| !names.contains_key(*id))
+                            .count();
+                        if left == 0 {
+                            break;
+                        }
+                    }
+                    out.push_str(&format!(
+                        "worlds: {} distinct unresolved, {} left after {} ms\n",
+                        missing.len(),
+                        left,
+                        resolution_started.elapsed().as_millis()
                     ));
                 }
             }

@@ -357,7 +357,7 @@ impl Api {
             for user in page_users {
                 push_unique(&mut users, &mut seen, user);
             }
-            if users.len() >= 2_500 {
+            if users.len() >= FRIEND_CAP {
                 break;
             }
         }
@@ -529,7 +529,7 @@ impl Api {
         let mut degraded = false;
         let mut offset = 100usize;
 
-        while !finished && users.len() < 2_500 && offset < 3_000 {
+        while !finished && users.len() < FRIEND_CAP && offset < 3_000 {
             let offsets: Vec<usize> = (0..6).map(|index| offset + index * 100).collect();
             let results = join_all(
                 offsets
@@ -543,9 +543,7 @@ impl Api {
             offset += 600;
         }
 
-        // Hitting the cap is a truncation, so report it like a dropped page.
-        let capped = !finished && users.len() >= 2_500;
-        Ok((users, degraded || capped))
+        Ok(bucket_result(users, finished, degraded))
     }
 
     pub fn world_names(&self) -> HashMap<String, String> {
@@ -556,7 +554,8 @@ impl Api {
     }
 
     /// Resolves world names after the roster is already on screen. One sweep at
-    /// a time; the next `friends` call starts another if ids are still missing.
+    /// a time, and a sweep only takes 40 ids, so it keeps going until every id
+    /// the caller passed is cached (or a sweep stops making progress).
     pub fn resolve_worlds_in_background(self: &Arc<Self>, ids: Vec<String>) {
         if ids.is_empty() || self.resolving.swap(true, Ordering::SeqCst) {
             return;
@@ -564,10 +563,29 @@ impl Api {
         let api = Arc::clone(self);
         tokio::spawn(async move {
             if let Some(cookie) = api.cookie() {
-                let _ = api.resolve_worlds(ids, &cookie).await;
+                let mut pending = ids;
+                for _ in 0..WORLD_SWEEPS {
+                    if pending.is_empty() {
+                        break;
+                    }
+                    let before = pending.len();
+                    let _ = api.resolve_worlds(pending.clone(), &cookie).await;
+                    pending = api.uncached_worlds(&pending);
+                    if !needs_another_sweep(pending.len(), before) {
+                        break;
+                    }
+                }
             }
             api.resolving.store(false, Ordering::SeqCst);
         });
+    }
+
+    fn uncached_worlds(&self, ids: &[String]) -> Vec<String> {
+        let cached = self.world_names();
+        ids.iter()
+            .filter(|id| !cached.contains_key(*id))
+            .cloned()
+            .collect()
     }
 
     /// World names are shared across rows and change rarely, so each id is
@@ -581,7 +599,7 @@ impl Api {
         let missing: Vec<String> = ids
             .into_iter()
             .filter(|id| !cached.contains_key(id))
-            .take(40)
+            .take(WORLD_SWEEP_BATCH)
             .collect();
         if missing.is_empty() {
             return cached;
@@ -1539,6 +1557,17 @@ mod tests {
 }
 
 const PAGE_ATTEMPTS: u32 = 4;
+const FRIEND_CAP: usize = 2_500;
+/// Each world sweep looks up at most this many ids.
+const WORLD_SWEEP_BATCH: usize = 40;
+/// Enough sweeps to cover 400 distinct worlds in one background run.
+const WORLD_SWEEPS: usize = 10;
+
+/// A sweep is worth repeating only while ids remain and it made progress;
+/// otherwise the caller would loop forever on worlds VRChat refuses to name.
+fn needs_another_sweep(pending_after: usize, pending_before: usize) -> bool {
+    pending_after > 0 && pending_after < pending_before
+}
 
 enum PageOutcome {
     Ready(Vec<Value>),
@@ -1579,6 +1608,13 @@ fn page_failure(status: u16) -> Option<PageFailure> {
 /// Only a full page implies that another one exists.
 fn needs_second_page(page_len: usize) -> bool {
     page_len == 100
+}
+
+/// Hitting the friend cap means the list was truncated, which is reported like
+/// a dropped page so the roster is not called complete.
+fn bucket_result(users: Vec<Value>, finished: bool, degraded: bool) -> (Vec<Value>, bool) {
+    let capped = !finished && users.len() >= FRIEND_CAP;
+    (users, degraded || capped)
 }
 
 /// Folds the optional second quick page. Returns whether it had to be dropped;
@@ -1944,5 +1980,70 @@ mod page_fold_tests {
         .expect("degrade");
         assert!(degraded);
         assert_eq!(users.len(), 100);
+    }
+}
+
+#[cfg(test)]
+mod friend_cap_tests {
+    use super::*;
+
+    fn page(len: usize) -> Vec<Value> {
+        (0..len)
+            .map(|index| serde_json::json!({ "id": format!("usr_{index}") }))
+            .collect()
+    }
+
+    #[test]
+    fn hitting_the_friend_cap_marks_the_roster_degraded() {
+        let (users, degraded) = bucket_result(page(FRIEND_CAP), false, false);
+        assert_eq!(users.len(), FRIEND_CAP);
+        assert!(degraded, "2,500 friends with more pages left is a truncation");
+
+        let (users, degraded) = bucket_result(page(FRIEND_CAP), true, false);
+        assert_eq!(users.len(), FRIEND_CAP);
+        assert!(!degraded, "exactly 2,500 friends with no more pages is complete");
+
+        let (_, degraded) = bucket_result(page(FRIEND_CAP - 1), false, false);
+        assert!(!degraded, "below the cap is not a truncation");
+
+        let (_, degraded) = bucket_result(page(12), false, true);
+        assert!(degraded, "an existing degraded flag survives");
+    }
+}
+
+#[cfg(test)]
+mod world_sweep_tests {
+    use super::*;
+
+    #[test]
+    fn sweeps_repeat_only_while_they_make_progress() {
+        assert!(needs_another_sweep(50, 90), "some ids resolved, more remain");
+        assert!(!needs_another_sweep(0, 40), "everything is cached");
+        assert!(!needs_another_sweep(40, 40), "no progress, stop instead of spinning");
+    }
+
+    #[test]
+    fn one_background_run_covers_a_large_roster() {
+        // The batch limit per sweep is what used to leave rows as raw ids.
+        assert_eq!(WORLD_SWEEP_BATCH, 40);
+        assert!(
+            WORLD_SWEEP_BATCH * WORLD_SWEEPS >= 400,
+            "background resolution must cover rosters spread across many worlds"
+        );
+    }
+
+    #[test]
+    fn uncached_worlds_returns_everything_still_missing() {
+        let api = Api::new();
+        let ids: Vec<String> = (0..90).map(|index| format!("wrld_{index}")).collect();
+        if let Ok(mut guard) = api.worlds.lock() {
+            for id in ids.iter().take(40) {
+                guard.insert(id.clone(), "Cached World".to_string());
+            }
+        }
+
+        let pending = api.uncached_worlds(&ids);
+        assert_eq!(pending.len(), 50);
+        assert_eq!(pending[0], "wrld_40");
     }
 }
