@@ -214,13 +214,21 @@ function applyRoster(roster) {
       : "Roster loaded; presence is reconnecting.";
 }
 
+// Snapshots grow as the walk fetches pages, so paint each one as it lands
+// instead of holding the list back until the last page arrives.
 async function waitForFullRoster(attempts = 30) {
+  let latest = null;
   for (let index = 0; index < attempts; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, 400));
     const snapshot = await invoke("friends_snapshot");
-    if (snapshot && snapshot.complete) return snapshot;
+    if (!snapshot) continue;
+    if (snapshot.items.length > 0 && snapshot !== latest) {
+      latest = snapshot;
+      applyRoster(snapshot);
+    }
+    if (snapshot.complete) return snapshot;
   }
-  return null;
+  return latest;
 }
 
 async function loadFriends() {
@@ -233,9 +241,7 @@ async function loadFriends() {
     setBusy(false);
 
     const full = await waitForFullRoster();
-    if (full) {
-      applyRoster(full);
-    } else {
+    if (!full || !full.complete) {
       status.textContent = "Showing the first page; the full roster is still loading.";
     }
   } catch (error) {
