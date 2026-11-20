@@ -17,11 +17,14 @@ const PIPELINE: &str = "wss://pipeline.vrchat.cloud";
 const USER_AGENT: &str = "KawaiiVrcShell/0.2.0 (unofficial Windows companion)";
 
 /// The shell's own cache of world names, beside its keys rather than in the WPF
-/// app's folder, so a relaunch does not redo the lookups.
+/// app's folder, so a relaunch does not redo the lookups. Older builds shared
+/// one file for every account; it is adopted by the first account that asks.
 const WORLD_CACHE_FILE: &str = "world-names.json";
 const WORLD_CACHE_LIMIT: u64 = 4 * 1024 * 1024;
 /// The last complete roster, so a launch paints friends before any request.
-const ROSTER_CACHE_FILE: &str = "roster-snapshot.json";
+/// One file per account: a snapshot from one account must never be painted for
+/// another, so the file name carries the account id.
+const ROSTER_CACHE_PREFIX: &str = "roster-snapshot";
 const ROSTER_CACHE_LIMIT: u64 = 16 * 1024 * 1024;
 /// World names are re-looked up a week after they were learned, so a renamed
 /// world does not stay wrong forever.
@@ -36,12 +39,41 @@ fn world_cache_cap(friends: usize) -> usize {
     (friends + WORLD_CACHE_HEADROOM).clamp(WORLD_CACHE_MIN, WORLD_CACHE_MAX)
 }
 
-fn world_cache_path() -> PathBuf {
-    session::shell_dir().join(WORLD_CACHE_FILE)
+/// A VRChat user id is already file-safe, but never trust a value from the
+/// network with a path.
+fn cache_key(user_id: &str) -> String {
+    let cleaned: String = user_id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
+        .take(64)
+        .collect();
+    if cleaned.is_empty() {
+        "unknown".to_string()
+    } else {
+        cleaned
+    }
 }
 
-fn roster_cache_path() -> PathBuf {
-    session::shell_dir().join(ROSTER_CACHE_FILE)
+fn world_cache_path(account: &str) -> PathBuf {
+    session::shell_dir().join(format!("world-names-{account}.json"))
+}
+
+/// The per-account world cache, taking over an older build's shared file once.
+/// World names are public data rather than one account's, so adopting it is safe
+/// and keeps the first launch after an upgrade warm.
+fn account_world_cache_path(account: &str) -> PathBuf {
+    let path = world_cache_path(account);
+    if !path.exists() {
+        let legacy = session::shell_dir().join(WORLD_CACHE_FILE);
+        if legacy.exists() {
+            let _ = std::fs::rename(&legacy, &path);
+        }
+    }
+    path
+}
+
+fn roster_cache_path(account: &str) -> PathBuf {
+    session::shell_dir().join(format!("{ROSTER_CACHE_PREFIX}-{account}.json"))
 }
 
 /// The saved roster is a starting picture, not a live one: it is always treated
@@ -301,6 +333,8 @@ pub struct Api {
     persist: bool,
     auth: Mutex<Option<String>>,
     user: Mutex<Option<UserInfo>>,
+    /// The signed-in account whose cache files are in use.
+    account: Mutex<Option<String>>,
     worlds: Mutex<HashMap<String, String>>,
     /// When each cached world name was learned; drives TTL and pruning.
     world_seen: Mutex<HashMap<String, u64>>,
@@ -332,7 +366,6 @@ impl Api {
             .timeout(Duration::from_secs(25))
             .build()
             .expect("http client");
-        let world_cache = load_world_cache(&world_cache_path());
         Self {
             http,
             persist,
@@ -342,8 +375,9 @@ impl Api {
             app: Mutex::new(None),
             auth: Mutex::new(None),
             user: Mutex::new(None),
-            worlds: Mutex::new(world_cache.names),
-            world_seen: Mutex::new(world_cache.stamps),
+            account: Mutex::new(None),
+            worlds: Mutex::new(HashMap::new()),
+            world_seen: Mutex::new(HashMap::new()),
             presence: Mutex::new(HashMap::new()),
             self_location: Mutex::new(String::new()),
             activity: crate::activity::ActivityLog::new(),
@@ -352,11 +386,7 @@ impl Api {
             live: AtomicBool::new(false),
             resolving: AtomicBool::new(false),
             realtime_started: AtomicBool::new(false),
-            roster: Mutex::new(if persist {
-                load_roster_cache(&roster_cache_path())
-            } else {
-                None
-            }),
+            roster: Mutex::new(None),
             roster_loading: AtomicBool::new(false),
         }
     }
@@ -378,6 +408,51 @@ impl Api {
     fn set_user(&self, value: Option<UserInfo>) {
         if let Ok(mut guard) = self.user.lock() {
             *guard = value;
+        }
+    }
+
+    fn current_account(&self) -> Option<String> {
+        self.account.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    /// Points the in-memory caches at one account's files. Called every time a
+    /// session is established, so a different account can never be shown the
+    /// roster or world names the previous one left behind.
+    fn adopt_account(&self, user_id: &str) {
+        let key = cache_key(user_id);
+        {
+            let mut current = self.account.lock().unwrap_or_else(|error| error.into_inner());
+            if current.as_deref() == Some(key.as_str()) {
+                return;
+            }
+            *current = Some(key.clone());
+        }
+
+        // Drop everything that belonged to the previous account before loading
+        // this one's files.
+        if let Ok(mut roster) = self.roster.lock() {
+            *roster = None;
+        }
+        self.revision.store(0, Ordering::SeqCst);
+        if let Ok(mut presence) = self.presence.lock() {
+            presence.clear();
+        }
+
+        // Tests and one-off reports keep no cache; only the window reads one.
+        if !self.persist {
+            return;
+        }
+
+        if let Ok(mut roster) = self.roster.lock() {
+            *roster = load_roster_cache(&roster_cache_path(&key));
+        }
+
+        let world_cache = load_world_cache(&account_world_cache_path(&key));
+        if let Ok(mut worlds) = self.worlds.lock() {
+            *worlds = world_cache.names;
+        }
+        if let Ok(mut seen) = self.world_seen.lock() {
+            *seen = world_cache.stamps;
         }
     }
 
@@ -501,6 +576,7 @@ impl Api {
             }
         }
         self.set_user(Some(user.clone()));
+        self.adopt_account(&user.id);
         Ok(user)
     }
 
@@ -542,6 +618,13 @@ impl Api {
         }
         self.set_cookie(None);
         self.set_user(None);
+        if let Ok(mut account) = self.account.lock() {
+            *account = None;
+        }
+        if let Ok(mut roster) = self.roster.lock() {
+            *roster = None;
+        }
+        self.revision.store(0, Ordering::SeqCst);
         if let Ok(mut presence) = self.presence.lock() {
             presence.clear();
         }
@@ -660,7 +743,9 @@ impl Api {
 
         roster.revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
         if complete && self.persist {
-            save_roster_cache(&roster_cache_path(), &roster);
+            if let Some(account) = self.current_account() {
+                save_roster_cache(&roster_cache_path(&account), &roster);
+            }
         }
         if let Ok(mut guard) = self.roster.lock() {
             *guard = Some(roster.clone());
@@ -1007,7 +1092,11 @@ impl Api {
                     .ok()
                     .and_then(|guard| guard.as_ref().map(|roster| roster.items.len()));
                 let cap = friends.map(world_cache_cap).unwrap_or(WORLD_CACHE_MAX);
-                save_world_cache(&world_cache_path(), &merged, &stamps, cap);
+                if self.persist {
+                    if let Some(account) = self.current_account() {
+                        save_world_cache(&world_cache_path(&account), &merged, &stamps, cap);
+                    }
+                }
             }
         }
         merged
@@ -3120,5 +3209,59 @@ mod roster_cache_tests {
 
         assert!(published.complete);
         assert_eq!(published.items.len(), 1, "the finished walk is the truth");
+    }
+}
+
+#[cfg(test)]
+mod account_cache_tests {
+    use super::*;
+
+
+    #[test]
+    fn each_account_gets_its_own_cache_files() {
+        let first = cache_key("usr_aaa");
+        let second = cache_key("usr_bbb");
+
+        assert_ne!(roster_cache_path(&first), roster_cache_path(&second));
+        assert_ne!(world_cache_path(&first), world_cache_path(&second));
+        assert!(roster_cache_path(&first)
+            .to_string_lossy()
+            .contains("roster-snapshot-usr_aaa.json"));
+    }
+
+    #[test]
+    fn odd_account_ids_cannot_escape_the_shell_folder() {
+        let key = cache_key(r"../..\other?account");
+
+        assert_eq!(key, "otheraccount");
+        assert!(!roster_cache_path(&key).to_string_lossy().contains(".."));
+    }
+
+    #[test]
+    fn switching_accounts_drops_the_previous_roster() {
+        let api = Api::new();
+        api.adopt_account("usr_aaa");
+        api.publish(&[], true, false);
+        assert!(api.roster_snapshot().is_some());
+
+        api.adopt_account("usr_bbb");
+
+        assert_eq!(api.current_account().as_deref(), Some("usr_bbb"));
+        assert!(
+            api.roster_snapshot().is_none(),
+            "another account must not be shown the old list"
+        );
+    }
+
+    #[test]
+    fn the_same_account_again_keeps_the_roster_on_screen() {
+        let api = Api::new();
+        api.adopt_account("usr_aaa");
+        api.publish(&[], true, false);
+        let revision = api.roster_snapshot().expect("published roster").revision;
+
+        api.adopt_account("usr_aaa");
+
+        assert_eq!(api.roster_snapshot().expect("kept roster").revision, revision);
     }
 }
