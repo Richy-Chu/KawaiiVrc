@@ -152,6 +152,9 @@ struct Presence {
 
 pub struct Api {
     http: reqwest::Client,
+    /// Online-bucket pages the quick load already fetched, so the full walk can
+    /// start after them instead of asking for them a second time.
+    seed: Mutex<Vec<(usize, Vec<Value>)>>,
     auth: Mutex<Option<String>>,
     user: Mutex<Option<UserInfo>>,
     worlds: Mutex<HashMap<String, String>>,
@@ -176,6 +179,7 @@ impl Api {
             .expect("http client");
         Self {
             http,
+            seed: Mutex::new(Vec::new()),
             auth: Mutex::new(None),
             user: Mutex::new(None),
             worlds: Mutex::new(load_world_names(&world_cache_path())),
@@ -393,25 +397,86 @@ impl Api {
         let mut users: Vec<Value> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         let mut degraded = false;
+        // The quick load's pages are the start of this same walk.
+        let mut seed = Some(
+            self.seed
+                .lock()
+                .map(|mut guard| std::mem::take(&mut *guard))
+                .unwrap_or_default(),
+        );
+
+        let mut finished = true;
         for bucket in ["false", "true"] {
-            let (page_users, page_degraded) = self
-                .fetch_bucket(&cookie, bucket)
-                .await
-                .map_err(PageFailure::to_message)?;
-            degraded |= page_degraded;
-            for user in page_users {
-                push_unique(&mut users, &mut seen, user);
+            let mut offset = 0usize;
+            let mut done = false;
+            let mut started = false;
+
+            if bucket == "false" {
+                let seeded = seed.take().unwrap_or_default();
+                let (next, seeded_done, reused) = take_seed(seeded, &mut users, &mut seen);
+                offset = next;
+                done = seeded_done;
+                started = reused > 0;
+                if started {
+                    // Paint what the walk starts from before it fetches more.
+                    self.publish(&users, false, degraded);
+                }
             }
+
+            if !done && !started {
+                let first = self
+                    .fetch_page(&cookie, bucket, 0)
+                    .await
+                    .map_err(PageFailure::to_message)?;
+                done = first.len() < 100;
+                for user in first {
+                    push_unique(&mut users, &mut seen, user);
+                }
+                offset = 100;
+                self.publish(&users, false, degraded);
+            }
+
+            while !done && users.len() < FRIEND_CAP && offset < 3_000 {
+                let offsets: Vec<usize> = (0..6).map(|index| offset + index * 100).collect();
+                let results = join_all(
+                    offsets
+                        .iter()
+                        .map(|offset| self.fetch_page(&cookie, bucket, *offset)),
+                )
+                .await;
+                let before = users.len();
+                let (round_done, round_degraded) =
+                    fold_page_round(&mut users, results).map_err(PageFailure::to_message)?;
+                degraded |= round_degraded;
+                // Folded pages skip the id check, so run them through it here.
+                let appended: Vec<Value> = users.split_off(before);
+                for user in appended {
+                    push_unique(&mut users, &mut seen, user);
+                }
+                done = round_done;
+                offset += 600;
+                // Each round is a snapshot, so pages appear as they land.
+                self.publish(&users, false, degraded);
+            }
+
+            finished = done;
             if users.len() >= FRIEND_CAP {
                 break;
             }
         }
 
-        let roster = self.build_roster(&users, true, degraded);
+        let (users, degraded) = bucket_result(users, finished, degraded);
+        Ok(self.publish(&users, true, degraded))
+    }
+
+    /// Stores the roster the UI polls, so a partly walked list is already on
+    /// screen while the remaining pages load.
+    fn publish(&self, users: &[Value], complete: bool, degraded: bool) -> Roster {
+        let roster = self.build_roster(users, complete, degraded);
         if let Ok(mut guard) = self.roster.lock() {
             *guard = Some(roster.clone());
         }
-        Ok(roster)
+        roster
     }
 
     /// The first online page, plus a second one when the first page was full,
@@ -419,17 +484,26 @@ impl Api {
     /// online friends are not truncated.
     pub async fn friends_quick(&self) -> Result<Roster, String> {
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
-        let mut users = self
+        let first = self
             .fetch_page(&cookie, "false", 0)
             .await
             .map_err(PageFailure::to_message)?;
+        let mut seed: Vec<(usize, Vec<Value>)> = vec![(0, first)];
+        let mut users: Vec<Value> = seed[0].1.clone();
         let mut degraded = false;
         if needs_second_page(users.len()) {
             let second = self.fetch_page(&cookie, "false", 100).await;
-            degraded = fold_second_page(&mut users, second).map_err(PageFailure::to_message)?;
+            match fold_second_page(&mut users, second).map_err(PageFailure::to_message)? {
+                Some(page) => seed.push((100, page)),
+                None => degraded = true,
+            }
+        }
+        // Hand these pages to the full walk so it continues from here.
+        if let Ok(mut guard) = self.seed.lock() {
+            *guard = seed;
         }
 
-        Ok(self.build_roster(&users, false, degraded))
+        Ok(self.publish(&users, false, degraded))
     }
 
     pub fn roster_snapshot(&self) -> Option<Roster> {
@@ -576,36 +650,6 @@ impl Api {
                 "VRChat returned an unexpected friend list.".to_string(),
             )),
         }
-    }
-
-    /// Walks every page of one bucket six requests at a time. A page that stays
-    /// throttled is reported instead of aborting the whole roster.
-    async fn fetch_bucket(
-        &self,
-        cookie: &str,
-        bucket: &str,
-    ) -> Result<(Vec<Value>, bool), PageFailure> {
-        let first = self.fetch_page(cookie, bucket, 0).await?;
-        let mut users = first;
-        let mut finished = users.len() < 100;
-        let mut degraded = false;
-        let mut offset = 100usize;
-
-        while !finished && users.len() < FRIEND_CAP && offset < 3_000 {
-            let offsets: Vec<usize> = (0..6).map(|index| offset + index * 100).collect();
-            let results = join_all(
-                offsets
-                    .iter()
-                    .map(|offset| self.fetch_page(cookie, bucket, *offset)),
-            )
-            .await;
-            let (round_finished, round_degraded) = fold_page_round(&mut users, results)?;
-            finished = round_finished;
-            degraded |= round_degraded;
-            offset += 600;
-        }
-
-        Ok(bucket_result(users, finished, degraded))
     }
 
     /// World ids the roster's rows cannot name yet, in first-seen order. Only
@@ -1715,6 +1759,30 @@ fn needs_second_page(page_len: usize) -> bool {
     page_len == 100
 }
 
+/// Consumes the pages the quick load already fetched. Only a contiguous run from
+/// offset 0 can be reused; anything else is left for the walk to fetch.
+fn take_seed(
+    seed: Vec<(usize, Vec<Value>)>,
+    users: &mut Vec<Value>,
+    seen: &mut HashSet<String>,
+) -> (usize, bool, usize) {
+    let mut offset = 0usize;
+    let mut done = false;
+    let mut reused = 0usize;
+    for (seed_offset, page) in seed {
+        if done || seed_offset != offset {
+            break;
+        }
+        done = page.len() < 100;
+        for user in page {
+            push_unique(users, seen, user);
+        }
+        offset += 100;
+        reused += 1;
+    }
+    (offset, done, reused)
+}
+
 /// Hitting the friend cap means the list was truncated, which is reported like
 /// a dropped page so the roster is not called complete.
 fn bucket_result(users: Vec<Value>, finished: bool, degraded: bool) -> (Vec<Value>, bool) {
@@ -1727,14 +1795,14 @@ fn bucket_result(users: Vec<Value>, finished: bool, degraded: bool) -> (Vec<Valu
 fn fold_second_page(
     users: &mut Vec<Value>,
     second: Result<Vec<Value>, PageFailure>,
-) -> Result<bool, PageFailure> {
+) -> Result<Option<Vec<Value>>, PageFailure> {
     match second {
         Ok(page) => {
-            users.extend(page);
-            Ok(false)
+            users.extend(page.iter().cloned());
+            Ok(Some(page))
         }
         Err(PageFailure::Expired) => Err(PageFailure::Expired),
-        Err(PageFailure::Other(_)) => Ok(true),
+        Err(PageFailure::Other(_)) => Ok(None),
     }
 }
 
@@ -2078,12 +2146,60 @@ mod page_fold_tests {
     #[test]
     fn a_throttled_second_quick_page_only_degrades_it() {
         let mut users = page(100);
-        let degraded = fold_second_page(
+        let page = fold_second_page(
             &mut users,
             Err(PageFailure::Other("429 on page 100".to_string())),
         )
         .expect("degrade");
-        assert!(degraded);
+        assert!(page.is_none(), "nothing to hand to the walk");
+        assert_eq!(users.len(), 100);
+    }
+
+    fn page_from(start: usize, len: usize) -> Vec<Value> {
+        (start..start + len)
+            .map(|index| serde_json::json!({ "id": format!("usr_{index}") }))
+            .collect()
+    }
+
+    #[test]
+    fn seeded_pages_are_reused_from_the_start_of_the_walk() {
+        let mut users = Vec::new();
+        let mut seen = HashSet::new();
+        let seed = vec![(0, page_from(0, 100)), (100, page_from(100, 100))];
+
+        let (offset, done, reused) = take_seed(seed, &mut users, &mut seen);
+
+        assert_eq!(offset, 200, "the walk resumes after the pages already fetched");
+        assert!(!done);
+        assert_eq!(reused, 2);
+        assert_eq!(users.len(), 200);
+    }
+
+    #[test]
+    fn a_short_seeded_page_ends_the_bucket() {
+        let mut users = Vec::new();
+        let mut seen = HashSet::new();
+        let seed = vec![(0, page_from(0, 100)), (100, page_from(100, 43))];
+
+        let (offset, done, reused) = take_seed(seed, &mut users, &mut seen);
+
+        assert_eq!(offset, 200);
+        assert!(done, "a short page means there is nothing left to fetch");
+        assert_eq!(reused, 2);
+        assert_eq!(users.len(), 143);
+    }
+
+    #[test]
+    fn a_gap_in_the_seed_stops_the_reuse() {
+        let mut users = Vec::new();
+        let mut seen = HashSet::new();
+        let seed = vec![(0, page_from(0, 100)), (200, page_from(200, 100))];
+
+        let (offset, done, reused) = take_seed(seed, &mut users, &mut seen);
+
+        assert_eq!(offset, 100);
+        assert!(!done);
+        assert_eq!(reused, 1);
         assert_eq!(users.len(), 100);
     }
 }
