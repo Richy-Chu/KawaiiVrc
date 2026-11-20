@@ -26,7 +26,15 @@ const ROSTER_CACHE_LIMIT: u64 = 16 * 1024 * 1024;
 /// World names are re-looked up a week after they were learned, so a renamed
 /// world does not stay wrong forever.
 const WORLD_NAME_TTL_SECS: u64 = 7 * 24 * 60 * 60;
-const WORLD_CACHE_MAX_ENTRIES: usize = 2_000;
+/// The world cache keeps a little more than the roster needs, so a large friend
+/// list does not lose worlds it uses, without letting the file grow forever.
+const WORLD_CACHE_MIN: usize = 500;
+const WORLD_CACHE_HEADROOM: usize = 250;
+const WORLD_CACHE_MAX: usize = 20_000;
+
+fn world_cache_cap(friends: usize) -> usize {
+    (friends + WORLD_CACHE_HEADROOM).clamp(WORLD_CACHE_MIN, WORLD_CACHE_MAX)
+}
 
 fn world_cache_path() -> PathBuf {
     session::shell_dir().join(WORLD_CACHE_FILE)
@@ -126,9 +134,9 @@ fn load_world_cache(path: &Path) -> WorldCache {
         entries.push((id, name, at));
     }
 
-    // A file written by an unbounded build may be over the cap; keep the newest.
+    // A file written by an unbounded build may be oversized; keep the newest.
     entries.sort_by(|left, right| right.2.cmp(&left.2));
-    entries.truncate(WORLD_CACHE_MAX_ENTRIES);
+    entries.truncate(WORLD_CACHE_MAX);
     for (id, name, at) in entries {
         cache.names.insert(id.clone(), name);
         cache.stamps.insert(id, at);
@@ -143,7 +151,12 @@ fn write_json_atomically(path: &Path, json: &str) {
     }
 }
 
-fn save_world_cache(path: &Path, names: &HashMap<String, String>, stamps: &HashMap<String, u64>) {
+fn save_world_cache(
+    path: &Path,
+    names: &HashMap<String, String>,
+    stamps: &HashMap<String, u64>,
+    cap: usize,
+) {
     let now = now_secs();
     let mut entries: Vec<(&String, &String, u64)> = names
         .iter()
@@ -153,7 +166,7 @@ fn save_world_cache(path: &Path, names: &HashMap<String, String>, stamps: &HashM
         .filter(|(_, _, at)| now.saturating_sub(*at) <= WORLD_NAME_TTL_SECS)
         .collect();
     entries.sort_by(|left, right| right.2.cmp(&left.2));
-    entries.truncate(WORLD_CACHE_MAX_ENTRIES);
+    entries.truncate(cap);
     if entries.is_empty() {
         return;
     }
@@ -986,7 +999,15 @@ impl Api {
                         stamps.insert(id.clone(), now);
                     }
                 }
-                save_world_cache(&world_cache_path(), &merged, &stamps);
+                // Sized to the roster the window is showing; without one (the
+                // headless dump) the hard ceiling applies instead of a guess.
+                let friends = self
+                    .roster
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().map(|roster| roster.items.len()));
+                let cap = friends.map(world_cache_cap).unwrap_or(WORLD_CACHE_MAX);
+                save_world_cache(&world_cache_path(), &merged, &stamps, cap);
             }
         }
         merged
@@ -2733,7 +2754,7 @@ mod world_cache_tests {
         ]);
         let stamps = HashMap::from([("wrld_a".to_string(), now_secs())]);
 
-        save_world_cache(&path, &names, &stamps);
+        save_world_cache(&path, &names, &stamps, world_cache_cap(0));
         let cache = load_world_cache(&path);
 
         assert_eq!(cache.names.get("wrld_a").map(String::as_str), Some("A World"));
@@ -2786,12 +2807,24 @@ mod world_cache_tests {
     }
 
     #[test]
+    fn the_cap_leaves_room_for_the_roster_within_a_hard_ceiling() {
+        assert_eq!(world_cache_cap(0), WORLD_CACHE_MIN);
+        assert_eq!(
+            world_cache_cap(2_343),
+            2_593,
+            "a big friend list keeps a world per friend plus headroom"
+        );
+        assert_eq!(world_cache_cap(50_000), WORLD_CACHE_MAX);
+    }
+
+    #[test]
     fn saving_keeps_the_newest_entries_within_the_cap() {
         let path = temp_path("cap");
+        let cap = 2_000;
         let now = now_secs();
         let mut names = HashMap::new();
         let mut stamps = HashMap::new();
-        for index in 0..WORLD_CACHE_MAX_ENTRIES + 10 {
+        for index in 0..cap + 10 {
             let id = format!("wrld_{index:05}");
             names.insert(id.clone(), format!("World {index}"));
             stamps.insert(id, now - index as u64);
@@ -2800,13 +2833,16 @@ mod world_cache_tests {
         names.insert("wrld_expired".to_string(), "Expired".to_string());
         stamps.insert("wrld_expired".to_string(), now - WORLD_NAME_TTL_SECS - 1);
 
-        save_world_cache(&path, &names, &stamps);
+        save_world_cache(&path, &names, &stamps, cap);
         let cache = load_world_cache(&path);
 
-        assert_eq!(cache.names.len(), WORLD_CACHE_MAX_ENTRIES);
+        assert_eq!(cache.names.len(), cap);
         assert!(!cache.names.contains_key("wrld_expired"));
         assert!(cache.names.contains_key("wrld_00000"), "newest kept");
-        assert!(!cache.names.contains_key("wrld_02000"), "oldest dropped");
+        assert!(
+            !cache.names.contains_key(&format!("wrld_{cap:05}")),
+            "oldest dropped"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -2825,7 +2861,7 @@ mod world_cache_tests {
         let path = temp_path("atomic");
         let names = HashMap::from([("wrld_a".to_string(), "A World".to_string())]);
 
-        save_world_cache(&path, &names, &HashMap::new());
+        save_world_cache(&path, &names, &HashMap::new(), 100);
 
         assert!(path.exists());
         assert!(!path.with_extension("tmp").exists());
