@@ -193,7 +193,7 @@ function applyPresence(update) {
   const friend = state.friends.find((row) => row.id === update.friend.id);
   if (!friend) return;
   Object.assign(friend, update.friend);
-  accountLine.textContent = `${update.total.toLocaleString()} friends${rosterSuffix()} · ${update.online} online · ${state.user?.display_name ?? ""}`;
+  accountLine.textContent = accountLabel(update.total, update.online);
   const worldId = worldIdOf(friend.location);
   if (worldId && friend.world === worldId) fillWorldNames();
   scheduleRosterRender();
@@ -230,9 +230,14 @@ async function fillWorldNames(attempt = 0) {
   }
 }
 
-function rosterSuffix() {
-  if (state.rosterStale) return " (saved)";
-  return state.rosterComplete ? "" : " (first page)";
+// A saved roster's counts are from last session, so it shows only the total
+// until a live roster lands.
+function accountLabel(total, online) {
+  const friends = `${total.toLocaleString()} friends`;
+  const who = state.user?.display_name ?? "";
+  if (state.rosterStale) return `${friends} (saved) · ${who}`;
+  const suffix = state.rosterComplete ? "" : " (first page)";
+  return `${friends}${suffix} · ${online} online · ${who}`;
 }
 
 function applyRoster(roster) {
@@ -240,7 +245,7 @@ function applyRoster(roster) {
   state.rosterRevision = roster.revision ?? state.rosterRevision;
   state.rosterComplete = Boolean(roster.complete);
   state.rosterStale = Boolean(roster.stale);
-  accountLine.textContent = `${roster.total.toLocaleString()} friends${rosterSuffix()} · ${roster.online} online · ${state.user?.display_name ?? ""}`;
+  accountLine.textContent = accountLabel(roster.total, roster.online);
   renderRoster();
   if (roster.worlds_pending > 0) fillWorldNames();
   status.textContent = roster.stale
