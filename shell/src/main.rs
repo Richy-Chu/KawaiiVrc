@@ -1031,7 +1031,7 @@ fn main() {
             }
             Ok(())
         })
-        .manage(Arc::new(Api::new()))
+        .manage(Arc::new(Api::with_disk_cache()))
         .register_asynchronous_uri_scheme_protocol("kawaii", |context, request, responder| {
             let app = context.app_handle().clone();
             tauri::async_runtime::spawn(async move {

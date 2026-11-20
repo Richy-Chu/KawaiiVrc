@@ -265,6 +265,13 @@ async function waitForFullRoster(attempts = 30) {
 
 async function loadFriends() {
   if (!state.signedIn || state.busy) return;
+  // Paint the roster remembered from last launch before touching the network.
+  try {
+    const cached = await invoke("friends_snapshot");
+    if (cached && cached.items.length > 0) applyRoster(cached);
+  } catch (error) {
+    // The fresh load below is the fallback.
+  }
   setBusy(true, "Loading friends from VRChat…");
   try {
     // First page paints immediately; the rest of the roster arrives behind it.

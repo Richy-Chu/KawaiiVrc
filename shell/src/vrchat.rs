@@ -2,7 +2,7 @@ use crate::session;
 use futures::future::join_all;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,9 +20,55 @@ const USER_AGENT: &str = "KawaiiVrcShell/0.2.0 (unofficial Windows companion)";
 /// app's folder, so a relaunch does not redo the lookups.
 const WORLD_CACHE_FILE: &str = "world-names.json";
 const WORLD_CACHE_LIMIT: u64 = 4 * 1024 * 1024;
+/// The last complete roster, so a launch paints friends before any request.
+const ROSTER_CACHE_FILE: &str = "roster-snapshot.json";
+const ROSTER_CACHE_LIMIT: u64 = 16 * 1024 * 1024;
 
 fn world_cache_path() -> PathBuf {
     session::shell_dir().join(WORLD_CACHE_FILE)
+}
+
+fn roster_cache_path() -> PathBuf {
+    session::shell_dir().join(ROSTER_CACHE_FILE)
+}
+
+/// The saved roster is a starting picture, not a live one: it is always treated
+/// as complete with revision 0, so the first publish of a launch supersedes it.
+fn load_roster_cache(path: &Path) -> Option<Roster> {
+    let readable = std::fs::metadata(path)
+        .map(|meta| meta.len() <= ROSTER_CACHE_LIMIT)
+        .unwrap_or(false);
+    if !readable {
+        return None;
+    }
+    let mut roster: Roster = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())?;
+    if roster.items.is_empty() {
+        return None;
+    }
+    roster.revision = 0;
+    roster.live = false;
+    roster.complete = true;
+    roster.degraded = false;
+    roster.total = roster.items.len();
+    roster.online = roster.items.iter().filter(|friend| friend.online).count();
+    roster.missing_worlds.clear();
+    roster.worlds_pending = 0;
+    Some(roster)
+}
+
+fn save_roster_cache(path: &Path, roster: &Roster) {
+    if roster.items.is_empty() {
+        return;
+    }
+    let Ok(json) = serde_json::to_string(roster) else {
+        return;
+    };
+    let temp = path.with_extension("tmp");
+    if std::fs::write(&temp, json).is_ok() {
+        let _ = std::fs::rename(&temp, path);
+    }
 }
 
 fn load_world_names(path: &Path) -> HashMap<String, String> {
@@ -110,7 +156,7 @@ pub struct Notice {
     pub seen: bool,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Friend {
     pub id: String,
     pub name: String,
@@ -124,7 +170,7 @@ pub struct Friend {
     pub trust: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Roster {
     pub items: Vec<Friend>,
     pub total: usize,
@@ -170,6 +216,8 @@ pub struct Api {
     page_requests: Mutex<HashMap<String, u32>>,
     revision: AtomicU64,
     app: Mutex<Option<tauri::AppHandle>>,
+    /// The window keeps its caches on disk; tests and one-off reports do not.
+    persist: bool,
     auth: Mutex<Option<String>>,
     user: Mutex<Option<UserInfo>>,
     worlds: Mutex<HashMap<String, String>>,
@@ -187,6 +235,15 @@ pub struct Api {
 
 impl Api {
     pub fn new() -> Self {
+        Self::build(false)
+    }
+
+    /// The window's API: it remembers the last roster and world names on disk.
+    pub fn with_disk_cache() -> Self {
+        Self::build(true)
+    }
+
+    fn build(persist: bool) -> Self {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(25))
@@ -194,6 +251,7 @@ impl Api {
             .expect("http client");
         Self {
             http,
+            persist,
             seed: Mutex::new(Vec::new()),
             page_requests: Mutex::new(HashMap::new()),
             revision: AtomicU64::new(0),
@@ -209,7 +267,11 @@ impl Api {
             live: AtomicBool::new(false),
             resolving: AtomicBool::new(false),
             realtime_started: AtomicBool::new(false),
-            roster: Mutex::new(None),
+            roster: Mutex::new(if persist {
+                load_roster_cache(&roster_cache_path())
+            } else {
+                None
+            }),
             roster_loading: AtomicBool::new(false),
         }
     }
@@ -491,7 +553,33 @@ impl Api {
     /// screen while the remaining pages load.
     fn publish(&self, users: &[Value], complete: bool, degraded: bool) -> Roster {
         let mut roster = self.build_roster(users, complete, degraded);
+
+        if !complete {
+            // Keep the rows already on screen (usually the roster loaded from
+            // disk) so a launch grows the list instead of dropping back to the
+            // first page and filling in again.
+            let previous = self.roster.lock().ok().and_then(|guard| guard.clone());
+            if let Some(previous) = previous.filter(|old| old.items.len() > roster.items.len()) {
+                let worlds = self.world_names();
+                let mut known: HashSet<String> =
+                    roster.items.iter().map(|friend| friend.id.clone()).collect();
+                for mut friend in previous.items {
+                    if known.insert(friend.id.clone()) {
+                        locate(&mut friend, &worlds);
+                        roster.items.push(friend);
+                    }
+                }
+                roster.total = roster.items.len();
+                roster.online = roster.items.iter().filter(|friend| friend.online).count();
+                roster.missing_worlds = missing_worlds(&roster.items, &worlds);
+                roster.worlds_pending = roster.missing_worlds.len();
+            }
+        }
+
         roster.revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
+        if complete && self.persist {
+            save_roster_cache(&roster_cache_path(), &roster);
+        }
         if let Ok(mut guard) = self.roster.lock() {
             *guard = Some(roster.clone());
         }
@@ -613,13 +701,7 @@ impl Api {
             locate(friend, &worlds);
         }
 
-        let mut seen_worlds: HashSet<String> = HashSet::new();
-        let missing_worlds: Vec<String> = items
-            .iter()
-            .filter_map(|friend| world_id_of(&friend.location))
-            .filter(|id| !worlds.contains_key(id))
-            .filter(|id| seen_worlds.insert(id.clone()))
-            .collect();
+        let missing_worlds = missing_worlds(&items, &worlds);
 
         Roster {
             revision: 0,
@@ -1443,6 +1525,17 @@ fn instance_label(location: &str) -> String {
     } else {
         "public".to_string()
     }
+}
+
+/// World ids the rows cannot name yet, in first-seen order.
+fn missing_worlds(items: &[Friend], worlds: &HashMap<String, String>) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    items
+        .iter()
+        .filter_map(|friend| world_id_of(&friend.location))
+        .filter(|id| !worlds.contains_key(id))
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
 }
 
 fn world_id_of(location: &str) -> Option<String> {
@@ -2714,5 +2807,115 @@ mod snapshot_relabel_tests {
         let api = Arc::new(Api::new());
         // Plain test thread: no tokio reactor, which used to panic here.
         api.resolve_worlds_in_background(vec!["wrld_a".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod roster_cache_tests {
+    use super::*;
+
+    fn temp_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("kawaii-roster-{}-{tag}.json", std::process::id()))
+    }
+
+    fn friend(id: &str, location: &str) -> Friend {
+        Friend {
+            id: id.to_string(),
+            name: id.to_string(),
+            status: String::new(),
+            status_description: String::new(),
+            location: location.to_string(),
+            world: String::new(),
+            instance: String::new(),
+            avatar: String::new(),
+            online: location != "offline",
+            trust: String::new(),
+        }
+    }
+
+    fn stored(items: Vec<Friend>, complete: bool) -> Roster {
+        Roster {
+            total: items.len(),
+            online: items.iter().filter(|friend| friend.online).count(),
+            items,
+            revision: 7,
+            live: true,
+            worlds_pending: 1,
+            complete,
+            degraded: true,
+            missing_worlds: vec!["wrld_x".to_string()],
+        }
+    }
+
+    #[test]
+    fn a_saved_roster_loads_back_as_a_complete_starting_picture() {
+        let path = temp_path("roundtrip");
+        save_roster_cache(
+            &path,
+            &stored(
+                vec![friend("usr_a", "wrld_x:1"), friend("usr_b", "offline")],
+                false,
+            ),
+        );
+
+        let loaded = load_roster_cache(&path).expect("loaded roster");
+
+        assert_eq!(loaded.items.len(), 2);
+        assert_eq!(loaded.total, 2);
+        assert_eq!(loaded.online, 1);
+        assert_eq!(loaded.revision, 0, "the first live publish supersedes it");
+        assert!(loaded.complete, "a saved roster is painted as the whole list");
+        assert!(!loaded.live && !loaded.degraded);
+        assert!(loaded.missing_worlds.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_missing_or_broken_roster_cache_loads_none() {
+        let path = temp_path("missing");
+        assert!(load_roster_cache(&path).is_none());
+
+        std::fs::write(&path, "{ not a roster").expect("write broken file");
+        assert!(load_roster_cache(&path).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_partial_publish_keeps_rows_from_the_roster_already_shown() {
+        let api = Api::new();
+        if let Ok(mut guard) = api.roster.lock() {
+            *guard = Some(stored(
+                vec![friend("usr_a", "offline"), friend("usr_b", "offline")],
+                true,
+            ));
+        }
+
+        let users = vec![serde_json::json!({ "id": "usr_a", "displayName": "A" })];
+        let published = api.publish(&users, false, false);
+
+        assert!(!published.complete);
+        assert_eq!(
+            published.items.len(),
+            2,
+            "the saved row stays while the first page loads"
+        );
+        assert_eq!(published.items[0].id, "usr_a");
+    }
+
+    #[test]
+    fn a_complete_publish_drops_rows_the_walk_did_not_see() {
+        let api = Api::new();
+        if let Ok(mut guard) = api.roster.lock() {
+            *guard = Some(stored(
+                vec![friend("usr_a", "offline"), friend("usr_b", "offline")],
+                true,
+            ));
+        }
+
+        let users = vec![serde_json::json!({ "id": "usr_a", "displayName": "A" })];
+        let published = api.publish(&users, true, false);
+
+        assert!(published.complete);
+        assert_eq!(published.items.len(), 1, "the finished walk is the truth");
     }
 }
