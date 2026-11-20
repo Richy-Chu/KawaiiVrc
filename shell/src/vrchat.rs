@@ -4,7 +4,8 @@ use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,6 +15,50 @@ use tokio_tungstenite::tungstenite::Message;
 const BASE: &str = "https://api.vrchat.cloud/api/1/";
 const PIPELINE: &str = "wss://pipeline.vrchat.cloud";
 const USER_AGENT: &str = "KawaiiVrcShell/0.2.0 (unofficial Windows companion)";
+
+/// The shell's own cache of world names, beside its keys rather than in the WPF
+/// app's folder, so a relaunch does not redo the lookups.
+const WORLD_CACHE_FILE: &str = "world-names.json";
+const WORLD_CACHE_LIMIT: u64 = 4 * 1024 * 1024;
+
+fn world_cache_path() -> PathBuf {
+    session::shell_dir().join(WORLD_CACHE_FILE)
+}
+
+fn load_world_names(path: &Path) -> HashMap<String, String> {
+    let readable = std::fs::metadata(path)
+        .map(|meta| meta.len() <= WORLD_CACHE_LIMIT)
+        .unwrap_or(false);
+    if !readable {
+        return HashMap::new();
+    }
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<HashMap<String, String>>(&text).ok())
+        .unwrap_or_default()
+        .into_iter()
+        // Failed lookups are cached in memory for this run only; a world that
+        // was private or missing last time deserves a fresh try next launch.
+        .filter(|(id, name)| id.starts_with("wrld_") && !name.is_empty())
+        .collect()
+}
+
+fn save_world_names(path: &Path, names: &HashMap<String, String>) {
+    let named: BTreeMap<&String, &String> = names
+        .iter()
+        .filter(|(_, name)| !name.is_empty())
+        .collect();
+    if named.is_empty() {
+        return;
+    }
+    let Ok(json) = serde_json::to_string(&named) else {
+        return;
+    };
+    let temp = path.with_extension("tmp");
+    if std::fs::write(&temp, json).is_ok() {
+        let _ = std::fs::rename(&temp, path);
+    }
+}
 
 #[derive(Serialize, Clone)]
 pub struct UserInfo {
@@ -133,7 +178,7 @@ impl Api {
             http,
             auth: Mutex::new(None),
             user: Mutex::new(None),
-            worlds: Mutex::new(HashMap::new()),
+            worlds: Mutex::new(load_world_names(&world_cache_path())),
             presence: Mutex::new(HashMap::new()),
             self_location: Mutex::new(String::new()),
             activity: crate::activity::ActivityLog::new(),
@@ -668,8 +713,14 @@ impl Api {
             }
         }
 
+        let gained = missing
+            .iter()
+            .any(|id| merged.get(id).is_some_and(|name| !name.is_empty()));
         if let Ok(mut guard) = self.worlds.lock() {
             *guard = merged.clone();
+        }
+        if gained {
+            save_world_names(&world_cache_path(), &merged);
         }
         merged
     }
@@ -2222,5 +2273,55 @@ mod world_sweep_tests {
         let pending = api.uncached_worlds(&ids);
         assert_eq!(pending.len(), 50);
         assert_eq!(pending[0], "wrld_40");
+    }
+}
+
+#[cfg(test)]
+mod world_cache_tests {
+    use super::*;
+
+    fn temp_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("kawaii-worlds-{}-{tag}.json", std::process::id()))
+    }
+
+    #[test]
+    fn resolved_names_survive_a_round_trip_and_failures_do_not() {
+        let path = temp_path("roundtrip");
+        let names = HashMap::from([
+            ("wrld_a".to_string(), "A World".to_string()),
+            ("wrld_b".to_string(), String::new()),
+        ]);
+
+        save_world_names(&path, &names);
+        let loaded = load_world_names(&path);
+
+        assert_eq!(loaded.get("wrld_a").map(String::as_str), Some("A World"));
+        assert!(
+            !loaded.contains_key("wrld_b"),
+            "an empty name is a failed lookup and should be retried next launch"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_missing_or_broken_cache_loads_empty() {
+        let path = temp_path("missing");
+        assert!(load_world_names(&path).is_empty());
+
+        std::fs::write(&path, "{ not json").expect("write a broken cache file");
+        assert!(load_world_names(&path).is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn saving_leaves_no_temporary_file_behind() {
+        let path = temp_path("atomic");
+        let names = HashMap::from([("wrld_a".to_string(), "A World".to_string())]);
+
+        save_world_names(&path, &names);
+
+        assert!(path.exists());
+        assert!(!path.with_extension("tmp").exists());
+        let _ = std::fs::remove_file(&path);
     }
 }
