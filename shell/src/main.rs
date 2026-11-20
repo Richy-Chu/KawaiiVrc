@@ -10,7 +10,7 @@ mod vrchat;
 
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -387,7 +387,33 @@ async fn sign_out(api: tauri::State<'_, Arc<Api>>) -> Result<(), String> {
 
 #[tauri::command]
 async fn friends(api: tauri::State<'_, Arc<Api>>) -> Result<Roster, String> {
-    api.friends().await
+    let mut roster = api.friends().await?;
+    let missing = std::mem::take(&mut roster.missing_worlds);
+    api.inner().resolve_worlds_in_background(missing);
+    Ok(roster)
+}
+
+/// First page only: what the UI paints before the full roster finishes.
+#[tauri::command]
+async fn friends_quick(api: tauri::State<'_, Arc<Api>>) -> Result<Roster, String> {
+    let mut roster = api.friends_quick().await?;
+    let missing = std::mem::take(&mut roster.missing_worlds);
+    api.inner().resolve_worlds_in_background(missing);
+    api.inner().start_roster_refresh();
+    Ok(roster)
+}
+
+/// The full roster once the background load has it; `null` while it is loading.
+#[tauri::command]
+fn friends_snapshot(api: tauri::State<'_, Arc<Api>>) -> Option<Roster> {
+    api.roster_snapshot()
+}
+
+/// World names the roster could not show yet; the UI polls this while the
+/// background lookup fills the cache.
+#[tauri::command]
+fn friend_worlds(api: tauri::State<'_, Arc<Api>>) -> HashMap<String, String> {
+    api.world_names()
 }
 
 #[tauri::command]
@@ -691,11 +717,26 @@ fn dump_report() {
         ));
         out.push_str(&format!("location: {}\n", api.location()));
 
+        let quick_started = std::time::Instant::now();
+        match api.friends_quick().await {
+            Ok(quick) => out.push_str(&format!(
+                "friends_quick: {} items in {} ms complete={}\n",
+                quick.total,
+                quick_started.elapsed().as_millis(),
+                quick.complete
+            )),
+            Err(error) => out.push_str(&format!("friends_quick error: {error}\n")),
+        }
+
+        let roster_started = std::time::Instant::now();
         match api.friends().await {
             Ok(roster) => {
                 out.push_str(&format!(
-                    "roster: {} total, {} online, live={}\n",
-                    roster.total, roster.online, roster.live
+                    "roster: {} total, {} online, live={}, {} ms\n",
+                    roster.total,
+                    roster.online,
+                    roster.live,
+                    roster_started.elapsed().as_millis()
                 ));
                 for friend in roster.items.iter().filter(|friend| friend.online).take(8) {
                     out.push_str(&format!(
@@ -846,6 +887,55 @@ fn resolve_favorites_report(passes: usize) {
     fs::write("shell-favorites.txt", out).ok();
 }
 
+/// Test-only headless update: check, download, install and exit, writing what
+/// happened next to the shell's settings. Built with `--features update-test`.
+#[cfg(feature = "update-test")]
+fn start_headless_update(handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        use tauri_plugin_updater::UpdaterExt;
+
+        let plugins =
+            serde_json::to_value(&handle.config().plugins).unwrap_or(serde_json::Value::Null);
+        let endpoints = plugins
+            .get("updater")
+            .and_then(|updater| updater.get("endpoints"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let mut report = format!("current {}\n", env!("CARGO_PKG_VERSION"));
+        report.push_str(&format!(
+            "endpoints: {}\n",
+            serde_json::to_string(&endpoints).unwrap_or_default()
+        ));
+        match handle.updater() {
+            Ok(updater) => match updater.check().await {
+                Ok(Some(update)) => {
+                    report.push_str(&format!("offered {}\n", update.version));
+                    match update.download_and_install(|_, _| {}, || {}).await {
+                        Ok(()) => report.push_str("downloaded and installed\n"),
+                        Err(error) => report.push_str(&format!("install failed: {error}\n")),
+                    }
+                }
+                Ok(None) => report.push_str("no update offered\n"),
+                Err(error) => report.push_str(&format!("check failed: {error}\n")),
+            },
+            Err(error) => report.push_str(&format!("updater unavailable: {error}\n")),
+        }
+
+        let _ = std::fs::create_dir_all(session::shell_dir());
+        let path = session::shell_dir().join("update-report.txt");
+        // Append: after an install the app is relaunched with the same arguments,
+        // so both runs must stay visible.
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        let mut body = std::fs::read_to_string(&path).unwrap_or_default();
+        body.push_str(&format!("=== run {stamp}\n{report}"));
+        std::fs::write(&path, body).ok();
+        handle.exit(0);
+    });
+}
+
 fn main() {
     let arguments: Vec<String> = std::env::args().collect();
     if arguments.iter().any(|argument| argument == "--resolve-favorites") {
@@ -867,56 +957,12 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Lets the update path be exercised without a mouse: check, download,
         // install and exit, writing what happened next to the shell's settings.
-        .setup(|app| {
+        .setup(|_app| {
+            // Compiled only with the `update-test` feature: a shipping build has
+            // no headless update switch at all.
+            #[cfg(feature = "update-test")]
             if std::env::args().any(|argument| argument == "--install-update") {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    use tauri_plugin_updater::UpdaterExt;
-
-                    let plugins = serde_json::to_value(&handle.config().plugins)
-                        .unwrap_or(serde_json::Value::Null);
-                    let endpoints = plugins
-                        .get("updater")
-                        .and_then(|updater| updater.get("endpoints"))
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    let mut report = format!("current {}\n", env!("CARGO_PKG_VERSION"));
-                    report.push_str(&format!(
-                        "endpoints: {}\n",
-                        serde_json::to_string(&endpoints).unwrap_or_default()
-                    ));
-                    match handle.updater() {
-                        Ok(updater) => match updater.check().await {
-                            Ok(Some(update)) => {
-                                report.push_str(&format!("offered {}\n", update.version));
-                                match update.download_and_install(|_, _| {}, || {}).await {
-                                    Ok(()) => report.push_str("downloaded and installed\n"),
-                                    Err(error) => {
-                                        report.push_str(&format!("install failed: {error}\n"))
-                                    }
-                                }
-                            }
-                            Ok(None) => report.push_str("no update offered\n"),
-                            Err(error) => report.push_str(&format!("check failed: {error}\n")),
-                        },
-                        Err(error) => {
-                            report.push_str(&format!("updater unavailable: {error}\n"))
-                        }
-                    }
-
-                    let _ = std::fs::create_dir_all(session::shell_dir());
-                    let path = session::shell_dir().join("update-report.txt");
-                    // Append: after an install the app is relaunched with the same
-                    // arguments, so both runs must stay visible.
-                    let stamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|elapsed| elapsed.as_secs())
-                        .unwrap_or(0);
-                    let mut body = std::fs::read_to_string(&path).unwrap_or_default();
-                    body.push_str(&format!("=== run {stamp}\n{report}"));
-                    std::fs::write(&path, body).ok();
-                    handle.exit(0);
-                });
+                start_headless_update(_app.handle().clone());
             }
             Ok(())
         })
@@ -981,6 +1027,9 @@ fn main() {
             verify_two_factor,
             sign_out,
             friends,
+            friends_quick,
+            friends_snapshot,
+            friend_worlds,
             instance,
             notifications,
             settings_get,

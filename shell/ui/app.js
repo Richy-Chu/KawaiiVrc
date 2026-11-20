@@ -67,6 +67,11 @@ const localImage = (path) =>
 
 const dotClass = (status) => `dot-${String(status || "offline").replace(/\s+/g, "-")}`;
 
+const worldIdOf = (location) => {
+  if (!location || !location.startsWith("wrld_")) return "";
+  return location.split("~")[0].split(":")[0];
+};
+
 function setBusy(busy, text) {
   state.busy = busy;
   el("signin-button").disabled = busy;
@@ -148,7 +153,7 @@ function renderRoster() {
     return;
   }
 
-  const inGame = matches.filter((friend) => friend.online && friend.world && friend.world.startsWith("wrld_"));
+  const inGame = matches.filter((friend) => friend.online && worldIdOf(friend.location));
   const online = matches.filter((friend) => friend.online && !inGame.includes(friend));
   const offline = matches.filter((friend) => !friend.online);
   const byName = (a, b) => a.name.localeCompare(b.name);
@@ -170,17 +175,67 @@ function renderRoster() {
     .join("");
 }
 
+// World names arrive after the roster is on screen; patch them in as they land.
+async function fillWorldNames(attempt = 0) {
+  if (attempt > 15) return;
+  try {
+    const names = await invoke("friend_worlds");
+    let changed = false;
+    for (const friend of state.friends) {
+      const id = worldIdOf(friend.location);
+      const name = id ? names[id] : "";
+      if (name && friend.world !== name) {
+        friend.world = name;
+        changed = true;
+      }
+    }
+    if (changed) renderRoster();
+
+    const pending = state.friends.some((friend) => {
+      const id = worldIdOf(friend.location);
+      return id && !names[id];
+    });
+    if (pending) setTimeout(() => fillWorldNames(attempt + 1), 1500);
+  } catch (error) {
+    // Leave the world ids visible rather than blanking the rows.
+  }
+}
+
+function applyRoster(roster) {
+  state.friends = roster.items;
+  const suffix = roster.complete ? "" : " (first page)";
+  accountLine.textContent = `${roster.total.toLocaleString()} friends${suffix} · ${roster.online} online · ${state.user?.display_name ?? ""}`;
+  renderRoster();
+  if (roster.worlds_pending > 0) fillWorldNames();
+  status.textContent = roster.live
+    ? "Live presence from VRChat's realtime pipeline."
+    : "Roster loaded; presence is reconnecting.";
+}
+
+async function waitForFullRoster(attempts = 30) {
+  for (let index = 0; index < attempts; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const snapshot = await invoke("friends_snapshot");
+    if (snapshot && snapshot.complete) return snapshot;
+  }
+  return null;
+}
+
 async function loadFriends() {
   if (!state.signedIn || state.busy) return;
   setBusy(true, "Loading friends from VRChat…");
   try {
-    const result = await invoke("friends");
-    state.friends = result.items;
-    accountLine.textContent = `${result.total.toLocaleString()} friends · ${result.online} online · ${state.user?.display_name ?? ""}`;
-    renderRoster();
-    status.textContent = result.live
-      ? "Live presence from VRChat's realtime pipeline."
-      : "Roster loaded; presence is reconnecting.";
+    // First page paints immediately; the rest of the roster arrives behind it.
+    const quick = await invoke("friends_quick");
+    applyRoster(quick);
+    setBusy(false);
+
+    const full = await waitForFullRoster();
+    if (full) {
+      applyRoster(full);
+    } else {
+      status.textContent = "Showing the first page; the full roster is still loading.";
+    }
   } catch (error) {
     const message = String(error);
     if (/sign in again|expired/i.test(message)) {

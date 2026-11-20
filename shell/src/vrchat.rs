@@ -72,12 +72,19 @@ pub struct Friend {
     pub trust: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Roster {
     pub items: Vec<Friend>,
     pub total: usize,
     pub online: usize,
     pub live: bool,
+    /// In-world friends whose world name is not cached yet; the UI keeps
+    /// reading the cache while the background lookup fills it in.
+    pub worlds_pending: usize,
+    /// False while only the first page has been loaded.
+    pub complete: bool,
+    #[serde(skip)]
+    pub missing_worlds: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -108,6 +115,9 @@ pub struct Api {
     realtime_error: Mutex<String>,
     live: AtomicBool,
     realtime_started: AtomicBool,
+    resolving: AtomicBool,
+    roster: Mutex<Option<Roster>>,
+    roster_loading: AtomicBool,
 }
 
 impl Api {
@@ -128,7 +138,10 @@ impl Api {
             events: Mutex::new(HashMap::new()),
             realtime_error: Mutex::new(String::new()),
             live: AtomicBool::new(false),
+            resolving: AtomicBool::new(false),
             realtime_started: AtomicBool::new(false),
+            roster: Mutex::new(None),
+            roster_loading: AtomicBool::new(false),
         }
     }
 
@@ -328,48 +341,54 @@ impl Api {
         // VRChat's `offline` filter is exclusive: `offline=false` is the online
         // bucket and carries real locations, `offline=true` reports everyone as
         // offline. Both are needed, and online is fetched first so the roster is
-        // useful before the offline pages finish.
+        // useful before the offline pages finish. Pages go six at a time because
+        // a large account has ~23 offline pages.
         let mut users: Vec<Value> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for bucket in ["false", "true"] {
-            let mut offset = 0usize;
-            loop {
-                let path = format!("auth/user/friends?offline={bucket}&n=100&offset={offset}");
-                let (status, _, text) = self
-                    .request(reqwest::Method::GET, &path, Some(&cookie), None)
-                    .await?;
-                if status == reqwest::StatusCode::UNAUTHORIZED {
-                    self.set_cookie(None);
-                    self.set_user(None);
-                    return Err("Your session expired. Sign in again.".to_string());
-                }
-                if !status.is_success() {
-                    return Err(format!(
-                        "VRChat returned {} while loading friends.",
-                        status.as_u16()
-                    ));
-                }
-                let page: Vec<Value> = serde_json::from_str(&text)
-                    .map_err(|_| "VRChat returned an unexpected friend list.".to_string())?;
-                let count = page.len();
-                for user in page {
-                    push_unique(&mut users, &mut seen, user);
-                }
-                if count < 100 || users.len() >= 2_500 {
-                    break;
-                }
-                offset += 100;
+            for user in self.fetch_bucket(&cookie, bucket).await? {
+                push_unique(&mut users, &mut seen, user);
             }
             if users.len() >= 2_500 {
                 break;
             }
         }
 
+        let roster = self.build_roster(&users, true);
+        if let Ok(mut guard) = self.roster.lock() {
+            *guard = Some(roster.clone());
+        }
+        Ok(roster)
+    }
+
+    /// Just the first online page, so the UI can paint in well under a second.
+    pub async fn friends_quick(&self) -> Result<Roster, String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let page = self.fetch_page(&cookie, "false", 0).await?;
+        Ok(self.build_roster(&page, false))
+    }
+
+    pub fn roster_snapshot(&self) -> Option<Roster> {
+        self.roster.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    /// Loads the full roster without blocking the caller.
+    pub fn start_roster_refresh(self: &Arc<Self>) {
+        if self.roster_loading.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let api = Arc::clone(self);
+        tokio::spawn(async move {
+            let _ = api.friends().await;
+            api.roster_loading.store(false, Ordering::SeqCst);
+        });
+    }
+
+    fn build_roster(&self, users: &[Value], complete: bool) -> Roster {
         let mut items: Vec<Friend> = users
             .iter()
             .map(|user| map_friend(user, &HashMap::new()))
             .collect();
-        let _ = &mut items;
 
         // The friends endpoint reports every friend as offline; live presence
         // only arrives on the pipeline, so overlay whatever it has told us.
@@ -394,26 +413,109 @@ impl Api {
             if !entry.avatar.is_empty() {
                 friend.avatar = entry.avatar.clone();
             }
-            locate(friend, &HashMap::new());
         }
 
-        let world_ids: Vec<String> = items
-            .iter()
-            .filter_map(|friend| world_id_of(&friend.location))
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let worlds = self.resolve_worlds(world_ids, &cookie).await;
+        // Names come from the session cache only; anything unknown is resolved
+        // in the background so the roster can be painted straight away.
+        let worlds = self.world_names();
         for friend in &mut items {
             locate(friend, &worlds);
         }
 
-        Ok(Roster {
+        let mut seen_worlds: HashSet<String> = HashSet::new();
+        let missing_worlds: Vec<String> = items
+            .iter()
+            .filter_map(|friend| world_id_of(&friend.location))
+            .filter(|id| !worlds.contains_key(id))
+            .filter(|id| seen_worlds.insert(id.clone()))
+            .collect();
+
+        Roster {
             total: items.len(),
             online: items.iter().filter(|friend| friend.online).count(),
             live: self.live.load(Ordering::SeqCst),
+            worlds_pending: missing_worlds.len(),
+            missing_worlds,
+            complete,
             items,
-        })
+        }
+    }
+
+    async fn fetch_page(
+        &self,
+        cookie: &str,
+        bucket: &str,
+        offset: usize,
+    ) -> Result<Vec<Value>, String> {
+        let path = format!("auth/user/friends?offline={bucket}&n=100&offset={offset}");
+        let (status, _, text) = self
+            .request(reqwest::Method::GET, &path, Some(cookie), None)
+            .await?;
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            self.set_cookie(None);
+            self.set_user(None);
+            return Err("Your session expired. Sign in again.".to_string());
+        }
+        if !status.is_success() {
+            return Err(format!(
+                "VRChat returned {} while loading friends.",
+                status.as_u16()
+            ));
+        }
+        serde_json::from_str(&text)
+            .map_err(|_| "VRChat returned an unexpected friend list.".to_string())
+    }
+
+    /// Walks every page of one bucket six requests at a time.
+    async fn fetch_bucket(&self, cookie: &str, bucket: &str) -> Result<Vec<Value>, String> {
+        let first = self.fetch_page(cookie, bucket, 0).await?;
+        let mut users = first;
+        let mut finished = users.len() < 100;
+        let mut offset = 100usize;
+
+        while !finished && users.len() < 2_500 {
+            let offsets: Vec<usize> = (0..6).map(|index| offset + index * 100).collect();
+            let results = join_all(
+                offsets
+                    .iter()
+                    .map(|offset| self.fetch_page(cookie, bucket, *offset)),
+            )
+            .await;
+            for result in results {
+                let page = result?;
+                let short = page.len() < 100;
+                users.extend(page);
+                if short {
+                    finished = true;
+                    break;
+                }
+            }
+            offset += 600;
+        }
+
+        Ok(users)
+    }
+
+    pub fn world_names(&self) -> HashMap<String, String> {
+        self.worlds
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    /// Resolves world names after the roster is already on screen. One sweep at
+    /// a time; the next `friends` call starts another if ids are still missing.
+    pub fn resolve_worlds_in_background(self: &Arc<Self>, ids: Vec<String>) {
+        if ids.is_empty() || self.resolving.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let api = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Some(cookie) = api.cookie() {
+                let _ = api.resolve_worlds(ids, &cookie).await;
+            }
+            api.resolving.store(false, Ordering::SeqCst);
+        });
     }
 
     /// World names are shared across rows and change rarely, so each id is

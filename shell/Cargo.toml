@@ -1,11 +1,16 @@
 [package]
 name = "kawaii-shell"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 description = "Experimental Rust + WebView2 core for KawaiiVrc (rewrite stage 2: auth and roster)"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[features]
+# Compiles the headless `--install-update` switch used by the update tests.
+# Shipping builds leave it out.
+update-test = []
 
 [dependencies]
 tauri = { version = "2", features = [] }
