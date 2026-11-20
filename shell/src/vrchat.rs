@@ -26,6 +26,9 @@ const WORLD_CACHE_LIMIT: u64 = 4 * 1024 * 1024;
 /// another, so the file name carries the account id.
 const ROSTER_CACHE_PREFIX: &str = "roster-snapshot";
 const ROSTER_CACHE_LIMIT: u64 = 16 * 1024 * 1024;
+/// A saved roster older than this is not painted at all: after a week its names
+/// are more likely to mislead than help, so the live walk starts from scratch.
+const ROSTER_CACHE_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 /// World names are re-looked up a week after they were learned, so a renamed
 /// world does not stay wrong forever.
 const WORLD_NAME_TTL_SECS: u64 = 7 * 24 * 60 * 60;
@@ -91,21 +94,53 @@ fn load_roster_cache(path: &Path) -> Option<Roster> {
     if roster.items.is_empty() {
         return None;
     }
+    // Snapshots written before the timestamp existed are dated by the file's
+    // own age instead of being trusted as fresh.
+    let saved_at = if roster.saved_at > 0 {
+        roster.saved_at
+    } else {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0)
+    };
+    if saved_at > 0 && now_secs().saturating_sub(saved_at) > ROSTER_CACHE_MAX_AGE_SECS {
+        // Too old to be an honest starting picture; do not paint it, and do not
+        // keep parsing it on every launch.
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+
     roster.revision = 0;
     roster.stale = true;
     roster.live = false;
     roster.complete = true;
     roster.degraded = false;
+    roster.saved_at = saved_at;
     roster.total = roster.items.len();
     roster.online = roster.items.iter().filter(|friend| friend.online).count();
     Some(roster)
+}
+
+/// Removes the single-account snapshot older builds left behind; the
+/// per-account files replaced it and nothing reads it any more.
+fn retire_legacy_roster_cache(dir: &Path) {
+    let legacy = dir.join(format!("{ROSTER_CACHE_PREFIX}.json"));
+    if legacy.exists() {
+        let _ = std::fs::remove_file(&legacy);
+    }
 }
 
 fn save_roster_cache(path: &Path, roster: &Roster) {
     if roster.items.is_empty() {
         return;
     }
-    if let Ok(json) = serde_json::to_string(roster) {
+    // The file remembers how old it is, so a later launch can label or drop it.
+    let mut saved = roster.clone();
+    saved.saved_at = now_secs();
+    if let Ok(json) = serde_json::to_string(&saved) {
         write_json_atomically(path, &json);
     }
 }
@@ -299,6 +334,9 @@ pub struct Roster {
     pub complete: bool,
     /// True when some pages were dropped after retries, so the list may be short.
     pub degraded: bool,
+    /// When the saved snapshot was written, as a Unix timestamp; 0 for a live
+    /// roster. The window turns it into "saved 3 h ago" while it is stale.
+    pub saved_at: u64,
     #[serde(skip)]
     pub missing_worlds: Vec<String>,
 }
@@ -426,6 +464,10 @@ impl Api {
                 return;
             }
             *current = Some(key.clone());
+        }
+
+        if self.persist {
+            retire_legacy_roster_cache(&session::shell_dir());
         }
 
         // Drop everything that belonged to the previous account before loading
@@ -876,6 +918,7 @@ impl Api {
             missing_worlds,
             complete,
             degraded,
+            saved_at: 0,
             items,
         }
     }
@@ -2781,6 +2824,7 @@ mod world_sweep_tests {
                 worlds_pending: 1,
                 complete: true,
                 degraded: false,
+                saved_at: 0,
                 missing_worlds: vec!["wrld_late".to_string()],
             });
         }
@@ -3119,6 +3163,7 @@ mod roster_cache_tests {
             worlds_pending: 1,
             complete,
             degraded: true,
+            saved_at: 0,
             missing_worlds: vec!["wrld_x".to_string()],
         }
     }
@@ -3263,5 +3308,96 @@ mod account_cache_tests {
         api.adopt_account("usr_aaa");
 
         assert_eq!(api.roster_snapshot().expect("kept roster").revision, revision);
+    }
+}
+
+
+#[cfg(test)]
+mod roster_age_tests {
+    use super::*;
+
+    fn temp_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("kawaii-roster-age-{}-{tag}.json", std::process::id()))
+    }
+
+    fn one_friend() -> Roster {
+        let mut roster = Roster::default();
+        roster.items.push(Friend {
+            id: "usr_a".to_string(),
+            name: "A".to_string(),
+            ..Friend::default()
+        });
+        roster.total = 1;
+        roster
+    }
+
+    #[test]
+    fn a_saved_roster_remembers_when_it_was_written() {
+        let path = temp_path("stamp");
+        save_roster_cache(&path, &one_friend());
+
+        let loaded = load_roster_cache(&path).expect("fresh snapshot loads");
+
+        assert!(loaded.stale);
+        assert!(
+            now_secs().saturating_sub(loaded.saved_at) < 5,
+            "the saved time is close to now"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_snapshot_past_the_max_age_is_dropped_instead_of_painted() {
+        let path = temp_path("old");
+        let old = now_secs() - ROSTER_CACHE_MAX_AGE_SECS - 60;
+        let json = serde_json::json!({
+            "items": [{ "id": "usr_a", "name": "A" }],
+            "total": 1,
+            "online": 0,
+            "complete": true,
+            "saved_at": old,
+        })
+        .to_string();
+        std::fs::write(&path, json).expect("write an old snapshot");
+
+        assert!(load_roster_cache(&path).is_none());
+        assert!(!path.exists(), "an expired snapshot is cleaned up");
+    }
+
+    #[test]
+    fn a_snapshot_from_before_the_timestamp_is_dated_by_the_file() {
+        let path = temp_path("unstamped");
+        let json = serde_json::json!({
+            "items": [{ "id": "usr_a", "name": "A" }],
+            "total": 1,
+            "online": 0,
+            "complete": true,
+        })
+        .to_string();
+        std::fs::write(&path, json).expect("write an unstamped snapshot");
+
+        let loaded = load_roster_cache(&path).expect("a fresh file still loads");
+
+        assert!(
+            now_secs().saturating_sub(loaded.saved_at) < 5,
+            "the file's own age stands in for the missing timestamp"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_legacy_shared_snapshot_is_retired() {
+        let dir = std::env::temp_dir().join(format!("kawaii-retire-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let legacy = dir.join("roster-snapshot.json");
+        let scoped = dir.join("roster-snapshot-usr_a.json");
+        std::fs::write(&legacy, "{}").expect("legacy file");
+        std::fs::write(&scoped, "{}").expect("scoped file");
+
+        retire_legacy_roster_cache(&dir);
+
+        assert!(!legacy.exists(), "the unused shared file is gone");
+        assert!(scoped.exists(), "the per-account file stays");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

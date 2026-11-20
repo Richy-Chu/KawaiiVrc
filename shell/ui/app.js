@@ -18,7 +18,8 @@ const state = {
   timer: 0,
   rosterRevision: 0,
   rosterComplete: false,
-  rosterStale: false
+  rosterStale: false,
+  rosterSavedAt: 0
 };
 
 const el = (id) => document.getElementById(id);
@@ -256,12 +257,23 @@ async function fillWorldNames(attempt = 0) {
   }
 }
 
+// How old the saved roster is, so it never reads as this session's list.
+function savedAge(savedAt) {
+  if (!savedAt) return "saved";
+  const minutes = Math.round((Date.now() / 1000 - savedAt) / 60);
+  if (minutes < 2) return "saved just now";
+  if (minutes < 90) return `saved ${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `saved ${hours} h ago`;
+  return `saved ${Math.round(hours / 24)} days ago`;
+}
+
 // A saved roster's counts are from last session, so it shows only the total
 // until a live roster lands.
 function accountLabel(total, online) {
   const friends = `${total.toLocaleString()} friends`;
   const who = state.user?.display_name ?? "";
-  if (state.rosterStale) return `${friends} (saved) · ${who}`;
+  if (state.rosterStale) return `${friends} (${savedAge(state.rosterSavedAt)}) · ${who}`;
   const suffix = state.rosterComplete ? "" : " (first page)";
   return `${friends}${suffix} · ${online} online · ${who}`;
 }
@@ -271,11 +283,12 @@ function applyRoster(roster) {
   state.rosterRevision = roster.revision ?? state.rosterRevision;
   state.rosterComplete = Boolean(roster.complete);
   state.rosterStale = Boolean(roster.stale);
+  state.rosterSavedAt = roster.saved_at || 0;
   accountLine.textContent = accountLabel(roster.total, roster.online);
   renderRoster();
   if (roster.worlds_pending > 0) fillWorldNames();
   status.textContent = roster.stale
-    ? "Showing the roster saved from your last session; refreshing…"
+    ? `Showing the roster ${savedAge(roster.saved_at || 0)}; refreshing…`
     : roster.degraded
       ? "Some friend pages were throttled; the next refresh picks them up."
       : roster.live
