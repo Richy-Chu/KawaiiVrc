@@ -48,13 +48,12 @@ fn load_roster_cache(path: &Path) -> Option<Roster> {
         return None;
     }
     roster.revision = 0;
+    roster.stale = true;
     roster.live = false;
     roster.complete = true;
     roster.degraded = false;
     roster.total = roster.items.len();
     roster.online = roster.items.iter().filter(|friend| friend.online).count();
-    roster.missing_worlds.clear();
-    roster.worlds_pending = 0;
     Some(roster)
 }
 
@@ -62,12 +61,8 @@ fn save_roster_cache(path: &Path, roster: &Roster) {
     if roster.items.is_empty() {
         return;
     }
-    let Ok(json) = serde_json::to_string(roster) else {
-        return;
-    };
-    let temp = path.with_extension("tmp");
-    if std::fs::write(&temp, json).is_ok() {
-        let _ = std::fs::rename(&temp, path);
+    if let Ok(json) = serde_json::to_string(roster) {
+        write_json_atomically(path, &json);
     }
 }
 
@@ -89,6 +84,13 @@ fn load_world_names(path: &Path) -> HashMap<String, String> {
         .collect()
 }
 
+fn write_json_atomically(path: &Path, json: &str) {
+    let temp = path.with_extension("tmp");
+    if std::fs::write(&temp, json).is_ok() {
+        let _ = std::fs::rename(&temp, path);
+    }
+}
+
 fn save_world_names(path: &Path, names: &HashMap<String, String>) {
     let named: BTreeMap<&String, &String> = names
         .iter()
@@ -97,12 +99,8 @@ fn save_world_names(path: &Path, names: &HashMap<String, String>) {
     if named.is_empty() {
         return;
     }
-    let Ok(json) = serde_json::to_string(&named) else {
-        return;
-    };
-    let temp = path.with_extension("tmp");
-    if std::fs::write(&temp, json).is_ok() {
-        let _ = std::fs::rename(&temp, path);
+    if let Ok(json) = serde_json::to_string(&named) {
+        write_json_atomically(path, &json);
     }
 }
 
@@ -156,7 +154,8 @@ pub struct Notice {
     pub seen: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct Friend {
     pub id: String,
     pub name: String,
@@ -170,7 +169,10 @@ pub struct Friend {
     pub trust: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+// Missing keys fall back to defaults so a cache written by an older build still
+// loads instead of being thrown away.
+#[serde(default)]
 pub struct Roster {
     pub items: Vec<Friend>,
     pub total: usize,
@@ -178,6 +180,9 @@ pub struct Roster {
     /// Bumped every time a roster is published, so pollers can skip unchanged
     /// snapshots instead of re-rendering the list.
     pub revision: u64,
+    /// True while the rows come from the saved roster, before this launch's
+    /// first live publish. It is serialized so the window can label the list.
+    pub stale: bool,
     pub live: bool,
     /// In-world friends whose world name is not cached yet; the UI keeps
     /// reading the cache while the background lookup fills it in.
@@ -569,10 +574,7 @@ impl Api {
                         roster.items.push(friend);
                     }
                 }
-                roster.total = roster.items.len();
-                roster.online = roster.items.iter().filter(|friend| friend.online).count();
-                roster.missing_worlds = missing_worlds(&roster.items, &worlds);
-                roster.worlds_pending = roster.missing_worlds.len();
+                refresh_counts(&mut roster, &worlds);
             }
         }
 
@@ -633,11 +635,7 @@ impl Api {
                 relabelled = true;
             }
         }
-        roster.worlds_pending = roster
-            .missing_worlds
-            .iter()
-            .filter(|id| !worlds.contains_key(*id))
-            .count();
+        refresh_counts(roster, &worlds);
 
         // A relabelled list is a changed list, so it needs a new revision or a
         // poller keyed on the revision would skip a snapshot that did change.
@@ -705,6 +703,7 @@ impl Api {
 
         Roster {
             revision: 0,
+            stale: false,
             total: items.len(),
             online: items.iter().filter(|friend| friend.online).count(),
             live: self.live.load(Ordering::SeqCst),
@@ -1525,6 +1524,14 @@ fn instance_label(location: &str) -> String {
     } else {
         "public".to_string()
     }
+}
+
+/// Recomputes the fields derived from rows after they were added or relabelled.
+fn refresh_counts(roster: &mut Roster, worlds: &HashMap<String, String>) {
+    roster.total = roster.items.len();
+    roster.online = roster.items.iter().filter(|friend| friend.online).count();
+    roster.missing_worlds = missing_worlds(&roster.items, worlds);
+    roster.worlds_pending = roster.missing_worlds.len();
 }
 
 /// World ids the rows cannot name yet, in first-seen order.
@@ -2584,6 +2591,7 @@ mod world_sweep_tests {
                 total: 1,
                 online: 1,
                 revision: 1,
+                stale: false,
                 live: false,
                 worlds_pending: 1,
                 complete: true,
@@ -2839,6 +2847,7 @@ mod roster_cache_tests {
             online: items.iter().filter(|friend| friend.online).count(),
             items,
             revision: 7,
+            stale: false,
             live: true,
             worlds_pending: 1,
             complete,
@@ -2864,6 +2873,7 @@ mod roster_cache_tests {
         assert_eq!(loaded.total, 2);
         assert_eq!(loaded.online, 1);
         assert_eq!(loaded.revision, 0, "the first live publish supersedes it");
+        assert!(loaded.stale, "a saved roster is shown as stale until it is replaced");
         assert!(loaded.complete, "a saved roster is painted as the whole list");
         assert!(!loaded.live && !loaded.degraded);
         assert!(loaded.missing_worlds.is_empty());
@@ -2878,6 +2888,21 @@ mod roster_cache_tests {
         std::fs::write(&path, "{ not a roster").expect("write broken file");
         assert!(load_roster_cache(&path).is_none());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_first_live_publish_clears_the_saved_marker() {
+        let api = Api::new();
+        let mut saved = stored(vec![friend("usr_a", "offline")], true);
+        saved.stale = true;
+        if let Ok(mut guard) = api.roster.lock() {
+            *guard = Some(saved);
+        }
+
+        let users = vec![serde_json::json!({ "id": "usr_a", "displayName": "A" })];
+        let published = api.publish(&users, false, false);
+
+        assert!(!published.stale, "a live page replaces the saved picture");
     }
 
     #[test]

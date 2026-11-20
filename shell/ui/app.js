@@ -17,7 +17,8 @@ const state = {
   busy: false,
   timer: 0,
   rosterRevision: 0,
-  rosterComplete: false
+  rosterComplete: false,
+  rosterStale: false
 };
 
 const el = (id) => document.getElementById(id);
@@ -192,8 +193,7 @@ function applyPresence(update) {
   const friend = state.friends.find((row) => row.id === update.friend.id);
   if (!friend) return;
   Object.assign(friend, update.friend);
-  const suffix = state.rosterComplete ? "" : " (first page)";
-  accountLine.textContent = `${update.total.toLocaleString()} friends${suffix} · ${update.online} online · ${state.user?.display_name ?? ""}`;
+  accountLine.textContent = `${update.total.toLocaleString()} friends${rosterSuffix()} · ${update.online} online · ${state.user?.display_name ?? ""}`;
   const worldId = worldIdOf(friend.location);
   if (worldId && friend.world === worldId) fillWorldNames();
   scheduleRosterRender();
@@ -230,19 +230,26 @@ async function fillWorldNames(attempt = 0) {
   }
 }
 
+function rosterSuffix() {
+  if (state.rosterStale) return " (saved)";
+  return state.rosterComplete ? "" : " (first page)";
+}
+
 function applyRoster(roster) {
   state.friends = roster.items;
   state.rosterRevision = roster.revision ?? state.rosterRevision;
   state.rosterComplete = Boolean(roster.complete);
-  const suffix = roster.complete ? "" : " (first page)";
-  accountLine.textContent = `${roster.total.toLocaleString()} friends${suffix} · ${roster.online} online · ${state.user?.display_name ?? ""}`;
+  state.rosterStale = Boolean(roster.stale);
+  accountLine.textContent = `${roster.total.toLocaleString()} friends${rosterSuffix()} · ${roster.online} online · ${state.user?.display_name ?? ""}`;
   renderRoster();
   if (roster.worlds_pending > 0) fillWorldNames();
-  status.textContent = roster.degraded
-    ? "Some friend pages were throttled; the next refresh picks them up."
-    : roster.live
-      ? "Live presence from VRChat's realtime pipeline."
-      : "Roster loaded; presence is reconnecting.";
+  status.textContent = roster.stale
+    ? "Showing the roster saved from your last session; refreshing…"
+    : roster.degraded
+      ? "Some friend pages were throttled; the next refresh picks them up."
+      : roster.live
+        ? "Live presence from VRChat's realtime pipeline."
+        : "Roster loaded; presence is reconnecting.";
 }
 
 // Snapshots grow as the walk fetches pages, so paint each one as it lands
@@ -265,6 +272,7 @@ async function waitForFullRoster(attempts = 30) {
 
 async function loadFriends() {
   if (!state.signedIn || state.busy) return;
+  setBusy(true, "Loading friends from VRChat…");
   // Paint the roster remembered from last launch before touching the network.
   try {
     const cached = await invoke("friends_snapshot");
@@ -272,7 +280,6 @@ async function loadFriends() {
   } catch (error) {
     // The fresh load below is the fallback.
   }
-  setBusy(true, "Loading friends from VRChat…");
   try {
     // First page paints immediately; the rest of the roster arrives behind it.
     const quick = await invoke("friends_quick");
