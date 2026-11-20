@@ -257,6 +257,51 @@ async function loadInstance() {
   }
 }
 
+// ------------------------------------------------------------------ favorites
+
+function renderFavorites(view) {
+  if (!view) return;
+  const entries = [...view.avatars, ...view.worlds];
+  const resolved = entries.filter((entry) => entry.cached).length;
+  el("favorite-status").textContent =
+    `${entries.length} favorites · ${resolved} with details` +
+    (view.pending ? ` · ${view.pending} left to fetch` : "");
+
+  el("favorite-grid").innerHTML = entries.length
+    ? entries
+        .map(
+          (entry) => `
+      <figure class="tile">
+        ${entry.thumbnail ? `<img loading="lazy" src="${remoteImage(entry.thumbnail)}" alt="" />` : `<img alt="" />`}
+        <figcaption title="${escape(entry.id)}">${escape(entry.name || entry.id)}<span class="kind">${escape(entry.kind)}</span></figcaption>
+      </figure>`
+        )
+        .join("")
+    : `<div class="empty">No favorites saved in the other app yet.</div>`;
+}
+
+async function loadFavorites() {
+  if (!state.signedIn) {
+    el("favorite-status").textContent = "Sign in to resolve favorite details.";
+    return;
+  }
+  try {
+    let view = await invoke("favorites");
+    renderFavorites(view);
+    let guard = 0;
+    // Two ids per pass, just over a second apart: VRChat allows about one
+    // lookup per second, and the pane fills in as they arrive.
+    while (view.pending > 0 && guard < 40) {
+      guard += 1;
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+      view = await invoke("refresh_favorites", { budget: 2 });
+      renderFavorites(view);
+    }
+  } catch (error) {
+    el("favorite-status").textContent = String(error);
+  }
+}
+
 // ------------------------------------------------------------------- activity
 
 function renderActivity() {
@@ -505,6 +550,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     document.querySelectorAll(".pane").forEach((pane) => pane.classList.toggle("active", pane.id === state.tab));
     search.placeholder = `Filter ${state.tab}…`;
     if (state.tab === "instance") loadInstance();
+    if (state.tab === "favorites") loadFavorites();
     if (state.tab === "media" && state.media.length === 0) loadMedia();
     if (state.tab === "notifications") loadNotifications();
   });
@@ -521,6 +567,7 @@ search.addEventListener("input", () => {
 el("refresh").addEventListener("click", () => {
   if (!state.signedIn) return;
   if (state.tab === "instance") loadInstance();
+  else if (state.tab === "favorites") loadFavorites();
   else if (state.tab === "notifications") loadNotifications();
   else loadFriends();
 });

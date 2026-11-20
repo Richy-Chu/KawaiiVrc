@@ -745,6 +745,66 @@ impl Api {
         Ok(parse_instance_body(&location, &body))
     }
 
+    // ------------------------------------------------------- favorite details
+
+    /// Name and thumbnail for favorite avatars, filling the shell's cache.
+    pub async fn avatar_details(&self, ids: &[String]) -> Vec<(String, String, String)> {
+        self.details_for("avatars", ids).await
+    }
+
+    pub async fn world_details(&self, ids: &[String]) -> Vec<(String, String, String)> {
+        self.details_for("worlds", ids).await
+    }
+
+    /// Sequential lookups with a small gap keep the rate limit happy; callers
+    /// only ask for a few ids at a time and cache the answers.
+    async fn details_for(
+        &self,
+        collection: &str,
+        ids: &[String],
+    ) -> Vec<(String, String, String)> {
+        let Some(cookie) = self.cookie() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (index, id) in ids.iter().take(5).enumerate() {
+            if index > 0 {
+                tokio::time::sleep(Duration::from_millis(350)).await;
+            }
+            let Ok((status, _, body)) = self
+                .request(
+                    reqwest::Method::GET,
+                    &format!("{collection}/{id}"),
+                    Some(&cookie),
+                    None,
+                )
+                .await
+            else {
+                continue;
+            };
+            if !status.is_success() {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<Value>(&body) else {
+                continue;
+            };
+            let name = text(&value, "name");
+            if name.is_empty() {
+                continue;
+            }
+            let thumbnail = {
+                let candidate = text(&value, "thumbnailImageUrl");
+                if candidate.is_empty() {
+                    text(&value, "imageUrl")
+                } else {
+                    candidate
+                }
+            };
+            out.push((id.clone(), name, thumbnail));
+        }
+        out
+    }
+
     // --------------------------------------------------------- notifications
 
     pub async fn notifications(&self) -> Result<Vec<Notice>, String> {

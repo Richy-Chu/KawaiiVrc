@@ -29,6 +29,7 @@
     <nav class="tabs">
       <button class="tab active" data-tab="friends">Friends</button>
       <button class="tab" data-tab="instance">Instance</button>
+      <button class="tab" data-tab="favorites">Favorites</button>
       <button class="tab" data-tab="activity">Activity</button>
       <button class="tab" data-tab="media">Media</button>
       <button class="tab" data-tab="notifications">Notifications</button>
@@ -63,6 +64,11 @@
 
       <section id="instance" class="pane">
         <div id="instance-body" class="list"></div>
+      </section>
+
+      <section id="favorites" class="pane">
+        <p class="hint" id="favorite-status"></p>
+        <div id="favorite-grid" class="grid"></div>
       </section>
 
       <section id="activity" class="pane">

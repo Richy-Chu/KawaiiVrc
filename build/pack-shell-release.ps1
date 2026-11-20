@@ -15,6 +15,13 @@ $shell = Join-Path $root 'shell'
 if (-not $OutDir) { $OutDir = Join-Path $root 'artifacts\shell' }
 
 if (-not (Test-Path $KeyPath)) { throw "Signing key not found at $KeyPath" }
+
+# The key is password protected; the password comes from the environment so it
+# never lands in the repository or in this script.
+$password = $env:KAWAII_SHELL_KEY_PASSWORD
+if ([string]::IsNullOrWhiteSpace($password)) {
+  throw "Set KAWAII_SHELL_KEY_PASSWORD to the signing key password before running this script."
+}
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $config = Get-Content (Join-Path $shell 'tauri.conf.json') -Raw | ConvertFrom-Json
@@ -23,7 +30,7 @@ if ($config.version -ne $Version) {
 }
 
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content $KeyPath -Raw).Trim()
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $password
 
 Push-Location $shell
 try {

@@ -2,6 +2,7 @@
 
 mod activity;
 mod chatbox;
+mod favorites;
 mod session;
 mod settings;
 mod updates;
@@ -466,6 +467,43 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     app.restart();
 }
 
+// ----------------------------------------------------------------- favorites
+
+#[tauri::command]
+fn favorites() -> Result<favorites::Favorites, String> {
+    let (avatar_ids, world_ids) = favorites::ids(&data_dir());
+    Ok(favorites::view(
+        &favorites::load(),
+        &avatar_ids,
+        &world_ids,
+    ))
+}
+
+#[tauri::command]
+async fn refresh_favorites(
+    api: tauri::State<'_, Arc<Api>>,
+    budget: Option<usize>,
+) -> Result<favorites::Favorites, String> {
+    let (avatar_ids, world_ids) = favorites::ids(&data_dir());
+    let mut store = favorites::load();
+    let (ask_avatars, ask_worlds) =
+        favorites::pending(&store, &avatar_ids, &world_ids, budget.unwrap_or(2).clamp(1, 5));
+
+    if !ask_avatars.is_empty() {
+        for (id, name, thumbnail) in api.avatar_details(&ask_avatars).await {
+            favorites::apply(&mut store, "avatar", id, name, thumbnail);
+        }
+    }
+    if !ask_worlds.is_empty() {
+        for (id, name, thumbnail) in api.world_details(&ask_worlds).await {
+            favorites::apply(&mut store, "world", id, name, thumbnail);
+        }
+    }
+
+    favorites::save(&store)?;
+    Ok(favorites::view(&store, &avatar_ids, &world_ids))
+}
+
 #[tauri::command]
 fn send_chatbox(message: String, send: Option<bool>) -> Result<String, String> {
     chatbox::send(&message, send.unwrap_or(true))?;
@@ -524,10 +562,9 @@ fn merge_activity() -> Result<String, String> {
     if !path.exists() {
         return Err(format!("{} does not exist yet.", path.display()));
     }
-    let account = feed(None, Some(0))?.account;
-    let outcome = activity::merge_into_shared(&path, &account, &events)?;
+    let (account, outcome) = activity::merge_into_latest_account(&path, &events)?;
     Ok(format!(
-        "Imported {} new events ({} already there); the shared history now has {}.",
+        "Imported {} new events into {account} ({} already there); the shared history now has {}.",
         outcome.imported, outcome.skipped, outcome.total
     ))
 }
@@ -592,6 +629,19 @@ fn dump_report() {
             }
         }
         Err(error) => out.push_str(&format!("media error: {error}\n")),
+    }
+
+    if let Ok(view) = favorites() {
+        out.push_str(&format!(
+            "favorites: total={} pending={} avatars={} worlds={}\n",
+            view.total,
+            view.pending,
+            view.avatars.len(),
+            view.worlds.len()
+        ));
+        for entry in view.avatars.iter().filter(|entry| entry.cached).take(2) {
+            out.push_str(&format!("  cached avatar {} {}\n", entry.id, entry.name));
+        }
     }
 
     let current = settings::load();
@@ -754,6 +804,8 @@ fn main() {
             install_update,
             verify_manifest,
             merge_activity,
+            favorites,
+            refresh_favorites,
             send_chatbox
         ])
         .run(tauri::generate_context!())

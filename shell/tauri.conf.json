@@ -33,7 +33,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYwOTVCM0M3MEM2MjI1NTQKUldSVUpXSU14N09WWUNMd05McUNMQ1daTUpuMVRGZFpXUEpsdHViTHYrMDlmOUdPcjFMSFVXL2EK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFBNUEyMkZDQThDNTZENDcKUldSSGJjV28vQ0phR3NzT1MzemNLUUdHN0RXT3I3elhEU2ZzcjUxSUtJWEU2WC9rWGFtUW91WmUK",
       "endpoints": [
         "https://github.com/Richy-Chu/KawaiiVrc/releases/latest/download/shell-latest.json"
       ],
