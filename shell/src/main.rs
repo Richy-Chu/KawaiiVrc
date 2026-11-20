@@ -446,6 +446,37 @@ async fn notifications(api: tauri::State<'_, Arc<Api>>) -> Result<Vec<Notice>, S
     api.notifications().await
 }
 
+/// What an inline Accept does depends on the kind of notification: a friend
+/// request is accepted, an invite becomes an invite to yourself (the shell
+/// cannot join a world), and an invite request is answered with an invite to
+/// the instance you are in.
+#[tauri::command]
+async fn accept_notification(
+    api: tauri::State<'_, Arc<Api>>,
+    notice_id: String,
+    kind: String,
+    sender_id: String,
+    location: String,
+) -> Result<Vec<Notice>, String> {
+    match kind.as_str() {
+        "friendRequest" => api.accept_friend_request(&notice_id).await?,
+        "invite" => api.invite_myself_to(&location).await?,
+        "requestInvite" => api.invite_friend(&sender_id).await?,
+        other => return Err(format!("There is nothing to accept on a {other} notification.")),
+    }
+    api.hide_notification(&notice_id).await?;
+    api.notifications().await
+}
+
+#[tauri::command]
+async fn dismiss_notification(
+    api: tauri::State<'_, Arc<Api>>,
+    notice_id: String,
+) -> Result<Vec<Notice>, String> {
+    api.hide_notification(&notice_id).await?;
+    api.notifications().await
+}
+
 // ----------------------------------------------------------- friend actions
 
 #[tauri::command]
@@ -1143,6 +1174,8 @@ fn main() {
             friend_page_requests,
             instance,
             notifications,
+            accept_notification,
+            dismiss_notification,
             invite_friend,
             request_invite,
             friend_favorites,

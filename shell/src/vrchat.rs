@@ -178,6 +178,36 @@ fn invite_instance_from(location: &str) -> Result<String, String> {
     Err("Join a world first: there is no instance to invite anyone to.".to_string())
 }
 
+/// The instance an invite notification points at, if it names one.
+fn notice_location(row: &Value) -> String {
+    let details = row.get("details");
+    if let Some(object) = details.and_then(Value::as_object) {
+        let world = object.get("worldId").and_then(Value::as_str).unwrap_or_default();
+        let instance = object.get("instanceId").and_then(Value::as_str).unwrap_or_default();
+        if !world.is_empty() && !instance.is_empty() {
+            return format!("{world}:{instance}");
+        }
+        let location = object
+            .get("location")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !location.is_empty() {
+            return location.to_string();
+        }
+    }
+    // Details are sometimes the JSON blob as a string.
+    if let Some(text) = details.and_then(Value::as_str) {
+        let trimmed = text.trim();
+        if trimmed.starts_with("wrld_") {
+            return trimmed.to_string();
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return notice_location(&serde_json::json!({ "details": value }));
+        }
+    }
+    String::new()
+}
+
 /// Friend favorites from `GET /favorites?type=friend`, keyed by user id with the
 /// favorite row id as the value (that row id is what DELETE needs).
 fn friend_favorites_from(text: &str) -> HashMap<String, String> {
@@ -334,6 +364,10 @@ pub struct Notice {
     pub kind: String,
     pub message: String,
     pub sender: String,
+    pub sender_id: String,
+    /// The instance an invite points at, when it names one; used to invite the
+    /// account itself in, since the shell cannot join a world.
+    pub location: String,
     pub created_at: String,
     pub seen: bool,
 }
@@ -1582,6 +1616,60 @@ impl Api {
         }
     }
 
+    pub async fn accept_friend_request(&self, notification_id: &str) -> Result<(), String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::PUT,
+                &format!("auth/user/notifications/{notification_id}/accept"),
+                Some(&cookie),
+                None,
+            )
+            .await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(api_message(status, &body_text))
+        }
+    }
+
+    pub async fn hide_notification(&self, notification_id: &str) -> Result<(), String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::PUT,
+                &format!("auth/user/notifications/{notification_id}/hide"),
+                Some(&cookie),
+                None,
+            )
+            .await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(api_message(status, &body_text))
+        }
+    }
+
+    /// Sends this account an invite to the instance the notification points at,
+    /// so the game offers it; the shell cannot join a world by itself.
+    pub async fn invite_myself_to(&self, location: &str) -> Result<(), String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let instance = invite_instance_from(location)?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::POST,
+                &format!("invite/myself/to/{instance}"),
+                Some(&cookie),
+                None,
+            )
+            .await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(api_message(status, &body_text))
+        }
+    }
+
     pub fn location(&self) -> String {
         self.self_location
             .lock()
@@ -1765,6 +1853,8 @@ impl Api {
                     kind: text(row, "type"),
                     message: text(row, "message"),
                     sender,
+                    sender_id: text(row, "senderUserId"),
+                    location: notice_location(row),
                     created_at: created,
                     seen: row.get("seen").and_then(Value::as_bool).unwrap_or(false),
                 }
@@ -3590,6 +3680,44 @@ mod friend_action_tests {
         assert_eq!(
             api_message(reqwest::StatusCode::INTERNAL_SERVER_ERROR, ""),
             "VRChat returned 500 for that action."
+        );
+    }
+}
+
+#[cfg(test)]
+mod notice_location_tests {
+    use super::*;
+
+    #[test]
+    fn an_invite_notification_names_the_instance_it_invites_to() {
+        let modern = serde_json::json!({
+            "type": "invite",
+            "details": { "worldId": "wrld_a", "instanceId": "123~region(us)" }
+        });
+        assert_eq!(notice_location(&modern), "wrld_a:123~region(us)");
+
+        let location = serde_json::json!({
+            "type": "invite",
+            "details": { "location": "wrld_b:45~friends(usr_x)" }
+        });
+        assert_eq!(notice_location(&location), "wrld_b:45~friends(usr_x)");
+    }
+
+    #[test]
+    fn details_written_as_a_json_string_still_name_the_instance() {
+        let row = serde_json::json!({
+            "type": "invite",
+            "details": "{\"worldId\":\"wrld_c\",\"instanceId\":\"77\"}"
+        });
+        assert_eq!(notice_location(&row), "wrld_c:77");
+    }
+
+    #[test]
+    fn notifications_without_a_usable_instance_are_left_alone() {
+        assert_eq!(notice_location(&serde_json::json!({ "type": "friendRequest" })), "");
+        assert_eq!(
+            notice_location(&serde_json::json!({ "details": { "worldId": "wrld_a" } })),
+            ""
         );
     }
 }

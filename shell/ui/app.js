@@ -21,7 +21,8 @@ const state = {
   rosterStale: false,
   rosterSavedAt: 0,
   friendFavorites: {},
-  favoritesLoaded: false
+  favoritesLoaded: false,
+  noticesLoaded: false
 };
 
 const el = (id) => document.getElementById(id);
@@ -375,6 +376,7 @@ async function waitForFullRoster(attempts = 30) {
 async function loadFriends() {
   if (!state.signedIn || state.busy) return;
   loadFriendFavorites();
+  loadNoticesOnce();
   setBusy(true, "Loading friends from VRChat…");
   // Paint the roster remembered from last launch before touching the network.
   try {
@@ -588,6 +590,41 @@ async function loadMedia(more = false) {
 
 // -------------------------------------------------------------- notifications
 
+// Only these notification types can be acted on, and each Accept means
+// something different: accepting the request, inviting the account into the
+// invited instance, or answering a request with an invite to where you are.
+const NOTICE_KINDS = ["friendRequest", "invite", "requestInvite"];
+const NOTICE_LABELS = {
+  friendRequest: "friend request",
+  invite: "invite",
+  requestInvite: "invite request"
+};
+
+function noticeActions(notice) {
+  if (!NOTICE_KINDS.includes(notice.kind)) return "";
+  const accept = notice.kind === "requestInvite" ? "Invite back" : "Accept";
+  const decline = notice.kind === "friendRequest" ? "Decline" : "Dismiss";
+  return `
+    <span class="notice-actions">
+      <button class="ghost small" type="button" data-action="accept" data-id="${escape(notice.id)}" data-kind="${escape(notice.kind)}" data-sender="${escape(notice.sender_id)}" data-location="${escape(notice.location)}">${accept}</button>
+      <button class="ghost small" type="button" data-action="dismiss" data-id="${escape(notice.id)}">${decline}</button>
+    </span>`;
+}
+
+// VRChat keeps a friend request in the list until it is accepted or declined,
+// so every actionable notice still there is genuinely waiting, seen or not.
+function waitingNotices() {
+  return state.notices.filter((notice) => NOTICE_KINDS.includes(notice.kind));
+}
+
+function updateNoticeBadge() {
+  const badge = el("notice-badge");
+  const waiting = waitingNotices().length;
+  badge.textContent = waiting > 99 ? "99+" : String(waiting);
+  badge.hidden = waiting === 0;
+  badge.title = waiting ? `${waiting} waiting on you` : "";
+}
+
 function renderNotifications() {
   const query = state.query.trim().toLowerCase();
   const items = state.notices.filter(
@@ -604,27 +641,80 @@ function renderNotifications() {
         <div class="body">
           <div class="title">
             <strong>${escape(notice.sender || notice.kind)}</strong>
-            <span class="kind">${escape(notice.kind)}</span>
+            <span class="kind">${escape(NOTICE_LABELS[notice.kind] || notice.kind)}</span>
           </div>
           <div class="sub">${escape(notice.message)}</div>
         </div>
         <span class="at">${escape(clock(notice.created_at))}</span>
+        ${noticeActions(notice)}
       </article>`
     )
     .join("");
 }
 
+noticeList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  const { action, id, kind, sender, location } = button.dataset;
+  try {
+    if (action === "accept") {
+      state.notices = await invoke("accept_notification", {
+        noticeId: id,
+        kind,
+        senderId: sender,
+        location
+      });
+      status.textContent =
+        kind === "friendRequest"
+          ? "Friend request accepted."
+          : kind === "invite"
+            ? "Invite sent to your account — accept it in VRChat to join."
+            : "Sent them an invite to your instance.";
+    } else {
+      state.notices = await invoke("dismiss_notification", { noticeId: id });
+      status.textContent = "Notification dismissed.";
+    }
+    renderNotifications();
+  } catch (error) {
+    status.textContent = String(error);
+  } finally {
+    button.disabled = false;
+    updateNoticeBadge();
+  }
+});
+
+async function refreshNotices() {
+  if (!state.signedIn) return;
+  try {
+    state.notices = await invoke("notifications");
+    state.noticesLoaded = true;
+    renderNotifications();
+    updateNoticeBadge();
+  } catch (error) {
+    // Keep the last list; the badge should not flicker on a rate limit.
+  }
+}
+
 async function loadNotifications() {
   if (!state.signedIn) {
     noticeList.innerHTML = `<div class="empty">Sign in to load notifications.</div>`;
+    updateNoticeBadge();
     return;
   }
   try {
     state.notices = await invoke("notifications");
+    state.noticesLoaded = true;
     renderNotifications();
+    updateNoticeBadge();
   } catch (error) {
     noticeList.innerHTML = `<div class="empty">${escape(error)}</div>`;
   }
+}
+
+async function loadNoticesOnce() {
+  if (!state.signedIn || state.noticesLoaded) return;
+  await refreshNotices();
 }
 
 // --------------------------------------------------------------- history pane
@@ -659,6 +749,7 @@ function startRefreshTimer() {
   refreshTimer = setInterval(() => {
     if (state.signedIn && document.visibilityState === "visible" && !state.busy) {
       loadFriends();
+      refreshNotices();
       if (state.tab === "instance") loadInstance();
     }
   }, seconds * 1000);
@@ -752,6 +843,8 @@ el("signout").addEventListener("click", async () => {
   state.instance = null;
   state.friendFavorites = {};
   state.favoritesLoaded = false;
+  state.noticesLoaded = false;
+  updateNoticeBadge();
   accountLine.textContent = "signed out";
   showAuth();
   status.textContent = "Signed out of the shell. The other app's saved session is untouched.";
