@@ -26,8 +26,7 @@ const state = {
   noticesAt: 0,
   noticesBusy: false,
   noticeTotal: 0,
-  noticesHasMore: false,
-  noticeOffset: 0
+  noticesHasMore: false
 };
 
 const el = (id) => document.getElementById(id);
@@ -632,25 +631,24 @@ function updateNoticeBadge() {
   badge.title = waiting ? `${waiting.toLocaleString()} waiting on you` : "";
 }
 
+// Paging is positional, so every notice answered — here or in VRChat — pulls
+// the rows below it up one place. Pages overlap a little and are stitched by
+// id, so a row that moved is fetched as a repeat instead of being skipped.
+const NOTICE_OVERLAP = 5;
+
 function applyNoticeOverview(overview, append = false) {
   const page = overview.notices || [];
-  const offset = Number(overview.offset || 0);
   if (append) {
     const known = new Set(state.notices.map((notice) => notice.id));
     state.notices = state.notices.concat(page.filter((notice) => !known.has(notice.id)));
-    state.noticeOffset = offset + page.length;
   } else if (state.notices.length > page.length) {
     // A periodic refresh replaces the first page but keeps the older pages the
-    // user already asked for, so the next "Load more" must continue from those
-    // rather than from the new first-page length, or it would only re-fetch
-    // rows that are already on screen.
+    // user already asked for, without showing any row twice.
     const known = new Set(page.map((notice) => notice.id));
     const older = state.notices.slice(page.length).filter((notice) => !known.has(notice.id));
     state.notices = page.concat(older);
-    state.noticeOffset = Math.max(state.noticeOffset, page.length + older.length);
   } else {
     state.notices = page;
-    state.noticeOffset = page.length;
   }
   state.noticeTotal = Number(overview.waiting) || 0;
   state.noticesHasMore = Boolean(overview.has_more);
@@ -697,6 +695,9 @@ noticeList.addEventListener("click", async (event) => {
       action === "accept"
         ? await invoke("accept_notification", { noticeId: id })
         : await invoke("dismiss_notification", { noticeId: id });
+    // The notice is answered, so it leaves the list here too; keeping it would
+    // leave a row that no longer exists in the window the next page starts from.
+    state.notices = state.notices.filter((notice) => notice.id !== id);
     applyNoticeOverview(overview);
     state.noticesAt = Date.now();
     if (action === "accept") {
@@ -720,17 +721,22 @@ noticeList.addEventListener("click", async (event) => {
 // The friends refresh can run every 15 seconds; notifications do not need to
 // cost a request that often, so they have their own floor.
 const NOTICE_REFRESH_MS = 60_000;
+// A refresh that failed changed nothing, so it only waits this long before the
+// next tick may try again.
+const NOTICE_RETRY_MS = 15_000;
 
 async function refreshNotices(force = false) {
   if (!state.signedIn || state.noticesBusy) return;
   const now = Date.now();
   if (!force && now - state.noticesAt < NOTICE_REFRESH_MS) return;
-  state.noticesAt = now;
   state.noticesBusy = true;
   try {
     applyNoticeOverview(await invoke("notification_overview", { offset: 0 }));
+    state.noticesAt = Date.now();
   } catch (error) {
-    // Keep the last list; the badge should not flicker on a rate limit.
+    // Keep the last list; the badge should not flicker on a rate limit, but a
+    // failure still starts the retry clock rather than sitting out the minute.
+    state.noticesAt = now - (NOTICE_REFRESH_MS - NOTICE_RETRY_MS);
   } finally {
     state.noticesBusy = false;
   }
@@ -758,8 +764,17 @@ async function loadMoreNotices() {
   const button = el("notice-more");
   button.disabled = true;
   try {
-    const overview = await invoke("notification_overview", { offset: state.noticeOffset });
-    applyNoticeOverview(overview, true);
+    // The rows on screen are the window paging continues from, so start a few
+    // rows behind them and let the id stitch drop whatever comes back twice.
+    const offset = Math.max(0, state.notices.length - NOTICE_OVERLAP);
+    const before = state.notices.length;
+    applyNoticeOverview(await invoke("notification_overview", { offset }), true);
+    if (state.notices.length === before) {
+      // Nothing but repeats: the list ends here, so stop offering more instead
+      // of asking for the same rows again.
+      state.noticesHasMore = false;
+      el("notice-more").hidden = true;
+    }
   } catch (error) {
     status.textContent = String(error);
   } finally {
