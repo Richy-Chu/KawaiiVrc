@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -81,6 +81,13 @@ pub struct Player {
 }
 
 #[derive(Serialize, Clone)]
+pub struct PresenceUpdate {
+    pub friend: Friend,
+    pub online: usize,
+    pub total: usize,
+}
+
+#[derive(Serialize, Clone)]
 pub struct InstanceView {
     pub in_instance: bool,
     pub location: String,
@@ -122,6 +129,9 @@ pub struct Roster {
     pub items: Vec<Friend>,
     pub total: usize,
     pub online: usize,
+    /// Bumped every time a roster is published, so pollers can skip unchanged
+    /// snapshots instead of re-rendering the list.
+    pub revision: u64,
     pub live: bool,
     /// In-world friends whose world name is not cached yet; the UI keeps
     /// reading the cache while the background lookup fills it in.
@@ -155,6 +165,11 @@ pub struct Api {
     /// Online-bucket pages the quick load already fetched, so the full walk can
     /// start after them instead of asking for them a second time.
     seed: Mutex<Vec<(usize, Vec<Value>)>>,
+    /// Every friend-page HTTP request, keyed `bucket:offset`, so the paging
+    /// behaviour can be checked from outside.
+    page_requests: Mutex<HashMap<String, u32>>,
+    revision: AtomicU64,
+    app: Mutex<Option<tauri::AppHandle>>,
     auth: Mutex<Option<String>>,
     user: Mutex<Option<UserInfo>>,
     worlds: Mutex<HashMap<String, String>>,
@@ -180,6 +195,9 @@ impl Api {
         Self {
             http,
             seed: Mutex::new(Vec::new()),
+            page_requests: Mutex::new(HashMap::new()),
+            revision: AtomicU64::new(0),
+            app: Mutex::new(None),
             auth: Mutex::new(None),
             user: Mutex::new(None),
             worlds: Mutex::new(load_world_names(&world_cache_path())),
@@ -472,7 +490,8 @@ impl Api {
     /// Stores the roster the UI polls, so a partly walked list is already on
     /// screen while the remaining pages load.
     fn publish(&self, users: &[Value], complete: bool, degraded: bool) -> Roster {
-        let roster = self.build_roster(users, complete, degraded);
+        let mut roster = self.build_roster(users, complete, degraded);
+        roster.revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
         if let Ok(mut guard) = self.roster.lock() {
             *guard = Some(roster.clone());
         }
@@ -586,6 +605,7 @@ impl Api {
             .collect();
 
         Roster {
+            revision: 0,
             total: items.len(),
             online: items.iter().filter(|friend| friend.online).count(),
             live: self.live.load(Ordering::SeqCst),
@@ -623,6 +643,9 @@ impl Api {
     }
 
     async fn fetch_page_once(&self, cookie: &str, bucket: &str, offset: usize) -> PageOutcome {
+        if let Ok(mut counts) = self.page_requests.lock() {
+            *counts.entry(format!("{bucket}:{offset}")).or_insert(0) += 1;
+        }
         let path = format!("auth/user/friends?offline={bucket}&n=100&offset={offset}");
         let (status, headers, text) = match self
             .request(reqwest::Method::GET, &path, Some(cookie), None)
@@ -667,6 +690,21 @@ impl Api {
             }
         }
         ids
+    }
+
+    /// Friend-page requests made so far, keyed `bucket:offset`.
+    pub fn page_requests(&self) -> HashMap<String, u32> {
+        self.page_requests
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    /// The window handle used to push presence changes to the UI.
+    pub fn set_app(&self, handle: tauri::AppHandle) {
+        if let Ok(mut guard) = self.app.lock() {
+            *guard = Some(handle);
+        }
     }
 
     pub fn world_names(&self) -> HashMap<String, String> {
@@ -915,7 +953,7 @@ impl Api {
         }
     }
 
-    fn handle_realtime(&self, raw: &str) {
+    fn handle_realtime(self: &Arc<Self>, raw: &str) {
         let Some(event) = parse_pipeline_event(raw) else {
             return;
         };
@@ -937,6 +975,7 @@ impl Api {
                     entry.location = "offline".to_string();
                     entry.online = false;
                 }
+                self.sync_presence_row(&event);
                 self.record_activity(1, &event, "went offline");
             }
             "friend-online" | "friend-active" | "friend-location" | "friend-update" => {
@@ -968,6 +1007,7 @@ impl Api {
                 {
                     self.record_activity(13, &event, "changed avatar");
                 }
+                self.sync_presence_row(&event);
             }
             "friend-delete" => {
                 if let Ok(mut presence) = self.presence.lock() {
@@ -975,6 +1015,82 @@ impl Api {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Pushes a presence change into the stored roster row and tells the UI, so
+    /// online rows move without waiting for the next full roster refresh.
+    fn sync_presence_row(self: &Arc<Self>, event: &PipelineEvent) {
+        let entry = self
+            .presence
+            .lock()
+            .ok()
+            .and_then(|guard| guard.get(&event.user_id).cloned());
+        let Some(entry) = entry else {
+            return;
+        };
+        let worlds = self.world_names();
+
+        let (friend, online, total, unknown_world) = {
+            let Ok(mut guard) = self.roster.lock() else {
+                return;
+            };
+            let Some(roster) = guard.as_mut() else {
+                return;
+            };
+            let Some(row) = roster
+                .items
+                .iter_mut()
+                .find(|friend| friend.id == event.user_id)
+            else {
+                // The friend is not on the loaded pages yet; the next walk will
+                // pick the row up with this presence overlay applied.
+                return;
+            };
+
+            row.location = entry.location.clone();
+            if !entry.status.is_empty() {
+                row.status = entry.status.clone();
+            }
+            if !entry.status_description.is_empty() {
+                row.status_description = entry.status_description.clone();
+            }
+            if !entry.avatar.is_empty() {
+                row.avatar = entry.avatar.clone();
+            }
+            locate(row, &worlds);
+
+            // The row borrow ends here so the roster can be recounted.
+            let friend = row.clone();
+            let world = world_id_of(&friend.location);
+            if let Some(id) = &world {
+                if !worlds.contains_key(id) && !roster.missing_worlds.contains(id) {
+                    roster.missing_worlds.push(id.clone());
+                }
+            }
+            roster.worlds_pending = roster
+                .missing_worlds
+                .iter()
+                .filter(|id| !worlds.contains_key(*id))
+                .count();
+            roster.online = roster.items.iter().filter(|friend| friend.online).count();
+            (friend, roster.online, roster.total, world)
+        };
+
+        if let Some(id) = unknown_world {
+            self.resolve_worlds_in_background(vec![id]);
+        }
+        let app = self.app.lock().ok().and_then(|guard| guard.clone());
+        if let Some(app) = app {
+            use tauri::Emitter;
+            let _ = app.emit(
+                "friend-presence",
+                PresenceUpdate {
+                    friend,
+                    online,
+                    total,
+                },
+            );
         }
     }
 
@@ -2343,6 +2459,7 @@ mod world_sweep_tests {
                 items,
                 total: 1,
                 online: 1,
+                revision: 1,
                 live: false,
                 worlds_pending: 1,
                 complete: true,
@@ -2439,5 +2556,30 @@ mod world_cache_tests {
         assert!(path.exists());
         assert!(!path.with_extension("tmp").exists());
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod roster_revision_tests {
+    use super::*;
+
+    #[test]
+    fn publishing_a_roster_bumps_its_revision() {
+        let api = Api::new();
+
+        let first = api.publish(&[], false, false);
+        let second = api.publish(&[], false, false);
+
+        assert_eq!(first.revision, 1);
+        assert_eq!(second.revision, 2, "pollers repaint only on a new revision");
+        assert_eq!(
+            api.roster_snapshot().expect("stored roster").revision,
+            2
+        );
+    }
+
+    #[test]
+    fn page_requests_start_empty() {
+        assert!(Api::new().page_requests().is_empty());
     }
 }

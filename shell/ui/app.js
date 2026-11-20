@@ -15,7 +15,9 @@ const state = {
   query: "",
   tab: "friends",
   busy: false,
-  timer: 0
+  timer: 0,
+  rosterRevision: 0,
+  rosterComplete: false
 };
 
 const el = (id) => document.getElementById(id);
@@ -175,6 +177,33 @@ function renderRoster() {
     .join("");
 }
 
+// Realtime presence: patch the affected row instead of waiting for a refresh.
+let presenceRenderTimer = 0;
+function scheduleRosterRender() {
+  if (presenceRenderTimer) return;
+  presenceRenderTimer = setTimeout(() => {
+    presenceRenderTimer = 0;
+    renderRoster();
+  }, 300);
+}
+
+function applyPresence(update) {
+  if (!update || !update.friend) return;
+  const friend = state.friends.find((row) => row.id === update.friend.id);
+  if (!friend) return;
+  Object.assign(friend, update.friend);
+  const suffix = state.rosterComplete ? "" : " (first page)";
+  accountLine.textContent = `${update.total.toLocaleString()} friends${suffix} · ${update.online} online · ${state.user?.display_name ?? ""}`;
+  const worldId = worldIdOf(friend.location);
+  if (worldId && friend.world === worldId) fillWorldNames();
+  scheduleRosterRender();
+}
+
+const listenPresence = window.__TAURI__?.event?.listen;
+if (listenPresence) {
+  listenPresence("friend-presence", (event) => applyPresence(event.payload));
+}
+
 // World names arrive after the roster is on screen; patch them in as they land.
 async function fillWorldNames(attempt = 0) {
   if (attempt > 15) return;
@@ -203,6 +232,8 @@ async function fillWorldNames(attempt = 0) {
 
 function applyRoster(roster) {
   state.friends = roster.items;
+  state.rosterRevision = roster.revision ?? state.rosterRevision;
+  state.rosterComplete = Boolean(roster.complete);
   const suffix = roster.complete ? "" : " (first page)";
   accountLine.textContent = `${roster.total.toLocaleString()} friends${suffix} · ${roster.online} online · ${state.user?.display_name ?? ""}`;
   renderRoster();
@@ -222,7 +253,8 @@ async function waitForFullRoster(attempts = 30) {
     await new Promise((resolve) => setTimeout(resolve, 400));
     const snapshot = await invoke("friends_snapshot");
     if (!snapshot) continue;
-    if (snapshot.items.length > 0 && snapshot !== latest) {
+    // Only repaint when the backend published a new roster.
+    if (snapshot.revision !== state.rosterRevision) {
       latest = snapshot;
       applyRoster(snapshot);
     }

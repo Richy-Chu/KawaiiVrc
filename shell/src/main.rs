@@ -426,6 +426,12 @@ fn friend_worlds(api: tauri::State<'_, Arc<Api>>) -> HashMap<String, String> {
     api.world_names()
 }
 
+/// Friend-page HTTP requests made so far, keyed `bucket:offset`.
+#[tauri::command]
+fn friend_page_requests(api: tauri::State<'_, Arc<Api>>) -> HashMap<String, u32> {
+    api.page_requests()
+}
+
 #[tauri::command]
 async fn instance(api: tauri::State<'_, Arc<Api>>) -> Result<InstanceView, String> {
     api.instance().await
@@ -786,6 +792,20 @@ fn dump_report() {
             Err(error) => out.push_str(&format!("roster error: {error}\n")),
         }
 
+        let requests = api.page_requests();
+        let mut pages: Vec<(String, u32)> = requests.into_iter().collect();
+        pages.sort();
+        let total: u32 = pages.iter().map(|(_, count)| count).sum();
+        out.push_str(&format!(
+            "friend_pages: {} requests · {}\n",
+            total,
+            pages
+                .iter()
+                .map(|(page, count)| format!("{page}×{count}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+
         match api.instance().await {
             Ok(view) => out.push_str(&format!(
                 "instance: in_instance={} world={} type={} players={} notice={}\n",
@@ -995,12 +1015,15 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Lets the update path be exercised without a mouse: check, download,
         // install and exit, writing what happened next to the shell's settings.
-        .setup(|_app| {
+        .setup(|app| {
+            // Presence events are pushed to the window as they arrive.
+            let api = app.state::<Arc<Api>>().inner().clone();
+            api.set_app(app.handle().clone());
             // Compiled only with the `update-test` feature: a shipping build has
             // no headless update switch at all.
             #[cfg(feature = "update-test")]
             if std::env::args().any(|argument| argument == "--install-update") {
-                start_headless_update(_app.handle().clone());
+                start_headless_update(app.handle().clone());
             }
             Ok(())
         })
@@ -1068,6 +1091,7 @@ fn main() {
             friends_quick,
             friends_snapshot,
             friend_worlds,
+            friend_page_requests,
             instance,
             notifications,
             settings_get,
