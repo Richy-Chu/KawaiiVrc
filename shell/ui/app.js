@@ -140,6 +140,21 @@ function friendRow(friend) {
     </article>`;
 }
 
+// A row from the saved roster: name and trust only. Its presence and world are
+// from last session, so showing them would read as current.
+function savedFriendRow(friend) {
+  return `
+    <article class="row friend">
+      ${friend.avatar ? `<img class="avatar" loading="lazy" src="${remoteImage(friend.avatar)}" alt="" />` : `<span class="avatar"></span>`}
+      <div class="body">
+        <div class="title">
+          <strong>${escape(friend.name)}</strong>
+          ${friend.trust ? `<span class="chip trust">${escape(friend.trust)}</span>` : ""}
+        </div>
+      </div>
+    </article>`;
+}
+
 function renderRoster() {
   if (!state.signedIn) return;
   const query = state.query.trim().toLowerCase();
@@ -156,10 +171,21 @@ function renderRoster() {
     return;
   }
 
+  const byName = (a, b) => a.name.localeCompare(b.name);
+
+  // Presence in the saved roster is from last session, so it is a plain list
+  // rather than In game / Online groups that would look current.
+  if (state.rosterStale) {
+    const rows = matches.slice().sort(byName);
+    roster.innerHTML = `
+      <div class="group-head">Saved roster (${rows.length})</div>
+      ${rows.map(savedFriendRow).join("")}`;
+    return;
+  }
+
   const inGame = matches.filter((friend) => friend.online && worldIdOf(friend.location));
   const online = matches.filter((friend) => friend.online && !inGame.includes(friend));
   const offline = matches.filter((friend) => !friend.online);
-  const byName = (a, b) => a.name.localeCompare(b.name);
 
   const offlineShown = query ? offline.slice(0, 600) : offline.slice(0, 300);
   const groups = [
