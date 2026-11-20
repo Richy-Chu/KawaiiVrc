@@ -634,19 +634,24 @@ function updateNoticeBadge() {
 
 function applyNoticeOverview(overview, append = false) {
   const page = overview.notices || [];
+  const offset = Number(overview.offset || 0);
   if (append) {
     const known = new Set(state.notices.map((notice) => notice.id));
     state.notices = state.notices.concat(page.filter((notice) => !known.has(notice.id)));
+    state.noticeOffset = offset + page.length;
   } else if (state.notices.length > page.length) {
     // A periodic refresh replaces the first page but keeps the older pages the
-    // user already asked for.
+    // user already asked for, so the next "Load more" must continue from those
+    // rather than from the new first-page length, or it would only re-fetch
+    // rows that are already on screen.
     const known = new Set(page.map((notice) => notice.id));
     const older = state.notices.slice(page.length).filter((notice) => !known.has(notice.id));
     state.notices = page.concat(older);
+    state.noticeOffset = Math.max(state.noticeOffset, page.length + older.length);
   } else {
     state.notices = page;
+    state.noticeOffset = page.length;
   }
-  state.noticeOffset = Number(overview.offset || 0) + page.length;
   state.noticeTotal = Number(overview.waiting) || 0;
   state.noticesHasMore = Boolean(overview.has_more);
   state.noticesLoaded = true;
