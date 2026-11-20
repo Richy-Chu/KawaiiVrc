@@ -526,20 +526,37 @@ impl Api {
     }
 
     pub fn roster_snapshot(&self) -> Option<Roster> {
-        let mut roster = self.roster.lock().ok().and_then(|guard| guard.clone())?;
-        // Names keep landing after the roster was built, so relabel the rows
-        // before handing them out: a poll must never put a raw id back on a row
-        // whose world is now cached.
         let worlds = self.world_names();
+        let mut guard = self.roster.lock().ok()?;
+        let roster = guard.as_mut()?;
+
+        // Names keep landing after the roster was built, so relabel the stored
+        // rows before handing them out: a poll must never put a raw id back on a
+        // row whose world is now cached.
+        let mut relabelled = false;
         for friend in &mut roster.items {
+            let before = (
+                friend.world.clone(),
+                friend.instance.clone(),
+                friend.online,
+            );
             locate(friend, &worlds);
+            if (friend.world.clone(), friend.instance.clone(), friend.online) != before {
+                relabelled = true;
+            }
         }
         roster.worlds_pending = roster
             .missing_worlds
             .iter()
             .filter(|id| !worlds.contains_key(*id))
             .count();
-        Some(roster)
+
+        // A relabelled list is a changed list, so it needs a new revision or a
+        // poller keyed on the revision would skip a snapshot that did change.
+        if relabelled {
+            roster.revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
+        }
+        Some(roster.clone())
     }
 
     /// Loads the full roster without blocking the caller.
@@ -722,7 +739,7 @@ impl Api {
             return;
         }
         let api = Arc::clone(self);
-        tokio::spawn(async move {
+        let task = async move {
             if let Some(cookie) = api.cookie() {
                 let sweep = Arc::clone(&api);
                 sweep_worlds(ids, |pending| {
@@ -736,7 +753,19 @@ impl Api {
                 .await;
             }
             api.resolving.store(false, Ordering::SeqCst);
-        });
+        };
+
+        // Callers are usually async commands, but a sync command runs on the
+        // main thread where tokio has no reactor; Tauri's runtime is there for
+        // that case (and for the headless dump, which has neither).
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(task);
+            }
+            Err(_) => {
+                tauri::async_runtime::spawn(task);
+            }
+        }
     }
 
     fn uncached_worlds(&self, ids: &[String]) -> Vec<String> {
@@ -2631,5 +2660,59 @@ mod presence_update_tests {
         let roster = api.roster_snapshot().expect("roster");
         assert!(roster.items.is_empty());
         assert_eq!(roster.online, 0);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_relabel_tests {
+    use super::*;
+
+    fn one_friend() -> Vec<Value> {
+        vec![serde_json::json!({
+            "id": "usr_1",
+            "displayName": "A",
+            "location": "wrld_x:1~hidden(usr_2)"
+        })]
+    }
+
+    #[test]
+    fn a_snapshot_that_picks_up_a_world_name_gets_a_new_revision() {
+        let api = Api::new();
+        api.publish(&one_friend(), true, false);
+
+        let before = api.roster_snapshot().expect("roster");
+        assert_eq!(before.items[0].world, "wrld_x");
+        assert_eq!(before.worlds_pending, 1);
+
+        if let Ok(mut cache) = api.worlds.lock() {
+            cache.insert("wrld_x".to_string(), "Named World".to_string());
+        }
+
+        let after = api.roster_snapshot().expect("roster");
+        assert_eq!(after.items[0].world, "Named World");
+        assert_eq!(after.worlds_pending, 0);
+        assert!(
+            after.revision > before.revision,
+            "a relabelled list must not be skipped as unchanged"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_snapshot_keeps_its_revision() {
+        let api = Api::new();
+        api.publish(&one_friend(), true, false);
+
+        let first = api.roster_snapshot().expect("roster");
+        let second = api.roster_snapshot().expect("roster");
+
+        assert_eq!(first.revision, second.revision);
+        assert_eq!(second.items[0].world, "wrld_x");
+    }
+
+    #[test]
+    fn world_resolution_can_start_without_a_runtime() {
+        let api = Arc::new(Api::new());
+        // Plain test thread: no tokio reactor, which used to panic here.
+        api.resolve_worlds_in_background(vec!["wrld_a".to_string()]);
     }
 }
