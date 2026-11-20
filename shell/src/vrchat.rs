@@ -23,6 +23,10 @@ const WORLD_CACHE_LIMIT: u64 = 4 * 1024 * 1024;
 /// The last complete roster, so a launch paints friends before any request.
 const ROSTER_CACHE_FILE: &str = "roster-snapshot.json";
 const ROSTER_CACHE_LIMIT: u64 = 16 * 1024 * 1024;
+/// World names are re-looked up a week after they were learned, so a renamed
+/// world does not stay wrong forever.
+const WORLD_NAME_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+const WORLD_CACHE_MAX_ENTRIES: usize = 2_000;
 
 fn world_cache_path() -> PathBuf {
     session::shell_dir().join(WORLD_CACHE_FILE)
@@ -66,22 +70,70 @@ fn save_roster_cache(path: &Path, roster: &Roster) {
     }
 }
 
-fn load_world_names(path: &Path) -> HashMap<String, String> {
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
+}
+
+#[derive(Default)]
+struct WorldCache {
+    names: HashMap<String, String>,
+    /// When each name was learned, so old entries can expire and the file can
+    /// be pruned oldest-first.
+    stamps: HashMap<String, u64>,
+}
+
+fn load_world_cache(path: &Path) -> WorldCache {
+    let mut cache = WorldCache::default();
     let readable = std::fs::metadata(path)
         .map(|meta| meta.len() <= WORLD_CACHE_LIMIT)
         .unwrap_or(false);
     if !readable {
-        return HashMap::new();
+        return cache;
     }
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<HashMap<String, String>>(&text).ok())
-        .unwrap_or_default()
-        .into_iter()
-        // Failed lookups are cached in memory for this run only; a world that
-        // was private or missing last time deserves a fresh try next launch.
-        .filter(|(id, name)| id.starts_with("wrld_") && !name.is_empty())
-        .collect()
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return cache;
+    };
+    let Ok(raw) = serde_json::from_str::<HashMap<String, Value>>(&text) else {
+        return cache;
+    };
+
+    let now = now_secs();
+    let mut entries: Vec<(String, String, u64)> = Vec::new();
+    for (id, value) in raw {
+        if !id.starts_with("wrld_") {
+            continue;
+        }
+        let (name, at) = match value {
+            // Older builds wrote a bare name. Date it now so the file still
+            // loads and gets a full TTL from this build onward.
+            Value::String(name) => (name, now),
+            Value::Object(fields) => (
+                fields
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                fields.get("at").and_then(Value::as_u64).unwrap_or(now),
+            ),
+            _ => continue,
+        };
+        if name.is_empty() || now.saturating_sub(at) > WORLD_NAME_TTL_SECS {
+            continue;
+        }
+        entries.push((id, name, at));
+    }
+
+    // A file written by an unbounded build may be over the cap; keep the newest.
+    entries.sort_by(|left, right| right.2.cmp(&left.2));
+    entries.truncate(WORLD_CACHE_MAX_ENTRIES);
+    for (id, name, at) in entries {
+        cache.names.insert(id.clone(), name);
+        cache.stamps.insert(id, at);
+    }
+    cache
 }
 
 fn write_json_atomically(path: &Path, json: &str) {
@@ -91,15 +143,26 @@ fn write_json_atomically(path: &Path, json: &str) {
     }
 }
 
-fn save_world_names(path: &Path, names: &HashMap<String, String>) {
-    let named: BTreeMap<&String, &String> = names
+fn save_world_cache(path: &Path, names: &HashMap<String, String>, stamps: &HashMap<String, u64>) {
+    let now = now_secs();
+    let mut entries: Vec<(&String, &String, u64)> = names
         .iter()
+        // Failed lookups stay in memory only; they deserve a retry next launch.
         .filter(|(_, name)| !name.is_empty())
+        .map(|(id, name)| (id, name, stamps.get(id).copied().unwrap_or(now)))
+        .filter(|(_, _, at)| now.saturating_sub(*at) <= WORLD_NAME_TTL_SECS)
         .collect();
-    if named.is_empty() {
+    entries.sort_by(|left, right| right.2.cmp(&left.2));
+    entries.truncate(WORLD_CACHE_MAX_ENTRIES);
+    if entries.is_empty() {
         return;
     }
-    if let Ok(json) = serde_json::to_string(&named) {
+
+    let file: BTreeMap<&String, Value> = entries
+        .iter()
+        .map(|(id, name, at)| (*id, serde_json::json!({ "name": name, "at": at })))
+        .collect();
+    if let Ok(json) = serde_json::to_string(&file) {
         write_json_atomically(path, &json);
     }
 }
@@ -226,6 +289,8 @@ pub struct Api {
     auth: Mutex<Option<String>>,
     user: Mutex<Option<UserInfo>>,
     worlds: Mutex<HashMap<String, String>>,
+    /// When each cached world name was learned; drives TTL and pruning.
+    world_seen: Mutex<HashMap<String, u64>>,
     presence: Mutex<HashMap<String, Presence>>,
     self_location: Mutex<String>,
     activity: crate::activity::ActivityLog,
@@ -254,6 +319,7 @@ impl Api {
             .timeout(Duration::from_secs(25))
             .build()
             .expect("http client");
+        let world_cache = load_world_cache(&world_cache_path());
         Self {
             http,
             persist,
@@ -263,7 +329,8 @@ impl Api {
             app: Mutex::new(None),
             auth: Mutex::new(None),
             user: Mutex::new(None),
-            worlds: Mutex::new(load_world_names(&world_cache_path())),
+            worlds: Mutex::new(world_cache.names),
+            world_seen: Mutex::new(world_cache.stamps),
             presence: Mutex::new(HashMap::new()),
             self_location: Mutex::new(String::new()),
             activity: crate::activity::ActivityLog::new(),
@@ -912,7 +979,15 @@ impl Api {
             *guard = merged.clone();
         }
         if gained {
-            save_world_names(&world_cache_path(), &merged);
+            let now = now_secs();
+            if let Ok(mut stamps) = self.world_seen.lock() {
+                for id in &missing {
+                    if merged.get(id).is_some_and(|name| !name.is_empty()) {
+                        stamps.insert(id.clone(), now);
+                    }
+                }
+                save_world_cache(&world_cache_path(), &merged, &stamps);
+            }
         }
         merged
     }
@@ -2656,25 +2731,92 @@ mod world_cache_tests {
             ("wrld_a".to_string(), "A World".to_string()),
             ("wrld_b".to_string(), String::new()),
         ]);
+        let stamps = HashMap::from([("wrld_a".to_string(), now_secs())]);
 
-        save_world_names(&path, &names);
-        let loaded = load_world_names(&path);
+        save_world_cache(&path, &names, &stamps);
+        let cache = load_world_cache(&path);
 
-        assert_eq!(loaded.get("wrld_a").map(String::as_str), Some("A World"));
+        assert_eq!(cache.names.get("wrld_a").map(String::as_str), Some("A World"));
         assert!(
-            !loaded.contains_key("wrld_b"),
+            !cache.names.contains_key("wrld_b"),
             "an empty name is a failed lookup and should be retried next launch"
         );
+        assert!(cache.stamps.contains_key("wrld_a"), "the age is persisted");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_flat_file_from_an_older_build_still_loads() {
+        let path = temp_path("legacy");
+        std::fs::write(&path, r#"{"wrld_a":"A World","wrld_b":""}"#)
+            .expect("write legacy cache");
+
+        let cache = load_world_cache(&path);
+
+        assert_eq!(cache.names.get("wrld_a").map(String::as_str), Some("A World"));
+        assert!(!cache.names.contains_key("wrld_b"));
+        assert!(
+            cache.stamps.contains_key("wrld_a"),
+            "legacy names get a fresh TTL instead of being thrown away"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn names_past_their_ttl_are_dropped_so_renamed_worlds_refresh() {
+        let path = temp_path("ttl");
+        let old = now_secs() - WORLD_NAME_TTL_SECS - 60;
+        let fresh = now_secs();
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"wrld_old":{{"name":"Old Name","at":{old}}},"wrld_new":{{"name":"New Name","at":{fresh}}}}}"#
+            ),
+        )
+        .expect("write timed cache");
+
+        let cache = load_world_cache(&path);
+
+        assert!(!cache.names.contains_key("wrld_old"));
+        assert_eq!(
+            cache.names.get("wrld_new").map(String::as_str),
+            Some("New Name")
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn saving_keeps_the_newest_entries_within_the_cap() {
+        let path = temp_path("cap");
+        let now = now_secs();
+        let mut names = HashMap::new();
+        let mut stamps = HashMap::new();
+        for index in 0..WORLD_CACHE_MAX_ENTRIES + 10 {
+            let id = format!("wrld_{index:05}");
+            names.insert(id.clone(), format!("World {index}"));
+            stamps.insert(id, now - index as u64);
+        }
+        // An entry older than the TTL is dropped rather than saved.
+        names.insert("wrld_expired".to_string(), "Expired".to_string());
+        stamps.insert("wrld_expired".to_string(), now - WORLD_NAME_TTL_SECS - 1);
+
+        save_world_cache(&path, &names, &stamps);
+        let cache = load_world_cache(&path);
+
+        assert_eq!(cache.names.len(), WORLD_CACHE_MAX_ENTRIES);
+        assert!(!cache.names.contains_key("wrld_expired"));
+        assert!(cache.names.contains_key("wrld_00000"), "newest kept");
+        assert!(!cache.names.contains_key("wrld_02000"), "oldest dropped");
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn a_missing_or_broken_cache_loads_empty() {
         let path = temp_path("missing");
-        assert!(load_world_names(&path).is_empty());
+        assert!(load_world_cache(&path).names.is_empty());
 
         std::fs::write(&path, "{ not json").expect("write a broken cache file");
-        assert!(load_world_names(&path).is_empty());
+        assert!(load_world_cache(&path).names.is_empty());
         let _ = std::fs::remove_file(&path);
     }
 
@@ -2683,7 +2825,7 @@ mod world_cache_tests {
         let path = temp_path("atomic");
         let names = HashMap::from([("wrld_a".to_string(), "A World".to_string())]);
 
-        save_world_names(&path, &names);
+        save_world_cache(&path, &names, &HashMap::new());
 
         assert!(path.exists());
         assert!(!path.with_extension("tmp").exists());
