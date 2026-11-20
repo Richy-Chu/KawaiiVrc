@@ -385,11 +385,16 @@ async fn sign_out(api: tauri::State<'_, Arc<Api>>) -> Result<(), String> {
     Ok(())
 }
 
+/// Hands the roster's unknown world ids to the background resolver.
+fn start_world_lookup(api: &Arc<Api>, roster: &mut Roster) {
+    let missing = std::mem::take(&mut roster.missing_worlds);
+    api.resolve_worlds_in_background(missing);
+}
+
 #[tauri::command]
 async fn friends(api: tauri::State<'_, Arc<Api>>) -> Result<Roster, String> {
     let mut roster = api.friends().await?;
-    let missing = std::mem::take(&mut roster.missing_worlds);
-    api.inner().resolve_worlds_in_background(missing);
+    start_world_lookup(api.inner(), &mut roster);
     Ok(roster)
 }
 
@@ -397,8 +402,7 @@ async fn friends(api: tauri::State<'_, Arc<Api>>) -> Result<Roster, String> {
 #[tauri::command]
 async fn friends_quick(api: tauri::State<'_, Arc<Api>>) -> Result<Roster, String> {
     let mut roster = api.friends_quick().await?;
-    let missing = std::mem::take(&mut roster.missing_worlds);
-    api.inner().resolve_worlds_in_background(missing);
+    start_world_lookup(api.inner(), &mut roster);
     api.inner().start_roster_refresh();
     Ok(roster)
 }

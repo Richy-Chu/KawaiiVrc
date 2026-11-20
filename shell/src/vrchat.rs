@@ -362,8 +362,7 @@ impl Api {
             }
         }
 
-        let mut roster = self.build_roster(&users, true);
-        roster.degraded = degraded;
+        let roster = self.build_roster(&users, true, degraded);
         if let Ok(mut guard) = self.roster.lock() {
             *guard = Some(roster.clone());
         }
@@ -380,18 +379,12 @@ impl Api {
             .await
             .map_err(PageFailure::to_message)?;
         let mut degraded = false;
-
         if needs_second_page(users.len()) {
-            match self.fetch_page(&cookie, "false", 100).await {
-                Ok(page) => users.extend(page),
-                Err(failure @ PageFailure::Expired) => return Err(failure.to_message()),
-                Err(PageFailure::Other(_)) => degraded = true,
-            }
+            let second = self.fetch_page(&cookie, "false", 100).await;
+            degraded = fold_second_page(&mut users, second).map_err(PageFailure::to_message)?;
         }
 
-        let mut roster = self.build_roster(&users, false);
-        roster.degraded = degraded;
-        Ok(roster)
+        Ok(self.build_roster(&users, false, degraded))
     }
 
     pub fn roster_snapshot(&self) -> Option<Roster> {
@@ -410,7 +403,7 @@ impl Api {
         });
     }
 
-    fn build_roster(&self, users: &[Value], complete: bool) -> Roster {
+    fn build_roster(&self, users: &[Value], complete: bool, degraded: bool) -> Roster {
         let mut items: Vec<Friend> = users
             .iter()
             .map(|user| map_friend(user, &HashMap::new()))
@@ -463,7 +456,7 @@ impl Api {
             worlds_pending: missing_worlds.len(),
             missing_worlds,
             complete,
-            degraded: false,
+            degraded,
             items,
         }
     }
@@ -544,25 +537,15 @@ impl Api {
                     .map(|offset| self.fetch_page(cookie, bucket, *offset)),
             )
             .await;
-            for result in results {
-                match result {
-                    Ok(page) => {
-                        let short = page.len() < 100;
-                        users.extend(page);
-                        if short {
-                            finished = true;
-                            break;
-                        }
-                    }
-                    // An expired session cannot be recovered by retrying.
-                    Err(PageFailure::Expired) => return Err(PageFailure::Expired),
-                    Err(PageFailure::Other(_)) => degraded = true,
-                }
-            }
+            let (round_finished, round_degraded) = fold_page_round(&mut users, results)?;
+            finished = round_finished;
+            degraded |= round_degraded;
             offset += 600;
         }
 
-        Ok((users, degraded))
+        // Hitting the cap is a truncation, so report it like a dropped page.
+        let capped = !finished && users.len() >= 2_500;
+        Ok((users, degraded || capped))
     }
 
     pub fn world_names(&self) -> HashMap<String, String> {
@@ -1598,6 +1581,47 @@ fn needs_second_page(page_len: usize) -> bool {
     page_len == 100
 }
 
+/// Folds the optional second quick page. Returns whether it had to be dropped;
+/// an expired session aborts instead.
+fn fold_second_page(
+    users: &mut Vec<Value>,
+    second: Result<Vec<Value>, PageFailure>,
+) -> Result<bool, PageFailure> {
+    match second {
+        Ok(page) => {
+            users.extend(page);
+            Ok(false)
+        }
+        Err(PageFailure::Expired) => Err(PageFailure::Expired),
+        Err(PageFailure::Other(_)) => Ok(true),
+    }
+}
+
+/// Folds one round of page results into the roster. Returns whether the bucket
+/// ended inside this round and whether any page was dropped. An expired session
+/// is returned as an error so it aborts the load rather than degrading it.
+fn fold_page_round(
+    users: &mut Vec<Value>,
+    results: Vec<Result<Vec<Value>, PageFailure>>,
+) -> Result<(bool, bool), PageFailure> {
+    let mut degraded = false;
+    for result in results {
+        match result {
+            Ok(page) => {
+                let short = page.len() < 100;
+                users.extend(page);
+                if short {
+                    return Ok((true, degraded));
+                }
+            }
+            // An expired session cannot be recovered by retrying.
+            Err(PageFailure::Expired) => return Err(PageFailure::Expired),
+            Err(PageFailure::Other(_)) => degraded = true,
+        }
+    }
+    Ok((false, degraded))
+}
+
 /// 600 ms, 1.2 s, 2.4 s, 4.8 s; a `Retry-After` wins but never waits longer
 /// than 10 s, so a stubborn endpoint cannot hang the roster.
 fn backoff_delay(attempt: u32, retry_after: Option<Duration>) -> Duration {
@@ -1849,5 +1873,76 @@ mod page_retry_tests {
 
         headers.remove(reqwest::header::RETRY_AFTER);
         assert_eq!(retry_after_of(&headers), None);
+    }
+}
+
+#[cfg(test)]
+mod page_fold_tests {
+    use super::*;
+
+    fn page(len: usize) -> Vec<Value> {
+        (0..len)
+            .map(|index| serde_json::json!({ "id": format!("usr_{index}") }))
+            .collect()
+    }
+
+    #[test]
+    fn an_expired_page_aborts_the_bucket_instead_of_degrading_it() {
+        let mut users = page(100);
+        let results = vec![
+            Ok(page(100)),
+            Err(PageFailure::Expired),
+            Ok(page(100)),
+        ];
+
+        assert_eq!(fold_page_round(&mut users, results), Err(PageFailure::Expired));
+        // The pages already folded stay; the load does not continue silently.
+        assert_eq!(users.len(), 200);
+    }
+
+    #[test]
+    fn a_throttled_page_degrades_the_bucket_but_keeps_the_rest() {
+        let mut users = Vec::new();
+        let results = vec![
+            Ok(page(100)),
+            Err(PageFailure::Other("VRChat kept throttling friends page 200.".to_string())),
+            Ok(page(100)),
+        ];
+
+        let (finished, degraded) = fold_page_round(&mut users, results).expect("no abort");
+        assert!(!finished);
+        assert!(degraded);
+        assert_eq!(users.len(), 200);
+    }
+
+    #[test]
+    fn a_short_page_ends_the_bucket() {
+        let mut users = page(100);
+        let (finished, degraded) = fold_page_round(&mut users, vec![Ok(page(7))]).expect("ok");
+        assert!(finished);
+        assert!(!degraded);
+        assert_eq!(users.len(), 107);
+    }
+
+    #[test]
+    fn an_expired_second_quick_page_aborts_the_quick_roster() {
+        let mut users = page(100);
+        assert_eq!(
+            fold_second_page(&mut users, Err(PageFailure::Expired)),
+            Err(PageFailure::Expired)
+        );
+        assert_eq!(users.len(), 100);
+    }
+
+    #[test]
+    fn a_throttled_second_quick_page_only_degrades_it() {
+        let mut users = page(100);
+        let degraded = fold_second_page(
+            &mut users,
+            Err(PageFailure::Other("429 on page 100".to_string())),
+        )
+        .expect("degrade");
+        assert!(degraded);
+        assert_eq!(users.len(), 100);
     }
 }
