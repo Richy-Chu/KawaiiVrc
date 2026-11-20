@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -203,10 +203,40 @@ fn invite_instance_from(location: &str) -> Result<String, String> {
 
 #[derive(Serialize, Clone)]
 pub struct NoticeOverview {
-    /// The first page, which is what the tab renders.
+    /// One page of notifications, starting at `offset`.
     pub notices: Vec<Notice>,
-    /// Every waiting actionable notification, paged past the first hundred.
+    /// Every waiting actionable notification across the whole list.
     pub waiting: usize,
+    /// Where this page starts, so the window can ask for the next one.
+    pub offset: usize,
+    /// True when the page was full and another one may follow.
+    pub has_more: bool,
+}
+
+/// The counts behind the badge. A full walk of the list is only worth doing
+/// occasionally, so the first page's ids are tracked between walks and only
+/// genuinely new ones are added.
+#[derive(Default, Clone)]
+struct NoticeCount {
+    total: usize,
+    ids: HashSet<String>,
+    at: u64,
+}
+
+const NOTICE_PAGE: usize = 100;
+const NOTICE_MAX_OFFSET: usize = 10_000;
+/// How often the cheap count is corrected by walking the whole list.
+const NOTICE_RECOUNT_SECS: u64 = 30 * 60;
+
+fn actionable_ids(rows: &[Value]) -> HashSet<String> {
+    rows.iter()
+        .filter(|row| actionable_kind(&text(row, "type")))
+        .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect()
+}
+
+fn page_has_more(rows: usize) -> bool {
+    rows >= NOTICE_PAGE
 }
 
 fn notice_from(row: &Value) -> Notice {
@@ -521,6 +551,11 @@ pub struct Api {
     resolving: AtomicBool,
     roster: Mutex<Option<Roster>>,
     roster_loading: AtomicBool,
+    notice_count: Mutex<Option<NoticeCount>>,
+    /// Pages fetched for notifications, and how many of those were part of a
+    /// full count walk. Kept so the cost of the badge can be checked.
+    notice_pages: AtomicU32,
+    notice_walks: AtomicU32,
 }
 
 impl Api {
@@ -561,6 +596,9 @@ impl Api {
             realtime_started: AtomicBool::new(false),
             roster: Mutex::new(None),
             roster_loading: AtomicBool::new(false),
+            notice_count: Mutex::new(None),
+            notice_pages: AtomicU32::new(0),
+            notice_walks: AtomicU32::new(0),
         }
     }
 
@@ -614,6 +652,7 @@ impl Api {
         if let Ok(mut presence) = self.presence.lock() {
             presence.clear();
         }
+        self.invalidate_notice_count();
 
         // Tests and one-off reports keep no cache; only the window reads one.
         if !self.persist {
@@ -802,6 +841,7 @@ impl Api {
             *roster = None;
         }
         self.revision.store(0, Ordering::SeqCst);
+        self.invalidate_notice_count();
         if let Ok(mut presence) = self.presence.lock() {
             presence.clear();
         }
@@ -1922,50 +1962,136 @@ impl Api {
         Ok(notice_from(&value))
     }
 
-    /// The first page plus a count of everything waiting. Friend requests pile
-    /// up until they are answered, so the count pages past the first hundred
-    /// instead of reporting the page size as the total.
-    pub async fn notification_overview(&self) -> Result<NoticeOverview, String> {
-        const PAGE: usize = 100;
+    /// One page of notifications plus the waiting total. The page is the
+    /// request this call already makes; the total rides along by tracking the
+    /// first page's ids and only walking the whole list occasionally.
+    pub async fn notification_overview(&self, offset: usize) -> Result<NoticeOverview, String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let offset = offset.min(NOTICE_MAX_OFFSET);
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("auth/user/notifications?n={NOTICE_PAGE}&offset={offset}"),
+                Some(&cookie),
+                None,
+            )
+            .await?;
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err("Your session expired. Sign in again.".to_string());
+        }
+        if !status.is_success() {
+            return Err(format!(
+                "VRChat returned {} while loading notifications.",
+                status.as_u16()
+            ));
+        }
+        self.notice_pages.fetch_add(1, Ordering::SeqCst);
+        let rows: Vec<Value> = serde_json::from_str(&body_text).unwrap_or_default();
+        let has_more = page_has_more(rows.len());
+        let waiting = if offset == 0 {
+            self.waiting_notices(&rows).await?
+        } else {
+            self.notice_count
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|count| count.total))
+                .unwrap_or(0)
+        };
+
+        Ok(NoticeOverview {
+            notices: rows.iter().map(notice_from).collect(),
+            waiting,
+            offset,
+            has_more,
+        })
+    }
+
+    /// The waiting total, from the first page plus a cached count. The whole
+    /// list is walked only on the first call, after a handle changes it, or
+    /// every half hour to correct for requests answered elsewhere.
+    async fn waiting_notices(&self, first_page: &[Value]) -> Result<usize, String> {
+        let now = now_secs();
+        let page_ids = actionable_ids(first_page);
+        if let Some(mut cached) = self
+            .notice_count
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+        {
+            if now.saturating_sub(cached.at) < NOTICE_RECOUNT_SECS {
+                let fresh = page_ids.iter().filter(|id| !cached.ids.contains(*id)).count();
+                cached.ids.extend(page_ids);
+                cached.total += fresh;
+                if let Ok(mut guard) = self.notice_count.lock() {
+                    *guard = Some(cached.clone());
+                }
+                return Ok(cached.total);
+            }
+        }
+        self.notice_walks.fetch_add(1, Ordering::SeqCst);
+        let total = self.walk_notice_count(first_page).await?;
+        Ok(total)
+    }
+
+    async fn walk_notice_count(&self, first_page: &[Value]) -> Result<usize, String> {
         const MAX_PAGES: usize = 20;
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
-        let mut notices: Vec<Notice> = Vec::new();
-        let mut waiting = 0usize;
-        let mut offset = 0usize;
+        let mut ids = actionable_ids(first_page);
+        let mut offset = first_page.len();
+        let mut more = page_has_more(first_page.len());
 
-        for page in 0..MAX_PAGES {
+        for _ in 1..MAX_PAGES {
+            if !more {
+                break;
+            }
             let (status, _, body_text) = self
                 .request(
                     reqwest::Method::GET,
-                    &format!("auth/user/notifications?n={PAGE}&offset={offset}"),
+                    &format!("auth/user/notifications?n={NOTICE_PAGE}&offset={offset}"),
                     Some(&cookie),
                     None,
                 )
                 .await?;
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                return Err("Your session expired. Sign in again.".to_string());
-            }
             if !status.is_success() {
-                return Err(format!(
-                    "VRChat returned {} while loading notifications.",
-                    status.as_u16()
-                ));
-            }
-            let rows: Vec<Value> = serde_json::from_str(&body_text).unwrap_or_default();
-            waiting += rows
-                .iter()
-                .filter(|row| actionable_kind(&text(row, "type")))
-                .count();
-            if page == 0 {
-                notices = rows.iter().map(notice_from).collect();
-            }
-            offset += rows.len();
-            if rows.len() < PAGE {
                 break;
             }
+            self.notice_pages.fetch_add(1, Ordering::SeqCst);
+            let rows: Vec<Value> = serde_json::from_str(&body_text).unwrap_or_default();
+            ids.extend(actionable_ids(&rows));
+            offset += rows.len();
+            more = page_has_more(rows.len());
         }
 
-        Ok(NoticeOverview { notices, waiting })
+        let total = ids.len();
+        if let Ok(mut guard) = self.notice_count.lock() {
+            *guard = Some(NoticeCount {
+                total,
+                ids,
+                at: now_secs(),
+            });
+        }
+        Ok(total)
+    }
+
+    /// Pages fetched for notifications so far, and how many full counts ran.
+    pub fn notice_stats(&self) -> HashMap<String, u32> {
+        HashMap::from([
+            (
+                "pages".to_string(),
+                self.notice_pages.load(Ordering::SeqCst),
+            ),
+            (
+                "walks".to_string(),
+                self.notice_walks.load(Ordering::SeqCst),
+            ),
+        ])
+    }
+
+    /// A handled notification makes the cached count wrong; recount next time.
+    fn invalidate_notice_count(&self) {
+        if let Ok(mut guard) = self.notice_count.lock() {
+            *guard = None;
+        }
     }
 
     pub async fn accept_notification(&self, notification_id: &str) -> Result<NoticeOverview, String> {
@@ -1982,7 +2108,8 @@ impl Api {
             }
         }
         self.hide_notification(&id).await?;
-        self.notification_overview().await
+        self.invalidate_notice_count();
+        self.notification_overview(0).await
     }
 
     pub async fn dismiss_notification(
@@ -1993,7 +2120,8 @@ impl Api {
         // Confirm the row is still there before hiding anything.
         let _ = self.notification(&id).await?;
         self.hide_notification(&id).await?;
-        self.notification_overview().await
+        self.invalidate_notice_count();
+        self.notification_overview(0).await
     }
 
     // ----------------------------------------------------------------- image
@@ -3901,5 +4029,36 @@ mod notification_record_tests {
         }
         let long = "a".repeat(129);
         assert!(path_id(&long).is_err(), "overlong ids are rejected too");
+    }
+}
+
+#[cfg(test)]
+mod notice_paging_tests {
+    use super::*;
+
+    #[test]
+    fn the_page_size_decides_whether_more_may_follow() {
+        assert!(page_has_more(NOTICE_PAGE));
+        assert!(!page_has_more(NOTICE_PAGE - 1));
+        assert!(!page_has_more(0));
+    }
+
+    #[test]
+    fn only_actionable_requests_are_counted_by_id() {
+        let rows = vec![
+            serde_json::json!({ "id": "frq_a", "type": "friendRequest" }),
+            serde_json::json!({ "id": "not_b", "type": "invite" }),
+            serde_json::json!({ "id": "not_c", "type": "requestInvite" }),
+            serde_json::json!({ "id": "not_d", "type": "message" }),
+            serde_json::json!({ "id": "not_e", "type": "friendRequestResponse" }),
+        ];
+
+        let ids = actionable_ids(&rows);
+
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains("frq_a"));
+        assert!(ids.contains("not_b"));
+        assert!(ids.contains("not_c"));
+        assert!(!ids.contains("not_d"));
     }
 }

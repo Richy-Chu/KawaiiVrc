@@ -465,11 +465,19 @@ async fn dismiss_notification(
     api.dismiss_notification(&notice_id).await
 }
 
+/// How many notification pages and full counts the badge has cost, so the
+/// refresh strategy can be checked without guessing from timings.
+#[tauri::command]
+fn notice_stats(api: tauri::State<'_, Arc<Api>>) -> HashMap<String, u32> {
+    api.notice_stats()
+}
+
 #[tauri::command]
 async fn notification_overview(
     api: tauri::State<'_, Arc<Api>>,
+    offset: Option<usize>,
 ) -> Result<NoticeOverview, String> {
-    api.notification_overview().await
+    api.notification_overview(offset.unwrap_or(0)).await
 }
 
 // ----------------------------------------------------------- friend actions
@@ -1172,6 +1180,7 @@ fn main() {
             accept_notification,
             dismiss_notification,
             notification_overview,
+            notice_stats,
             invite_friend,
             request_invite,
             friend_favorites,

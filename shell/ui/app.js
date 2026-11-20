@@ -25,7 +25,9 @@ const state = {
   noticesLoaded: false,
   noticesAt: 0,
   noticesBusy: false,
-  noticeTotal: 0
+  noticeTotal: 0,
+  noticesHasMore: false,
+  noticeOffset: 0
 };
 
 const el = (id) => document.getElementById(id);
@@ -630,10 +632,25 @@ function updateNoticeBadge() {
   badge.title = waiting ? `${waiting.toLocaleString()} waiting on you` : "";
 }
 
-function applyNoticeOverview(overview) {
-  state.notices = overview.notices || [];
+function applyNoticeOverview(overview, append = false) {
+  const page = overview.notices || [];
+  if (append) {
+    const known = new Set(state.notices.map((notice) => notice.id));
+    state.notices = state.notices.concat(page.filter((notice) => !known.has(notice.id)));
+  } else if (state.notices.length > page.length) {
+    // A periodic refresh replaces the first page but keeps the older pages the
+    // user already asked for.
+    const known = new Set(page.map((notice) => notice.id));
+    const older = state.notices.slice(page.length).filter((notice) => !known.has(notice.id));
+    state.notices = page.concat(older);
+  } else {
+    state.notices = page;
+  }
+  state.noticeOffset = Number(overview.offset || 0) + page.length;
   state.noticeTotal = Number(overview.waiting) || 0;
+  state.noticesHasMore = Boolean(overview.has_more);
   state.noticesLoaded = true;
+  el("notice-more").hidden = !state.noticesHasMore;
   renderNotifications();
   updateNoticeBadge();
 }
@@ -706,7 +723,7 @@ async function refreshNotices(force = false) {
   state.noticesAt = now;
   state.noticesBusy = true;
   try {
-    applyNoticeOverview(await invoke("notification_overview"));
+    applyNoticeOverview(await invoke("notification_overview", { offset: 0 }));
   } catch (error) {
     // Keep the last list; the badge should not flicker on a rate limit.
   } finally {
@@ -721,12 +738,32 @@ async function loadNotifications() {
     return;
   }
   try {
-    applyNoticeOverview(await invoke("notification_overview"));
+    applyNoticeOverview(await invoke("notification_overview", { offset: 0 }));
     state.noticesAt = Date.now();
   } catch (error) {
     noticeList.innerHTML = `<div class="empty">${escape(error)}</div>`;
   }
 }
+
+// Older notifications stay reachable: each page is one request, and the count
+// on the tab already says how many are waiting.
+async function loadMoreNotices() {
+  if (!state.signedIn || state.noticesBusy || !state.noticesHasMore) return;
+  state.noticesBusy = true;
+  const button = el("notice-more");
+  button.disabled = true;
+  try {
+    const overview = await invoke("notification_overview", { offset: state.noticeOffset });
+    applyNoticeOverview(overview, true);
+  } catch (error) {
+    status.textContent = String(error);
+  } finally {
+    button.disabled = false;
+    state.noticesBusy = false;
+  }
+}
+
+el("notice-more").addEventListener("click", loadMoreNotices);
 
 async function loadNoticesOnce() {
   if (!state.signedIn || state.noticesLoaded) return;
@@ -862,6 +899,8 @@ el("signout").addEventListener("click", async () => {
   state.noticesLoaded = false;
   state.noticesAt = 0;
   state.noticeTotal = 0;
+  state.noticesHasMore = false;
+  el("notice-more").hidden = true;
   updateNoticeBadge();
   accountLine.textContent = "signed out";
   showAuth();
