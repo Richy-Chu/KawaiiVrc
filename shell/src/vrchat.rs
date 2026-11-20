@@ -4,7 +4,7 @@ use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -214,12 +214,18 @@ pub struct NoticeOverview {
 }
 
 /// The counts behind the badge. A full walk of the list is only worth doing
-/// occasionally, so the first page's ids are tracked between walks and only
-/// genuinely new ones are added.
+/// occasionally, so the first page's ids are tracked between walks: new ones are
+/// added, and ones that disappear from the page are checked individually before
+/// they are subtracted, because a new arrival can push a waiting request off the
+/// page without answering it.
 #[derive(Default, Clone)]
 struct NoticeCount {
-    total: usize,
+    /// Every actionable id still believed to be waiting; the total is its size.
     ids: HashSet<String>,
+    /// The actionable ids that were on the first page last time.
+    page_ids: HashSet<String>,
+    /// Ids that left the first page and are waiting to be checked.
+    checks: VecDeque<String>,
     at: u64,
 }
 
@@ -227,6 +233,9 @@ const NOTICE_PAGE: usize = 100;
 const NOTICE_MAX_OFFSET: usize = 10_000;
 /// How often the cheap count is corrected by walking the whole list.
 const NOTICE_RECOUNT_SECS: u64 = 30 * 60;
+/// Removals checked per refresh: one request each, spent on the newest
+/// disappearances first, so the count converges without a walk.
+const NOTICE_CHECK_BUDGET: usize = 5;
 
 fn actionable_ids(rows: &[Value]) -> HashSet<String> {
     rows.iter()
@@ -237,6 +246,28 @@ fn actionable_ids(rows: &[Value]) -> HashSet<String> {
 
 fn page_has_more(rows: usize) -> bool {
     rows >= NOTICE_PAGE
+}
+
+/// Folds one first page into the count: new ids are added, and ids that left
+/// the page are queued for a check rather than subtracted on the assumption
+/// they were answered.
+fn merge_notice_page(cache: &mut NoticeCount, current: HashSet<String>) {
+    for id in cache.page_ids.difference(&current) {
+        if cache.ids.contains(id) && !cache.checks.iter().any(|queued| queued == id) {
+            cache.checks.push_back(id.clone());
+        }
+    }
+    cache.ids.extend(current.iter().cloned());
+    cache.page_ids = current;
+}
+
+/// Applies what VRChat said about one id: gone means answered elsewhere, so it
+/// stops counting; still there means it was only pushed down the list.
+fn settle_notice_check(cache: &mut NoticeCount, id: &str, alive: bool) {
+    cache.checks.retain(|queued| queued != id);
+    if !alive {
+        cache.ids.remove(id);
+    }
 }
 
 fn notice_from(row: &Value) -> Notice {
@@ -556,6 +587,7 @@ pub struct Api {
     /// full count walk. Kept so the cost of the badge can be checked.
     notice_pages: AtomicU32,
     notice_walks: AtomicU32,
+    notice_checks: AtomicU32,
 }
 
 impl Api {
@@ -599,6 +631,7 @@ impl Api {
             notice_count: Mutex::new(None),
             notice_pages: AtomicU32::new(0),
             notice_walks: AtomicU32::new(0),
+            notice_checks: AtomicU32::new(0),
         }
     }
 
@@ -1994,7 +2027,7 @@ impl Api {
             self.notice_count
                 .lock()
                 .ok()
-                .and_then(|guard| guard.as_ref().map(|count| count.total))
+                .and_then(|guard| guard.as_ref().map(|count| count.ids.len()))
                 .unwrap_or(0)
         };
 
@@ -2011,7 +2044,7 @@ impl Api {
     /// every half hour to correct for requests answered elsewhere.
     async fn waiting_notices(&self, first_page: &[Value]) -> Result<usize, String> {
         let now = now_secs();
-        let page_ids = actionable_ids(first_page);
+        let current = actionable_ids(first_page);
         if let Some(mut cached) = self
             .notice_count
             .lock()
@@ -2019,18 +2052,59 @@ impl Api {
             .and_then(|guard| guard.clone())
         {
             if now.saturating_sub(cached.at) < NOTICE_RECOUNT_SECS {
-                let fresh = page_ids.iter().filter(|id| !cached.ids.contains(*id)).count();
-                cached.ids.extend(page_ids);
-                cached.total += fresh;
+                merge_notice_page(&mut cached, current);
+                // Spend a few requests on ids that just left the first page:
+                // gone means answered elsewhere, still there means pushed down.
+                let mut checked = 0;
+                while checked < NOTICE_CHECK_BUDGET {
+                    let Some(id) = cached.checks.pop_front() else {
+                        break;
+                    };
+                    match self.notification_alive(&id).await {
+                        Some(alive) => {
+                            self.notice_checks.fetch_add(1, Ordering::SeqCst);
+                            settle_notice_check(&mut cached, &id, alive);
+                            checked += 1;
+                        }
+                        None => {
+                            // Transport trouble: keep it queued for next time.
+                            cached.checks.push_front(id);
+                            break;
+                        }
+                    }
+                }
+                let total = cached.ids.len();
                 if let Ok(mut guard) = self.notice_count.lock() {
                     *guard = Some(cached.clone());
                 }
-                return Ok(cached.total);
+                return Ok(total);
             }
         }
         self.notice_walks.fetch_add(1, Ordering::SeqCst);
         let total = self.walk_notice_count(first_page).await?;
         Ok(total)
+    }
+
+    /// Whether one notification still exists, without hiding it; `None` means
+    /// the answer was inconclusive and the check should be retried.
+    async fn notification_alive(&self, notification_id: &str) -> Option<bool> {
+        let cookie = self.cookie()?;
+        let Ok((status, _, _)) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("auth/user/notifications/{notification_id}"),
+                Some(&cookie),
+                None,
+            )
+            .await
+        else {
+            return None;
+        };
+        match status.as_u16() {
+            200..=299 => Some(true),
+            404 | 410 => Some(false),
+            _ => None,
+        }
     }
 
     async fn walk_notice_count(&self, first_page: &[Value]) -> Result<usize, String> {
@@ -2065,8 +2139,9 @@ impl Api {
         let total = ids.len();
         if let Ok(mut guard) = self.notice_count.lock() {
             *guard = Some(NoticeCount {
-                total,
+                page_ids: actionable_ids(first_page),
                 ids,
+                checks: VecDeque::new(),
                 at: now_secs(),
             });
         }
@@ -2083,6 +2158,10 @@ impl Api {
             (
                 "walks".to_string(),
                 self.notice_walks.load(Ordering::SeqCst),
+            ),
+            (
+                "checks".to_string(),
+                self.notice_checks.load(Ordering::SeqCst),
             ),
         ])
     }
@@ -4060,5 +4139,73 @@ mod notice_paging_tests {
         assert!(ids.contains("not_b"));
         assert!(ids.contains("not_c"));
         assert!(!ids.contains("not_d"));
+    }
+}
+
+#[cfg(test)]
+mod notice_count_tests {
+    use super::*;
+
+    fn page(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn new_requests_on_the_first_page_are_added_once() {
+        let mut cache = NoticeCount::default();
+
+        merge_notice_page(&mut cache, page(&["frq_a", "frq_b"]));
+        merge_notice_page(&mut cache, page(&["frq_a", "frq_b", "frq_c"]));
+        merge_notice_page(&mut cache, page(&["frq_a"]));
+
+        assert_eq!(cache.ids.len(), 3, "a, b and c each count once");
+    }
+
+    #[test]
+    fn a_request_leaving_the_first_page_is_checked_before_it_is_dropped() {
+        let mut cache = NoticeCount::default();
+        merge_notice_page(&mut cache, page(&["frq_a", "frq_b"]));
+
+        merge_notice_page(&mut cache, page(&["frq_b"]));
+
+        assert_eq!(cache.ids.len(), 2, "still counted until the check answers");
+        assert_eq!(cache.checks.len(), 1);
+        assert_eq!(cache.checks.front().map(String::as_str), Some("frq_a"));
+
+        settle_notice_check(&mut cache, "frq_a", false);
+        assert_eq!(cache.ids.len(), 1, "answered elsewhere, so it stops counting");
+
+        merge_notice_page(&mut cache, page(&["frq_b"]));
+        assert_eq!(cache.ids.len(), 1, "settling twice cannot subtract twice");
+    }
+
+    #[test]
+    fn a_request_pushed_down_the_list_keeps_counting() {
+        let mut cache = NoticeCount::default();
+        merge_notice_page(&mut cache, page(&["frq_a", "frq_b"]));
+        merge_notice_page(&mut cache, page(&["not_new"]));
+
+        assert_eq!(cache.checks.len(), 2, "both older requests left the page");
+
+        settle_notice_check(&mut cache, "frq_a", true);
+        settle_notice_check(&mut cache, "frq_b", true);
+
+        assert_eq!(
+            cache.ids.len(),
+            3,
+            "the new request counts, and the two pushed down still exist"
+        );
+        assert!(cache.checks.is_empty());
+    }
+
+    #[test]
+    fn an_id_that_leaves_and_comes_back_is_not_queued_twice() {
+        let mut cache = NoticeCount::default();
+        merge_notice_page(&mut cache, page(&["frq_a", "frq_b"]));
+        merge_notice_page(&mut cache, page(&["frq_b"]));
+        merge_notice_page(&mut cache, page(&["frq_a", "frq_b"]));
+
+        assert_eq!(cache.checks.len(), 1, "keeping frq_a queued once");
+        assert_eq!(cache.ids.len(), 2);
     }
 }
