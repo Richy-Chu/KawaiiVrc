@@ -409,14 +409,18 @@ async fn friends_quick(api: tauri::State<'_, Arc<Api>>) -> Result<Roster, String
 
 /// The full roster once the background load has it; `null` while it is loading.
 #[tauri::command]
-fn friends_snapshot(api: tauri::State<'_, Arc<Api>>) -> Option<Roster> {
-    let snapshot = api.roster_snapshot()?;
+// Async so the world lookup it may start runs on the async runtime rather than
+// the main thread, where tokio has no reactor.
+async fn friends_snapshot(api: tauri::State<'_, Arc<Api>>) -> Result<Option<Roster>, String> {
+    let Some(snapshot) = api.roster_snapshot() else {
+        return Ok(None);
+    };
     // Presence and late pages can add worlds after the last lookup started.
     let missing = api.missing_world_ids(&snapshot.items);
     if !missing.is_empty() {
         api.inner().resolve_worlds_in_background(missing);
     }
-    Some(snapshot)
+    Ok(Some(snapshot))
 }
 
 /// World names the roster could not show yet; the UI polls this while the
