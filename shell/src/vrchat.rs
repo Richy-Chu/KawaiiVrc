@@ -563,18 +563,16 @@ impl Api {
         let api = Arc::clone(self);
         tokio::spawn(async move {
             if let Some(cookie) = api.cookie() {
-                let mut pending = ids;
-                for _ in 0..WORLD_SWEEPS {
-                    if pending.is_empty() {
-                        break;
+                let sweep = Arc::clone(&api);
+                sweep_worlds(ids, |pending| {
+                    let sweep = Arc::clone(&sweep);
+                    let cookie = cookie.clone();
+                    async move {
+                        let _ = sweep.resolve_worlds(pending.clone(), &cookie).await;
+                        sweep.uncached_worlds(&pending)
                     }
-                    let before = pending.len();
-                    let _ = api.resolve_worlds(pending.clone(), &cookie).await;
-                    pending = api.uncached_worlds(&pending);
-                    if !needs_another_sweep(pending.len(), before) {
-                        break;
-                    }
-                }
+                })
+                .await;
             }
             api.resolving.store(false, Ordering::SeqCst);
         });
@@ -1569,6 +1567,28 @@ fn needs_another_sweep(pending_after: usize, pending_before: usize) -> bool {
     pending_after > 0 && pending_after < pending_before
 }
 
+/// Runs sweeps until every id is resolved. `resolve` performs one sweep and
+/// returns whatever is still pending; the loop itself stays free of HTTP so it
+/// can be driven by a stub.
+async fn sweep_worlds<F, Fut>(pending: Vec<String>, mut resolve: F) -> Vec<String>
+where
+    F: FnMut(Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = Vec<String>>,
+{
+    let mut pending = pending;
+    for _ in 0..WORLD_SWEEPS {
+        if pending.is_empty() {
+            break;
+        }
+        let before = pending.len();
+        pending = resolve(pending).await;
+        if !needs_another_sweep(pending.len(), before) {
+            break;
+        }
+    }
+    pending
+}
+
 enum PageOutcome {
     Ready(Vec<Value>),
     Throttled(Option<Duration>),
@@ -2014,6 +2034,7 @@ mod friend_cap_tests {
 #[cfg(test)]
 mod world_sweep_tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn sweeps_repeat_only_while_they_make_progress() {
@@ -2022,13 +2043,75 @@ mod world_sweep_tests {
         assert!(!needs_another_sweep(40, 40), "no progress, stop instead of spinning");
     }
 
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("current-thread runtime")
+            .block_on(future)
+    }
+
     #[test]
-    fn one_background_run_covers_a_large_roster() {
-        // The batch limit per sweep is what used to leave rows as raw ids.
-        assert_eq!(WORLD_SWEEP_BATCH, 40);
-        assert!(
-            WORLD_SWEEP_BATCH * WORLD_SWEEPS >= 400,
-            "background resolution must cover rosters spread across many worlds"
+    fn sweeps_repeat_until_a_stub_resolver_has_every_id() {
+        use std::collections::HashSet;
+        use std::sync::{Arc, Mutex};
+
+        let all: Vec<String> = (0..90).map(|index| format!("wrld_{index}")).collect();
+        let cached = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sweeps = Arc::new(AtomicUsize::new(0));
+        let sweeps_for_stub = Arc::clone(&sweeps);
+        let all_for_stub = Arc::new(all.clone());
+
+        let remaining = block_on(sweep_worlds(all, move |pending: Vec<String>| {
+            sweeps_for_stub.fetch_add(1, Ordering::SeqCst);
+            let cached = Arc::clone(&cached);
+            let all = Arc::clone(&all_for_stub);
+            async move {
+                // Stub resolver: names the first 40 pending ids per sweep, like
+                // the real one, so 90 ids cannot fit in a single sweep.
+                let mut guard = cached.lock().expect("stub cache");
+                guard.extend(pending.iter().take(WORLD_SWEEP_BATCH).cloned());
+                let done: HashSet<String> = guard.iter().cloned().collect();
+                all.iter()
+                    .filter(|id| !done.contains(*id))
+                    .cloned()
+                    .collect()
+            }
+        }));
+
+        assert!(remaining.is_empty(), "every id should be resolved: {remaining:?}");
+        assert_eq!(
+            sweeps.load(Ordering::SeqCst),
+            3,
+            "90 ids at 40 per sweep need three sweeps"
+        );
+    }
+
+    #[test]
+    fn a_stub_that_stops_making_progress_ends_the_loop() {
+        use std::sync::{Arc, Mutex};
+
+        let sweeps = Arc::new(AtomicUsize::new(0));
+        let sweeps_for_stub = Arc::clone(&sweeps);
+        let stuck = Arc::new(Mutex::new(false));
+        let stuck_for_stub = Arc::clone(&stuck);
+
+        let pending = vec!["wrld_a".to_string(), "wrld_b".to_string()];
+        let remaining = block_on(sweep_worlds(pending, move |pending: Vec<String>| {
+            sweeps_for_stub.fetch_add(1, Ordering::SeqCst);
+            let stuck = Arc::clone(&stuck_for_stub);
+            async move {
+                *stuck.lock().expect("stub state") = true;
+                // Worlds VRChat refuses to name: cached as unresolved, unchanged.
+                pending
+            }
+        }));
+
+        assert_eq!(remaining.len(), 2);
+        assert!(*stuck.lock().expect("stub state"));
+        assert_eq!(
+            sweeps.load(Ordering::SeqCst),
+            1,
+            "one fruitless sweep is enough to stop"
         );
     }
 
