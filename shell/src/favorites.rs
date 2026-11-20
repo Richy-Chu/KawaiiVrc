@@ -10,6 +10,10 @@ pub struct Details {
     pub name: String,
     #[serde(default)]
     pub thumbnail: String,
+    /// VRChat answered, but the avatar or world is gone or hidden. Recorded so
+    /// the pane stops asking for it on every pass.
+    #[serde(default)]
+    pub missing: bool,
 }
 
 /// Details already fetched for favorite ids, so the pane never bursts the API.
@@ -28,6 +32,7 @@ pub struct FavoriteEntry {
     pub name: String,
     pub thumbnail: String,
     pub cached: bool,
+    pub missing: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -125,6 +130,7 @@ fn entries(
                     .map(|details| details.thumbnail.clone())
                     .unwrap_or_default(),
                 cached: cached.is_some(),
+                missing: cached.map(|details| details.missing).unwrap_or(false),
             }
         })
         .collect();
@@ -179,7 +185,30 @@ pub fn apply(store: &mut Store, kind: &str, id: String, name: String, thumbnail:
         "world" => &mut store.worlds,
         _ => &mut store.avatars,
     };
-    target.insert(id, Details { name, thumbnail });
+    target.insert(
+        id,
+        Details {
+            name,
+            thumbnail,
+            missing: false,
+        },
+    );
+}
+
+/// The API rejected the id (deleted, private or blocked); remember that so it
+/// is not looked up again on every pass.
+pub fn mark_missing(store: &mut Store, kind: &str, id: String) {
+    let target = match kind {
+        "world" => &mut store.worlds,
+        _ => &mut store.avatars,
+    };
+    target.insert(
+        id,
+        Details {
+            missing: true,
+            ..Details::default()
+        },
+    );
 }
 
 #[cfg(test)]
@@ -225,6 +254,7 @@ mod tests {
             Details {
                 name: "Beta".to_string(),
                 thumbnail: "https://cdn/bbb.png".to_string(),
+                missing: false,
             },
         );
         let avatars = vec!["avtr_aaa".to_string(), "avtr_bbb".to_string()];
@@ -257,6 +287,34 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_ids_leave_the_pending_list() {
+        let mut store = Store::default();
+        mark_missing(&mut store, "avatar", "avtr_gone".to_string());
+
+        let avatars = vec!["avtr_gone".to_string(), "avtr_new".to_string()];
+        let view = view(&store, &avatars, &[]);
+        assert_eq!(view.pending, 1);
+        let gone = view.avatars.iter().find(|entry| entry.id == "avtr_gone").expect("entry");
+        assert!(gone.cached);
+        assert!(gone.missing);
+        assert_eq!(gone.name, "");
+
+        let (ask, _) = pending(&store, &avatars, &[], 2);
+        assert_eq!(ask, vec!["avtr_new"]);
+    }
+
+    #[test]
+    fn the_missing_flag_survives_a_round_trip() {
+        let mut store = Store::default();
+        mark_missing(&mut store, "world", "wrld_gone".to_string());
+
+        let encoded = serde_json::to_vec(&store).expect("encode");
+        let decoded: Store = serde_json::from_slice(&encoded).expect("decode");
+        assert!(decoded.worlds["wrld_gone"].missing);
+        assert_eq!(decoded.worlds["wrld_gone"].name, "");
+    }
+
+    #[test]
     fn saved_details_round_trip() {
         let target = std::env::temp_dir().join(format!(
             "kawaii-shell-favorites-{}-{:?}.json",
@@ -276,6 +334,7 @@ mod tests {
         let loaded: Store =
             serde_json::from_slice(&fs::read(&target).expect("read")).expect("store json");
         assert_eq!(loaded.worlds["wrld_one"].name, "World One");
+        assert!(!loaded.worlds["wrld_one"].missing);
         assert_eq!(loaded.worlds["wrld_one"].thumbnail, "https://cdn/world.png");
         assert!(loaded.avatars.is_empty());
 

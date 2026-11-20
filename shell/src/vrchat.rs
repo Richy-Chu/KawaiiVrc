@@ -748,25 +748,36 @@ impl Api {
     // ------------------------------------------------------- favorite details
 
     /// Name and thumbnail for favorite avatars, filling the shell's cache.
-    pub async fn avatar_details(&self, ids: &[String]) -> Vec<(String, String, String)> {
+    /// Returns the details that were found plus the ids VRChat rejected, so the
+    /// caller can stop retrying deleted or hidden favorites.
+    pub async fn avatar_details(
+        &self,
+        ids: &[String],
+    ) -> (Vec<(String, String, String)>, Vec<String>) {
         self.details_for("avatars", ids).await
     }
 
-    pub async fn world_details(&self, ids: &[String]) -> Vec<(String, String, String)> {
+    pub async fn world_details(
+        &self,
+        ids: &[String],
+    ) -> (Vec<(String, String, String)>, Vec<String>) {
         self.details_for("worlds", ids).await
     }
 
     /// Sequential lookups with a small gap keep the rate limit happy; callers
-    /// only ask for a few ids at a time and cache the answers.
+    /// only ask for a few ids at a time and cache the answers. Transport errors
+    /// are left out of both lists so the id is retried on a later pass.
     async fn details_for(
         &self,
         collection: &str,
         ids: &[String],
-    ) -> Vec<(String, String, String)> {
+    ) -> (Vec<(String, String, String)>, Vec<String>) {
+        let mut found = Vec::new();
+        let mut rejected = Vec::new();
         let Some(cookie) = self.cookie() else {
-            return Vec::new();
+            return (found, rejected);
         };
-        let mut out = Vec::new();
+
         for (index, id) in ids.iter().take(5).enumerate() {
             if index > 0 {
                 tokio::time::sleep(Duration::from_millis(350)).await;
@@ -783,6 +794,9 @@ impl Api {
                 continue;
             };
             if !status.is_success() {
+                if matches!(status.as_u16(), 403 | 404 | 410) {
+                    rejected.push(id.clone());
+                }
                 continue;
             }
             let Ok(value) = serde_json::from_str::<Value>(&body) else {
@@ -790,6 +804,7 @@ impl Api {
             };
             let name = text(&value, "name");
             if name.is_empty() {
+                rejected.push(id.clone());
                 continue;
             }
             let thumbnail = {
@@ -800,9 +815,9 @@ impl Api {
                     candidate
                 }
             };
-            out.push((id.clone(), name, thumbnail));
+            found.push((id.clone(), name, thumbnail));
         }
-        out
+        (found, rejected)
     }
 
     // --------------------------------------------------------- notifications

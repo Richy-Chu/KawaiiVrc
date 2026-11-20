@@ -273,7 +273,7 @@ function renderFavorites(view) {
           (entry) => `
       <figure class="tile">
         ${entry.thumbnail ? `<img loading="lazy" src="${remoteImage(entry.thumbnail)}" alt="" />` : `<img alt="" />`}
-        <figcaption title="${escape(entry.id)}">${escape(entry.name || entry.id)}<span class="kind">${escape(entry.kind)}</span></figcaption>
+        <figcaption title="${escape(entry.id)}">${escape(entry.missing ? `${entry.id} · unavailable` : entry.name || entry.id)}<span class="kind">${escape(entry.kind)}</span></figcaption>
       </figure>`
         )
         .join("")

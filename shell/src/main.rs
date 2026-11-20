@@ -490,13 +490,21 @@ async fn refresh_favorites(
         favorites::pending(&store, &avatar_ids, &world_ids, budget.unwrap_or(2).clamp(1, 5));
 
     if !ask_avatars.is_empty() {
-        for (id, name, thumbnail) in api.avatar_details(&ask_avatars).await {
+        let (found, rejected) = api.avatar_details(&ask_avatars).await;
+        for (id, name, thumbnail) in found {
             favorites::apply(&mut store, "avatar", id, name, thumbnail);
+        }
+        for id in rejected {
+            favorites::mark_missing(&mut store, "avatar", id);
         }
     }
     if !ask_worlds.is_empty() {
-        for (id, name, thumbnail) in api.world_details(&ask_worlds).await {
+        let (found, rejected) = api.world_details(&ask_worlds).await;
+        for (id, name, thumbnail) in found {
             favorites::apply(&mut store, "world", id, name, thumbnail);
+        }
+        for id in rejected {
+            favorites::mark_missing(&mut store, "world", id);
         }
     }
 
@@ -727,8 +735,130 @@ fn dump_report() {
     let _ = fs::write("shell-dump.txt", out);
 }
 
+/// Headless version of what the Favorites pane does: the same cache, the same
+/// two-at-a-time lookups, written to a report because the release build has no
+/// console.
+fn resolve_favorites_report(passes: usize) {
+    let mut out = String::new();
+    let api = Arc::new(Api::new());
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(async {
+        match api.restore().await {
+            Some(user) => out.push_str(&format!("auth: {}\n", user.display_name)),
+            None => {
+                out.push_str("auth: not signed in\n");
+                fs::write("shell-favorites.txt", &out).ok();
+                return;
+            }
+        }
+
+        let (avatar_ids, world_ids) = favorites::ids(&data_dir());
+        let mut store = favorites::load();
+        let start = favorites::view(&store, &avatar_ids, &world_ids);
+        out.push_str(&format!(
+            "before: total={} pending={}\n",
+            start.total, start.pending
+        ));
+
+        for pass in 1..=passes {
+            let (ask_avatars, ask_worlds) = favorites::pending(&store, &avatar_ids, &world_ids, 2);
+            if ask_avatars.is_empty() && ask_worlds.is_empty() {
+                break;
+            }
+            out.push_str(&format!(
+                "pass {pass}: avatars={ask_avatars:?} worlds={ask_worlds:?}\n"
+            ));
+
+            let mut got = 0usize;
+            let mut gone = 0usize;
+            let (found, rejected) = api.avatar_details(&ask_avatars).await;
+            for (id, name, thumbnail) in found {
+                out.push_str(&format!(
+                    "  avatar {id} -> {name} | {}\n",
+                    if thumbnail.is_empty() {
+                        "no thumbnail"
+                    } else {
+                        "thumbnail ok"
+                    }
+                ));
+                favorites::apply(&mut store, "avatar", id, name, thumbnail);
+                got += 1;
+            }
+            for id in rejected {
+                out.push_str(&format!("  avatar {id} -> unavailable\n"));
+                favorites::mark_missing(&mut store, "avatar", id);
+                gone += 1;
+            }
+
+            let (found, rejected) = api.world_details(&ask_worlds).await;
+            for (id, name, thumbnail) in found {
+                out.push_str(&format!(
+                    "  world {id} -> {name} | {}\n",
+                    if thumbnail.is_empty() {
+                        "no thumbnail"
+                    } else {
+                        "thumbnail ok"
+                    }
+                ));
+                favorites::apply(&mut store, "world", id, name, thumbnail);
+                got += 1;
+            }
+            for id in rejected {
+                out.push_str(&format!("  world {id} -> unavailable\n"));
+                favorites::mark_missing(&mut store, "world", id);
+                gone += 1;
+            }
+            if got == 0 && gone == 0 {
+                out.push_str("  no details returned (rate limited or offline)\n");
+            }
+            if let Err(error) = favorites::save(&store) {
+                out.push_str(&format!("  save error: {error}\n"));
+            }
+
+            let view = favorites::view(&store, &avatar_ids, &world_ids);
+            out.push_str(&format!(
+                "  after pass: cached={} pending={}\n",
+                view.total - view.pending,
+                view.pending
+            ));
+            tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+        }
+
+        let end = favorites::view(&store, &avatar_ids, &world_ids);
+        out.push_str(&format!(
+            "after: total={} pending={}\n",
+            end.total, end.pending
+        ));
+        for entry in end.avatars.iter().filter(|entry| entry.cached).take(5) {
+            out.push_str(&format!(
+                "  {} {} {}\n",
+                entry.id,
+                entry.name,
+                if entry.thumbnail.is_empty() {
+                    "(no image)"
+                } else {
+                    "(image)"
+                }
+            ));
+        }
+    });
+
+    fs::write("shell-favorites.txt", out).ok();
+}
+
 fn main() {
-    if std::env::args().any(|argument| argument == "--dump") {
+    let arguments: Vec<String> = std::env::args().collect();
+    if arguments.iter().any(|argument| argument == "--resolve-favorites") {
+        let passes = arguments
+            .iter()
+            .position(|argument| argument == "--resolve-favorites")
+            .and_then(|index| arguments.get(index + 1))
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(3);
+        resolve_favorites_report(passes.clamp(1, 20));
+        return;
+    }
+    if arguments.iter().any(|argument| argument == "--dump") {
         dump_report();
         return;
     }
