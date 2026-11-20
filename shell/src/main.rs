@@ -583,7 +583,7 @@ fn merge_activity() -> Result<String, String> {
 /// a small report next to the executable instead. It exercises the same command
 /// functions the UI calls, and never prints a cookie or password.
 fn dump_report() {
-    let mut out = String::new();
+    let mut out = format!("version: {}\n", env!("CARGO_PKG_VERSION"));
     let summary = summary();
     out.push_str(&format!(
         "accounts={} activity={}MB history={}MB media={}MB avatars={}MB logged_events={}\n",
@@ -865,6 +865,61 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Lets the update path be exercised without a mouse: check, download,
+        // install and exit, writing what happened next to the shell's settings.
+        .setup(|app| {
+            if std::env::args().any(|argument| argument == "--install-update") {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_updater::UpdaterExt;
+
+                    let plugins = serde_json::to_value(&handle.config().plugins)
+                        .unwrap_or(serde_json::Value::Null);
+                    let endpoints = plugins
+                        .get("updater")
+                        .and_then(|updater| updater.get("endpoints"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let mut report = format!("current {}\n", env!("CARGO_PKG_VERSION"));
+                    report.push_str(&format!(
+                        "endpoints: {}\n",
+                        serde_json::to_string(&endpoints).unwrap_or_default()
+                    ));
+                    match handle.updater() {
+                        Ok(updater) => match updater.check().await {
+                            Ok(Some(update)) => {
+                                report.push_str(&format!("offered {}\n", update.version));
+                                match update.download_and_install(|_, _| {}, || {}).await {
+                                    Ok(()) => report.push_str("downloaded and installed\n"),
+                                    Err(error) => {
+                                        report.push_str(&format!("install failed: {error}\n"))
+                                    }
+                                }
+                            }
+                            Ok(None) => report.push_str("no update offered\n"),
+                            Err(error) => report.push_str(&format!("check failed: {error}\n")),
+                        },
+                        Err(error) => {
+                            report.push_str(&format!("updater unavailable: {error}\n"))
+                        }
+                    }
+
+                    let _ = std::fs::create_dir_all(session::shell_dir());
+                    let path = session::shell_dir().join("update-report.txt");
+                    // Append: after an install the app is relaunched with the same
+                    // arguments, so both runs must stay visible.
+                    let stamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|elapsed| elapsed.as_secs())
+                        .unwrap_or(0);
+                    let mut body = std::fs::read_to_string(&path).unwrap_or_default();
+                    body.push_str(&format!("=== run {stamp}\n{report}"));
+                    std::fs::write(&path, body).ok();
+                    handle.exit(0);
+                });
+            }
+            Ok(())
+        })
         .manage(Arc::new(Api::new()))
         .register_asynchronous_uri_scheme_protocol("kawaii", |context, request, responder| {
             let app = context.app_handle().clone();

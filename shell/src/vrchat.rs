@@ -325,32 +325,44 @@ impl Api {
     pub async fn friends(&self) -> Result<Roster, String> {
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
 
+        // VRChat's `offline` filter is exclusive: `offline=false` is the online
+        // bucket and carries real locations, `offline=true` reports everyone as
+        // offline. Both are needed, and online is fetched first so the roster is
+        // useful before the offline pages finish.
         let mut users: Vec<Value> = Vec::new();
-        let mut offset = 0usize;
-        loop {
-            let path = format!("auth/user/friends?offline=true&n=100&offset={offset}");
-            let (status, _, text) = self
-                .request(reqwest::Method::GET, &path, Some(&cookie), None)
-                .await?;
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                self.set_cookie(None);
-                self.set_user(None);
-                return Err("Your session expired. Sign in again.".to_string());
+        let mut seen: HashSet<String> = HashSet::new();
+        for bucket in ["false", "true"] {
+            let mut offset = 0usize;
+            loop {
+                let path = format!("auth/user/friends?offline={bucket}&n=100&offset={offset}");
+                let (status, _, text) = self
+                    .request(reqwest::Method::GET, &path, Some(&cookie), None)
+                    .await?;
+                if status == reqwest::StatusCode::UNAUTHORIZED {
+                    self.set_cookie(None);
+                    self.set_user(None);
+                    return Err("Your session expired. Sign in again.".to_string());
+                }
+                if !status.is_success() {
+                    return Err(format!(
+                        "VRChat returned {} while loading friends.",
+                        status.as_u16()
+                    ));
+                }
+                let page: Vec<Value> = serde_json::from_str(&text)
+                    .map_err(|_| "VRChat returned an unexpected friend list.".to_string())?;
+                let count = page.len();
+                for user in page {
+                    push_unique(&mut users, &mut seen, user);
+                }
+                if count < 100 || users.len() >= 2_500 {
+                    break;
+                }
+                offset += 100;
             }
-            if !status.is_success() {
-                return Err(format!(
-                    "VRChat returned {} while loading friends.",
-                    status.as_u16()
-                ));
-            }
-            let page: Vec<Value> = serde_json::from_str(&text)
-                .map_err(|_| "VRChat returned an unexpected friend list.".to_string())?;
-            let count = page.len();
-            users.extend(page);
-            if count < 100 || users.len() >= 2_500 {
+            if users.len() >= 2_500 {
                 break;
             }
-            offset += 100;
         }
 
         let mut items: Vec<Friend> = users
@@ -1281,6 +1293,25 @@ mod tests {
     }
 
     #[test]
+    fn online_friends_come_from_the_online_bucket_first() {
+        let online = serde_json::json!({ "id": "usr_a", "displayName": "A", "location": "wrld_x:1~friends(usr_a)" });
+        let offline_duplicate = serde_json::json!({ "id": "usr_a", "displayName": "A", "location": "offline" });
+        let offline_only = serde_json::json!({ "id": "usr_b", "displayName": "B", "location": "offline" });
+        let broken = serde_json::json!({ "displayName": "no id" });
+
+        let mut users = Vec::new();
+        let mut seen = HashSet::new();
+        push_unique(&mut users, &mut seen, broken);
+        push_unique(&mut users, &mut seen, online);
+        push_unique(&mut users, &mut seen, offline_duplicate);
+        push_unique(&mut users, &mut seen, offline_only);
+
+        assert_eq!(users.len(), 2);
+        assert_eq!(text(&users[0], "location"), "wrld_x:1~friends(usr_a)");
+        assert_eq!(text(&users[1], "id"), "usr_b");
+    }
+
+    #[test]
     fn reads_the_account_location_from_presence() {
         let body: Value = serde_json::json!({
             "id": "usr_1",
@@ -1351,6 +1382,14 @@ mod tests {
         assert_eq!(private.world, "Private world");
         assert_eq!(private.instance, "private");
     }
+}
+
+fn push_unique(users: &mut Vec<Value>, seen: &mut HashSet<String>, user: Value) {
+    let id = text(&user, "id");
+    if id.is_empty() || !seen.insert(id) {
+        return;
+    }
+    users.push(user);
 }
 
 /// The instance payload, mapped without any network access so it can be tested
