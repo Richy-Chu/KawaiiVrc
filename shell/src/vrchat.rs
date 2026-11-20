@@ -1062,9 +1062,11 @@ impl Api {
 
             // The row borrow ends here so the roster can be recounted.
             let friend = row.clone();
-            let world = world_id_of(&friend.location);
-            if let Some(id) = &world {
-                if !worlds.contains_key(id) && !roster.missing_worlds.contains(id) {
+            // Only an unnamed world is worth a lookup.
+            let unknown_world = world_id_of(&friend.location)
+                .filter(|id| !worlds.contains_key(id));
+            if let Some(id) = &unknown_world {
+                if !roster.missing_worlds.contains(id) {
                     roster.missing_worlds.push(id.clone());
                 }
             }
@@ -1074,7 +1076,7 @@ impl Api {
                 .filter(|id| !worlds.contains_key(*id))
                 .count();
             roster.online = roster.items.iter().filter(|friend| friend.online).count();
-            (friend, roster.online, roster.total, world)
+            (friend, roster.online, roster.total, unknown_world)
         };
 
         if let Some(id) = unknown_world {
@@ -2581,5 +2583,53 @@ mod roster_revision_tests {
     #[test]
     fn page_requests_start_empty() {
         assert!(Api::new().page_requests().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod presence_update_tests {
+    use super::*;
+
+    #[test]
+    fn a_presence_event_updates_the_roster_row_in_place() {
+        let api = Arc::new(Api::new());
+        if let Ok(mut cache) = api.worlds.lock() {
+            cache.insert("wrld_party".to_string(), "Party World".to_string());
+        }
+        let users = vec![serde_json::json!({
+            "id": "usr_1",
+            "displayName": "A",
+            "status": "offline"
+        })];
+        api.publish(&users, true, false);
+        assert!(!api.roster_snapshot().expect("roster").items[0].online);
+
+        api.handle_realtime(
+            r#"{"type":"friend-online","content":{"userId":"usr_1","location":"wrld_party:1~hidden(usr_2)","status":"active","statusDescription":"hi"}}"#,
+        );
+
+        let roster = api.roster_snapshot().expect("roster");
+        let friend = &roster.items[0];
+        assert!(friend.online, "the row goes online from the event");
+        assert_eq!(friend.world, "Party World");
+        assert_eq!(friend.instance, "friends+");
+        assert_eq!(friend.status, "active");
+        assert_eq!(friend.status_description, "hi");
+        assert_eq!(roster.online, 1);
+        assert_eq!(roster.revision, 1, "the list is patched, not republished");
+    }
+
+    #[test]
+    fn a_presence_event_for_an_unloaded_friend_is_ignored() {
+        let api = Arc::new(Api::new());
+        api.publish(&[], true, false);
+
+        api.handle_realtime(
+            r#"{"type":"friend-location","content":{"userId":"usr_missing","location":"wrld_party:1"}}"#,
+        );
+
+        let roster = api.roster_snapshot().expect("roster");
+        assert!(roster.items.is_empty());
+        assert_eq!(roster.online, 0);
     }
 }
