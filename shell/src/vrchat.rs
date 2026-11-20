@@ -388,7 +388,20 @@ impl Api {
     }
 
     pub fn roster_snapshot(&self) -> Option<Roster> {
-        self.roster.lock().ok().and_then(|guard| guard.clone())
+        let mut roster = self.roster.lock().ok().and_then(|guard| guard.clone())?;
+        // Names keep landing after the roster was built, so relabel the rows
+        // before handing them out: a poll must never put a raw id back on a row
+        // whose world is now cached.
+        let worlds = self.world_names();
+        for friend in &mut roster.items {
+            locate(friend, &worlds);
+        }
+        roster.worlds_pending = roster
+            .missing_worlds
+            .iter()
+            .filter(|id| !worlds.contains_key(*id))
+            .count();
+        Some(roster)
     }
 
     /// Loads the full roster without blocking the caller.
@@ -2149,6 +2162,34 @@ mod world_sweep_tests {
             online: false,
             trust: String::new(),
         }
+    }
+
+    #[test]
+    fn a_snapshot_relabels_rows_named_after_it_was_built() {
+        let api = Api::new();
+        let mut items = vec![friend_at("wrld_late:1~hidden(usr_2)")];
+        locate(&mut items[0], &HashMap::new());
+        assert_eq!(items[0].world, "wrld_late");
+
+        if let Ok(mut guard) = api.roster.lock() {
+            *guard = Some(Roster {
+                items,
+                total: 1,
+                online: 1,
+                live: false,
+                worlds_pending: 1,
+                complete: true,
+                degraded: false,
+                missing_worlds: vec!["wrld_late".to_string()],
+            });
+        }
+        if let Ok(mut guard) = api.worlds.lock() {
+            guard.insert("wrld_late".to_string(), "Late World".to_string());
+        }
+
+        let snapshot = api.roster_snapshot().expect("stored roster");
+        assert_eq!(snapshot.items[0].world, "Late World");
+        assert_eq!(snapshot.worlds_pending, 0);
     }
 
     #[test]
