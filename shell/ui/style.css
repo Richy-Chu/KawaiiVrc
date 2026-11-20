@@ -495,3 +495,34 @@ footer {
   height: 16px;
   accent-color: var(--accent);
 }
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.row-actions .ghost.small {
+  font-size: 11px;
+  padding: 3px 9px;
+}
+
+.row-actions .star {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  color: var(--muted);
+}
+
+.row-actions .star.on {
+  color: #ffd76e;
+}
+
+.row-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

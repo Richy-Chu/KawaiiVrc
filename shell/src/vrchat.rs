@@ -152,6 +152,47 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// A VRChat error body carries the useful text; 401 means the session is gone.
+fn api_message(status: reqwest::StatusCode, text: &str) -> String {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return "Your session expired. Sign in again.".to_string();
+    }
+    let detail = serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|body| {
+            body.get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .map(|message| message.trim().trim_matches('"').to_string())
+        })
+        .filter(|message| !message.is_empty());
+    detail.unwrap_or_else(|| format!("VRChat returned {} for that action.", status.as_u16()))
+}
+
+/// The instance an invite should point at, or why there is none.
+fn invite_instance_from(location: &str) -> Result<String, String> {
+    let location = location.trim();
+    if location.starts_with("wrld_") && location.contains(':') {
+        return Ok(location.to_string());
+    }
+    Err("Join a world first: there is no instance to invite anyone to.".to_string())
+}
+
+/// Friend favorites from `GET /favorites?type=friend`, keyed by user id with the
+/// favorite row id as the value (that row id is what DELETE needs).
+fn friend_favorites_from(text: &str) -> HashMap<String, String> {
+    serde_json::from_str::<Vec<Value>>(text)
+        .unwrap_or_default()
+        .iter()
+        .filter(|row| row.get("type").and_then(Value::as_str) == Some("friend"))
+        .filter_map(|row| {
+            let user = row.get("favoriteId").and_then(Value::as_str)?;
+            let row_id = row.get("id").and_then(Value::as_str)?;
+            Some((user.to_string(), row_id.to_string()))
+        })
+        .collect()
+}
+
 #[derive(Default)]
 struct WorldCache {
     names: HashMap<String, String>,
@@ -1449,6 +1490,97 @@ impl Api {
     }
 
     // -------------------------------------------------------------- instance
+
+    // --------------------------------------------------------------- actions
+
+    pub async fn invite_friend(&self, user_id: &str) -> Result<(), String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let instance = invite_instance_from(&self.location())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::POST,
+                &format!("invite/{user_id}"),
+                Some(&cookie),
+                Some(serde_json::json!({ "instanceId": instance, "messageSlot": 0 })),
+            )
+            .await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(api_message(status, &body_text))
+        }
+    }
+
+    pub async fn request_invite(&self, user_id: &str) -> Result<(), String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::POST,
+                &format!("requestInvite/{user_id}"),
+                Some(&cookie),
+                Some(serde_json::json!({ "requestSlot": 0 })),
+            )
+            .await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(api_message(status, &body_text))
+        }
+    }
+
+    pub async fn friend_favorites(&self) -> Result<HashMap<String, String>, String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::GET,
+                "favorites?type=friend",
+                Some(&cookie),
+                None,
+            )
+            .await?;
+        if !status.is_success() {
+            return Err(api_message(status, &body_text));
+        }
+        Ok(friend_favorites_from(&body_text))
+    }
+
+    pub async fn add_friend_favorite(&self, user_id: &str) -> Result<(), String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::POST,
+                "favorites",
+                Some(&cookie),
+                Some(serde_json::json!({
+                    "type": "friend",
+                    "favoriteId": user_id,
+                    "tags": ["group_0"],
+                })),
+            )
+            .await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(api_message(status, &body_text))
+        }
+    }
+
+    pub async fn remove_friend_favorite(&self, favorite_id: &str) -> Result<(), String> {
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::DELETE,
+                &format!("favorites/{favorite_id}"),
+                Some(&cookie),
+                None,
+            )
+            .await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(api_message(status, &body_text))
+        }
+    }
 
     pub fn location(&self) -> String {
         self.self_location
@@ -3399,5 +3531,65 @@ mod roster_age_tests {
         assert!(!legacy.exists(), "the unused shared file is gone");
         assert!(scoped.exists(), "the per-account file stays");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod friend_action_tests {
+    use super::*;
+
+    #[test]
+    fn an_invite_needs_an_instance_we_are_actually_in() {
+        assert_eq!(
+            invite_instance_from("wrld_abc:123~region(us)").as_deref(),
+            Ok("wrld_abc:123~region(us)")
+        );
+        for location in ["offline", "private", "traveling", ""] {
+            assert!(
+                invite_instance_from(location).is_err(),
+                "{location:?} is not an instance"
+            );
+        }
+    }
+
+    #[test]
+    fn friend_favorites_keep_the_row_id_needed_to_remove_them() {
+        let body = r#"[
+            {"id":"fvrt_a","favoriteId":"usr_a","type":"friend","tags":["group_0"]},
+            {"id":"fvrt_w","favoriteId":"wrld_a","type":"world","tags":["worlds1"]},
+            {"id":"fvrt_b","favoriteId":"usr_b","type":"friend","tags":[]},
+            {"id":"fvrt_c","type":"friend"}
+        ]"#;
+
+        let rows = friend_favorites_from(body);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.get("usr_a").map(String::as_str), Some("fvrt_a"));
+        assert_eq!(rows.get("usr_b").map(String::as_str), Some("fvrt_b"));
+    }
+
+    #[test]
+    fn a_broken_or_empty_favorites_body_yields_nothing() {
+        assert!(friend_favorites_from("not json").is_empty());
+        assert!(friend_favorites_from("[]").is_empty());
+    }
+
+    #[test]
+    fn a_vrchat_error_body_becomes_the_message() {
+        let body =
+            r#"{"error":{"message":"You need to be friends with that user first.","status_code":403}}"#;
+
+        assert_eq!(
+            api_message(reqwest::StatusCode::FORBIDDEN, body),
+            "You need to be friends with that user first."
+        );
+        assert_eq!(
+            api_message(reqwest::StatusCode::UNAUTHORIZED, "{}"),
+            "Your session expired. Sign in again."
+        );
+        assert_eq!(
+            api_message(reqwest::StatusCode::INTERNAL_SERVER_ERROR, ""),
+            "VRChat returned 500 for that action."
+        );
     }
 }

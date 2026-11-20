@@ -446,6 +446,51 @@ async fn notifications(api: tauri::State<'_, Arc<Api>>) -> Result<Vec<Notice>, S
     api.notifications().await
 }
 
+// ----------------------------------------------------------- friend actions
+
+#[tauri::command]
+async fn invite_friend(
+    api: tauri::State<'_, Arc<Api>>,
+    user_id: String,
+) -> Result<(), String> {
+    api.invite_friend(&user_id).await
+}
+
+#[tauri::command]
+async fn request_invite(
+    api: tauri::State<'_, Arc<Api>>,
+    user_id: String,
+) -> Result<(), String> {
+    api.request_invite(&user_id).await
+}
+
+#[tauri::command]
+async fn friend_favorites(
+    api: tauri::State<'_, Arc<Api>>,
+) -> Result<HashMap<String, String>, String> {
+    api.friend_favorites().await
+}
+
+/// Adds or removes one friend favorite and returns the new list, so the window
+/// never has to guess which favorite row it just changed.
+#[tauri::command]
+async fn set_friend_favorite(
+    api: tauri::State<'_, Arc<Api>>,
+    user_id: String,
+    favorite: bool,
+) -> Result<HashMap<String, String>, String> {
+    if favorite {
+        api.add_friend_favorite(&user_id).await?;
+    } else {
+        let rows = api.friend_favorites().await?;
+        let row_id = rows
+            .get(&user_id)
+            .ok_or_else(|| "That friend is not one of your favorites.".to_string())?;
+        api.remove_friend_favorite(row_id).await?;
+    }
+    api.friend_favorites().await
+}
+
 // ----------------------------------------------------------------- settings
 
 #[tauri::command]
@@ -1098,6 +1143,10 @@ fn main() {
             friend_page_requests,
             instance,
             notifications,
+            invite_friend,
+            request_invite,
+            friend_favorites,
+            set_friend_favorite,
             settings_get,
             settings_save,
             check_update,

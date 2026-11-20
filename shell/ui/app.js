@@ -19,7 +19,9 @@ const state = {
   rosterRevision: 0,
   rosterComplete: false,
   rosterStale: false,
-  rosterSavedAt: 0
+  rosterSavedAt: 0,
+  friendFavorites: {},
+  favoritesLoaded: false
 };
 
 const el = (id) => document.getElementById(id);
@@ -138,7 +140,63 @@ function friendRow(friend) {
         <div class="sub">${escape(where)}</div>
       </div>
       <span class="kind">${escape(friend.status)}</span>
+      <span class="row-actions">
+        ${
+          friend.online
+            ? `<button class="ghost small" type="button" data-action="invite" data-id="${escape(friend.id)}" title="Invite them to your instance">Invite</button>
+               <button class="ghost small" type="button" data-action="request" data-id="${escape(friend.id)}" title="Ask them to invite you">Ask</button>`
+            : ""
+        }
+        <button class="star${state.friendFavorites[friend.id] ? " on" : ""}" type="button" data-action="favorite" data-id="${escape(friend.id)}" title="${state.friendFavorites[friend.id] ? "Remove from favorites" : "Add to favorites"}">${state.friendFavorites[friend.id] ? "\u2605" : "\u2606"}</button>
+      </span>
     </article>`;
+}
+
+function friendName(id) {
+  return state.friends.find((friend) => friend.id === id)?.name ?? "that friend";
+}
+
+async function friendAction(action, id, button) {
+  button.disabled = true;
+  try {
+    if (action === "invite") {
+      await invoke("invite_friend", { userId: id });
+      status.textContent = `Invited ${friendName(id)} to your instance.`;
+    } else if (action === "request") {
+      await invoke("request_invite", { userId: id });
+      status.textContent = `Asked ${friendName(id)} for an invite.`;
+    } else if (action === "favorite") {
+      const on = !state.friendFavorites[id];
+      state.friendFavorites = await invoke("set_friend_favorite", { userId: id, favorite: on });
+      status.textContent = on
+        ? `${friendName(id)} added to your favorites.`
+        : `${friendName(id)} removed from your favorites.`;
+    }
+  } catch (error) {
+    status.textContent = String(error);
+  } finally {
+    button.disabled = false;
+    renderRoster();
+  }
+}
+
+roster.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button || button.disabled) return;
+  friendAction(button.dataset.action, button.dataset.id, button);
+});
+
+// The star needs to know which friends are already favorites; one list per
+// session is enough because the shell is the only thing changing it.
+async function loadFriendFavorites() {
+  if (!state.signedIn || state.favoritesLoaded) return;
+  try {
+    state.friendFavorites = await invoke("friend_favorites");
+    state.favoritesLoaded = true;
+    renderRoster();
+  } catch (error) {
+    // Optional decoration: a rate-limited list just leaves the stars empty.
+  }
 }
 
 // A row from the saved roster: name and trust only. Its presence and world are
@@ -316,6 +374,7 @@ async function waitForFullRoster(attempts = 30) {
 
 async function loadFriends() {
   if (!state.signedIn || state.busy) return;
+  loadFriendFavorites();
   setBusy(true, "Loading friends from VRChat…");
   // Paint the roster remembered from last launch before touching the network.
   try {
@@ -691,6 +750,8 @@ el("signout").addEventListener("click", async () => {
   state.user = null;
   state.notices = [];
   state.instance = null;
+  state.friendFavorites = {};
+  state.favoritesLoaded = false;
   accountLine.textContent = "signed out";
   showAuth();
   status.textContent = "Signed out of the shell. The other app's saved session is untouched.";
