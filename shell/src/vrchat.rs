@@ -83,6 +83,8 @@ pub struct Roster {
     pub worlds_pending: usize,
     /// False while only the first page has been loaded.
     pub complete: bool,
+    /// True when some pages were dropped after retries, so the list may be short.
+    pub degraded: bool,
     #[serde(skip)]
     pub missing_worlds: Vec<String>,
 }
@@ -345,8 +347,11 @@ impl Api {
         // a large account has ~23 offline pages.
         let mut users: Vec<Value> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
+        let mut degraded = false;
         for bucket in ["false", "true"] {
-            for user in self.fetch_bucket(&cookie, bucket).await? {
+            let (page_users, page_degraded) = self.fetch_bucket(&cookie, bucket).await?;
+            degraded |= page_degraded;
+            for user in page_users {
                 push_unique(&mut users, &mut seen, user);
             }
             if users.len() >= 2_500 {
@@ -354,18 +359,33 @@ impl Api {
             }
         }
 
-        let roster = self.build_roster(&users, true);
+        let mut roster = self.build_roster(&users, true);
+        roster.degraded = degraded;
         if let Ok(mut guard) = self.roster.lock() {
             *guard = Some(roster.clone());
         }
         Ok(roster)
     }
 
-    /// Just the first online page, so the UI can paint in well under a second.
+    /// The first two online pages, so the UI paints in well under a second and
+    /// accounts with more than 100 online friends are not truncated.
     pub async fn friends_quick(&self) -> Result<Roster, String> {
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
-        let page = self.fetch_page(&cookie, "false", 0).await?;
-        Ok(self.build_roster(&page, false))
+        let (first, second) = futures::join!(
+            self.fetch_page(&cookie, "false", 0),
+            self.fetch_page(&cookie, "false", 100)
+        );
+
+        let mut users = first?;
+        let mut degraded = false;
+        match second {
+            Ok(page) => users.extend(page),
+            Err(_) => degraded = true,
+        }
+
+        let mut roster = self.build_roster(&users, false);
+        roster.degraded = degraded;
+        Ok(roster)
     }
 
     pub fn roster_snapshot(&self) -> Option<Roster> {
@@ -437,43 +457,84 @@ impl Api {
             worlds_pending: missing_worlds.len(),
             missing_worlds,
             complete,
+            degraded: false,
             items,
         }
     }
 
+    /// One page, retried with backoff while VRChat throttles or errs.
     async fn fetch_page(
         &self,
         cookie: &str,
         bucket: &str,
         offset: usize,
     ) -> Result<Vec<Value>, String> {
+        let mut attempt: u32 = 0;
+        loop {
+            match self.fetch_page_once(cookie, bucket, offset).await {
+                PageOutcome::Ready(page) => return Ok(page),
+                PageOutcome::Failed(message) => return Err(message),
+                PageOutcome::Throttled(retry_after) => {
+                    attempt += 1;
+                    if attempt >= PAGE_ATTEMPTS {
+                        return Err(format!(
+                            "VRChat kept throttling friends page {offset}."
+                        ));
+                    }
+                    tokio::time::sleep(backoff_delay(attempt, retry_after)).await;
+                }
+            }
+        }
+    }
+
+    async fn fetch_page_once(&self, cookie: &str, bucket: &str, offset: usize) -> PageOutcome {
         let path = format!("auth/user/friends?offline={bucket}&n=100&offset={offset}");
-        let (status, _, text) = self
+        let (status, headers, text) = match self
             .request(reqwest::Method::GET, &path, Some(cookie), None)
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            // A dropped connection is worth another try, like a 503.
+            Err(_) => return PageOutcome::Throttled(None),
+        };
+
         if status == reqwest::StatusCode::UNAUTHORIZED {
             self.set_cookie(None);
             self.set_user(None);
-            return Err("Your session expired. Sign in again.".to_string());
+            return PageOutcome::Failed("Your session expired. Sign in again.".to_string());
         }
-        if !status.is_success() {
-            return Err(format!(
+        if status.is_success() {
+            return match serde_json::from_str::<Vec<Value>>(&text) {
+                Ok(page) => PageOutcome::Ready(page),
+                Err(_) => {
+                    PageOutcome::Failed("VRChat returned an unexpected friend list.".to_string())
+                }
+            };
+        }
+
+        match page_class(status.as_u16()) {
+            PageClass::Throttle => PageOutcome::Throttled(retry_after_of(&headers)),
+            PageClass::Fatal => PageOutcome::Failed(format!(
                 "VRChat returned {} while loading friends.",
                 status.as_u16()
-            ));
+            )),
         }
-        serde_json::from_str(&text)
-            .map_err(|_| "VRChat returned an unexpected friend list.".to_string())
     }
 
-    /// Walks every page of one bucket six requests at a time.
-    async fn fetch_bucket(&self, cookie: &str, bucket: &str) -> Result<Vec<Value>, String> {
+    /// Walks every page of one bucket six requests at a time. A page that stays
+    /// throttled is reported instead of aborting the whole roster.
+    async fn fetch_bucket(
+        &self,
+        cookie: &str,
+        bucket: &str,
+    ) -> Result<(Vec<Value>, bool), String> {
         let first = self.fetch_page(cookie, bucket, 0).await?;
         let mut users = first;
         let mut finished = users.len() < 100;
+        let mut degraded = false;
         let mut offset = 100usize;
 
-        while !finished && users.len() < 2_500 {
+        while !finished && users.len() < 2_500 && offset < 3_000 {
             let offsets: Vec<usize> = (0..6).map(|index| offset + index * 100).collect();
             let results = join_all(
                 offsets
@@ -482,18 +543,26 @@ impl Api {
             )
             .await;
             for result in results {
-                let page = result?;
-                let short = page.len() < 100;
-                users.extend(page);
-                if short {
-                    finished = true;
-                    break;
+                match result {
+                    Ok(page) => {
+                        let short = page.len() < 100;
+                        users.extend(page);
+                        if short {
+                            finished = true;
+                            break;
+                        }
+                    }
+                    // An expired session cannot be recovered by retrying.
+                    Err(error) if error.starts_with("Your session expired") => {
+                        return Err(error)
+                    }
+                    Err(_) => degraded = true,
                 }
             }
             offset += 600;
         }
 
-        Ok(users)
+        Ok((users, degraded))
     }
 
     pub fn world_names(&self) -> HashMap<String, String> {
@@ -1486,6 +1555,45 @@ mod tests {
     }
 }
 
+const PAGE_ATTEMPTS: u32 = 4;
+
+enum PageOutcome {
+    Ready(Vec<Value>),
+    Throttled(Option<Duration>),
+    Failed(String),
+}
+
+#[derive(Debug, PartialEq)]
+enum PageClass {
+    Throttle,
+    Fatal,
+}
+
+fn page_class(status: u16) -> PageClass {
+    match status {
+        429 | 500..=599 => PageClass::Throttle,
+        _ => PageClass::Fatal,
+    }
+}
+
+/// 600 ms, 1.2 s, 2.4 s, 4.8 s; a `Retry-After` wins but never waits longer
+/// than 10 s, so a stubborn endpoint cannot hang the roster.
+fn backoff_delay(attempt: u32, retry_after: Option<Duration>) -> Duration {
+    let sequential = Duration::from_millis(600u64 << attempt.saturating_sub(1).min(3));
+    retry_after
+        .unwrap_or(sequential)
+        .min(Duration::from_secs(10))
+}
+
+fn retry_after_of(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .filter(|delay| *delay <= Duration::from_secs(60))
+}
+
 fn push_unique(users: &mut Vec<Value>, seen: &mut HashSet<String>, user: Value) {
     let id = text(&user, "id");
     if id.is_empty() || !seen.insert(id) {
@@ -1640,5 +1748,54 @@ mod instance_fixture_tests {
         assert_eq!(view.instance_type, "friends");
         assert_eq!(view.capacity, 0);
         assert!(view.players.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod page_retry_tests {
+    use super::*;
+
+    #[test]
+    fn throttling_statuses_are_retried_and_client_errors_are_not() {
+        for status in [429, 500, 502, 503, 504, 599] {
+            assert_eq!(page_class(status), PageClass::Throttle, "status {status}");
+        }
+        for status in [400, 401, 403, 404, 422] {
+            assert_eq!(page_class(status), PageClass::Fatal, "status {status}");
+        }
+    }
+
+    #[test]
+    fn backoff_doubles_from_six_hundred_milliseconds() {
+        assert_eq!(backoff_delay(1, None), Duration::from_millis(600));
+        assert_eq!(backoff_delay(2, None), Duration::from_millis(1200));
+        assert_eq!(backoff_delay(3, None), Duration::from_millis(2400));
+        assert_eq!(backoff_delay(4, None), Duration::from_millis(4800));
+        assert_eq!(backoff_delay(9, None), Duration::from_millis(4800));
+    }
+
+    #[test]
+    fn a_retry_after_header_wins_but_is_capped() {
+        assert_eq!(
+            backoff_delay(1, Some(Duration::from_secs(3))),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            backoff_delay(1, Some(Duration::from_secs(60))),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn reads_retry_after_seconds_from_headers() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "7".parse().expect("value"));
+        assert_eq!(retry_after_of(&headers), Some(Duration::from_secs(7)));
+
+        headers.insert(reqwest::header::RETRY_AFTER, "120".parse().expect("value"));
+        assert_eq!(retry_after_of(&headers), None);
+
+        headers.remove(reqwest::header::RETRY_AFTER);
+        assert_eq!(retry_after_of(&headers), None);
     }
 }

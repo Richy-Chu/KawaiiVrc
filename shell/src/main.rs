@@ -732,10 +732,11 @@ fn dump_report() {
         match api.friends().await {
             Ok(roster) => {
                 out.push_str(&format!(
-                    "roster: {} total, {} online, live={}, {} ms\n",
+                    "roster: {} total, {} online, live={}, degraded={}, {} ms\n",
                     roster.total,
                     roster.online,
                     roster.live,
+                    roster.degraded,
                     roster_started.elapsed().as_millis()
                 ));
                 for friend in roster.items.iter().filter(|friend| friend.online).take(8) {

@@ -207,9 +207,11 @@ function applyRoster(roster) {
   accountLine.textContent = `${roster.total.toLocaleString()} friends${suffix} · ${roster.online} online · ${state.user?.display_name ?? ""}`;
   renderRoster();
   if (roster.worlds_pending > 0) fillWorldNames();
-  status.textContent = roster.live
-    ? "Live presence from VRChat's realtime pipeline."
-    : "Roster loaded; presence is reconnecting.";
+  status.textContent = roster.degraded
+    ? "Some friend pages were throttled; the next refresh picks them up."
+    : roster.live
+      ? "Live presence from VRChat's realtime pipeline."
+      : "Roster loaded; presence is reconnecting.";
 }
 
 async function waitForFullRoster(attempts = 30) {
