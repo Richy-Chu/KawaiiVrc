@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Manager;
-use vrchat::{Api, InstanceView, LoginStart, Notice, Roster, UserInfo};
+use vrchat::{Api, InstanceView, LoginStart, Notice, NoticeOverview, Roster, UserInfo};
 
 fn data_dir() -> PathBuf {
     session::local_app_data().join("VrcCompanion")
@@ -446,35 +446,30 @@ async fn notifications(api: tauri::State<'_, Arc<Api>>) -> Result<Vec<Notice>, S
     api.notifications().await
 }
 
-/// What an inline Accept does depends on the kind of notification: a friend
-/// request is accepted, an invite becomes an invite to yourself (the shell
-/// cannot join a world), and an invite request is answered with an invite to
-/// the instance you are in.
+/// Only the id crosses the boundary: the backend fetches the notification and
+/// decides from its own record what "accept" means, so a stale row or a
+/// tampered payload cannot make it invite someone into an arbitrary instance.
 #[tauri::command]
 async fn accept_notification(
     api: tauri::State<'_, Arc<Api>>,
     notice_id: String,
-    kind: String,
-    sender_id: String,
-    location: String,
-) -> Result<Vec<Notice>, String> {
-    match kind.as_str() {
-        "friendRequest" => api.accept_friend_request(&notice_id).await?,
-        "invite" => api.invite_myself_to(&location).await?,
-        "requestInvite" => api.invite_friend(&sender_id).await?,
-        other => return Err(format!("There is nothing to accept on a {other} notification.")),
-    }
-    api.hide_notification(&notice_id).await?;
-    api.notifications().await
+) -> Result<NoticeOverview, String> {
+    api.accept_notification(&notice_id).await
 }
 
 #[tauri::command]
 async fn dismiss_notification(
     api: tauri::State<'_, Arc<Api>>,
     notice_id: String,
-) -> Result<Vec<Notice>, String> {
-    api.hide_notification(&notice_id).await?;
-    api.notifications().await
+) -> Result<NoticeOverview, String> {
+    api.dismiss_notification(&notice_id).await
+}
+
+#[tauri::command]
+async fn notification_overview(
+    api: tauri::State<'_, Arc<Api>>,
+) -> Result<NoticeOverview, String> {
+    api.notification_overview().await
 }
 
 // ----------------------------------------------------------- friend actions
@@ -1176,6 +1171,7 @@ fn main() {
             notifications,
             accept_notification,
             dismiss_notification,
+            notification_overview,
             invite_friend,
             request_invite,
             friend_favorites,

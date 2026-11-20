@@ -22,7 +22,10 @@ const state = {
   rosterSavedAt: 0,
   friendFavorites: {},
   favoritesLoaded: false,
-  noticesLoaded: false
+  noticesLoaded: false,
+  noticesAt: 0,
+  noticesBusy: false,
+  noticeTotal: 0
 };
 
 const el = (id) => document.getElementById(id);
@@ -606,7 +609,7 @@ function noticeActions(notice) {
   const decline = notice.kind === "friendRequest" ? "Decline" : "Dismiss";
   return `
     <span class="notice-actions">
-      <button class="ghost small" type="button" data-action="accept" data-id="${escape(notice.id)}" data-kind="${escape(notice.kind)}" data-sender="${escape(notice.sender_id)}" data-location="${escape(notice.location)}">${accept}</button>
+      <button class="ghost small" type="button" data-action="accept" data-id="${escape(notice.id)}" data-kind="${escape(notice.kind)}">${accept}</button>
       <button class="ghost small" type="button" data-action="dismiss" data-id="${escape(notice.id)}">${decline}</button>
     </span>`;
 }
@@ -617,12 +620,22 @@ function waitingNotices() {
   return state.notices.filter((notice) => NOTICE_KINDS.includes(notice.kind));
 }
 
+// The backend pages the whole list for the count; before it answers, fall back
+// to what the first page shows.
 function updateNoticeBadge() {
   const badge = el("notice-badge");
-  const waiting = waitingNotices().length;
-  badge.textContent = waiting > 99 ? "99+" : String(waiting);
+  const waiting = state.noticesLoaded ? state.noticeTotal : waitingNotices().length;
+  badge.textContent = waiting.toLocaleString();
   badge.hidden = waiting === 0;
-  badge.title = waiting ? `${waiting} waiting on you` : "";
+  badge.title = waiting ? `${waiting.toLocaleString()} waiting on you` : "";
+}
+
+function applyNoticeOverview(overview) {
+  state.notices = overview.notices || [];
+  state.noticeTotal = Number(overview.waiting) || 0;
+  state.noticesLoaded = true;
+  renderNotifications();
+  updateNoticeBadge();
 }
 
 function renderNotifications() {
@@ -656,15 +669,15 @@ noticeList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button || button.disabled) return;
   button.disabled = true;
-  const { action, id, kind, sender, location } = button.dataset;
+  const { action, id, kind } = button.dataset;
   try {
+    const overview =
+      action === "accept"
+        ? await invoke("accept_notification", { noticeId: id })
+        : await invoke("dismiss_notification", { noticeId: id });
+    applyNoticeOverview(overview);
+    state.noticesAt = Date.now();
     if (action === "accept") {
-      state.notices = await invoke("accept_notification", {
-        noticeId: id,
-        kind,
-        senderId: sender,
-        location
-      });
       status.textContent =
         kind === "friendRequest"
           ? "Friend request accepted."
@@ -672,10 +685,8 @@ noticeList.addEventListener("click", async (event) => {
             ? "Invite sent to your account — accept it in VRChat to join."
             : "Sent them an invite to your instance.";
     } else {
-      state.notices = await invoke("dismiss_notification", { noticeId: id });
       status.textContent = "Notification dismissed.";
     }
-    renderNotifications();
   } catch (error) {
     status.textContent = String(error);
   } finally {
@@ -684,15 +695,22 @@ noticeList.addEventListener("click", async (event) => {
   }
 });
 
-async function refreshNotices() {
-  if (!state.signedIn) return;
+// The friends refresh can run every 15 seconds; notifications do not need to
+// cost a request that often, so they have their own floor.
+const NOTICE_REFRESH_MS = 60_000;
+
+async function refreshNotices(force = false) {
+  if (!state.signedIn || state.noticesBusy) return;
+  const now = Date.now();
+  if (!force && now - state.noticesAt < NOTICE_REFRESH_MS) return;
+  state.noticesAt = now;
+  state.noticesBusy = true;
   try {
-    state.notices = await invoke("notifications");
-    state.noticesLoaded = true;
-    renderNotifications();
-    updateNoticeBadge();
+    applyNoticeOverview(await invoke("notification_overview"));
   } catch (error) {
     // Keep the last list; the badge should not flicker on a rate limit.
+  } finally {
+    state.noticesBusy = false;
   }
 }
 
@@ -703,10 +721,8 @@ async function loadNotifications() {
     return;
   }
   try {
-    state.notices = await invoke("notifications");
-    state.noticesLoaded = true;
-    renderNotifications();
-    updateNoticeBadge();
+    applyNoticeOverview(await invoke("notification_overview"));
+    state.noticesAt = Date.now();
   } catch (error) {
     noticeList.innerHTML = `<div class="empty">${escape(error)}</div>`;
   }
@@ -844,6 +860,8 @@ el("signout").addEventListener("click", async () => {
   state.friendFavorites = {};
   state.favoritesLoaded = false;
   state.noticesLoaded = false;
+  state.noticesAt = 0;
+  state.noticeTotal = 0;
   updateNoticeBadge();
   accountLine.textContent = "signed out";
   showAuth();

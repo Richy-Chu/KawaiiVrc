@@ -169,13 +169,73 @@ fn api_message(status: reqwest::StatusCode, text: &str) -> String {
     detail.unwrap_or_else(|| format!("VRChat returned {} for that action.", status.as_u16()))
 }
 
+/// Only ids that look like VRChat ids go into a request path.
+fn path_id(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    let valid = !value.is_empty()
+        && value.len() <= 128
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_');
+    if valid {
+        Ok(value.to_string())
+    } else {
+        Err("That id does not look like a VRChat id.".to_string())
+    }
+}
+
+/// The notification types with something to accept.
+fn actionable_kind(kind: &str) -> bool {
+    matches!(kind, "friendRequest" | "invite" | "requestInvite")
+}
+
 /// The instance an invite should point at, or why there is none.
 fn invite_instance_from(location: &str) -> Result<String, String> {
     let location = location.trim();
-    if location.starts_with("wrld_") && location.contains(':') {
+    let allowed = location
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || "~:()-_".contains(ch));
+    if location.starts_with("wrld_") && location.contains(':') && allowed {
         return Ok(location.to_string());
     }
     Err("Join a world first: there is no instance to invite anyone to.".to_string())
+}
+
+#[derive(Serialize, Clone)]
+pub struct NoticeOverview {
+    /// The first page, which is what the tab renders.
+    pub notices: Vec<Notice>,
+    /// Every waiting actionable notification, paged past the first hundred.
+    pub waiting: usize,
+}
+
+fn notice_from(row: &Value) -> Notice {
+    let sender = {
+        let display = text(row, "senderDisplayName");
+        if display.is_empty() {
+            text(row, "senderUsername")
+        } else {
+            display
+        }
+    };
+    let created = {
+        let modern = text(row, "createdAt");
+        if modern.is_empty() {
+            text(row, "created_at")
+        } else {
+            modern
+        }
+    };
+    Notice {
+        id: text(row, "id"),
+        kind: text(row, "type"),
+        message: text(row, "message"),
+        sender,
+        sender_id: text(row, "senderUserId"),
+        location: notice_location(row),
+        created_at: created,
+        seen: row.get("seen").and_then(Value::as_bool).unwrap_or(false),
+    }
 }
 
 /// The instance an invite notification points at, if it names one.
@@ -1528,6 +1588,7 @@ impl Api {
     // --------------------------------------------------------------- actions
 
     pub async fn invite_friend(&self, user_id: &str) -> Result<(), String> {
+        let user_id = path_id(user_id)?;
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
         let instance = invite_instance_from(&self.location())?;
         let (status, _, body_text) = self
@@ -1546,6 +1607,7 @@ impl Api {
     }
 
     pub async fn request_invite(&self, user_id: &str) -> Result<(), String> {
+        let user_id = path_id(user_id)?;
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
         let (status, _, body_text) = self
             .request(
@@ -1579,6 +1641,7 @@ impl Api {
     }
 
     pub async fn add_friend_favorite(&self, user_id: &str) -> Result<(), String> {
+        let user_id = path_id(user_id)?;
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
         let (status, _, body_text) = self
             .request(
@@ -1600,6 +1663,7 @@ impl Api {
     }
 
     pub async fn remove_friend_favorite(&self, favorite_id: &str) -> Result<(), String> {
+        let favorite_id = path_id(favorite_id)?;
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
         let (status, _, body_text) = self
             .request(
@@ -1617,6 +1681,7 @@ impl Api {
     }
 
     pub async fn accept_friend_request(&self, notification_id: &str) -> Result<(), String> {
+        let notification_id = path_id(notification_id)?;
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
         let (status, _, body_text) = self
             .request(
@@ -1634,6 +1699,7 @@ impl Api {
     }
 
     pub async fn hide_notification(&self, notification_id: &str) -> Result<(), String> {
+        let notification_id = path_id(notification_id)?;
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
         let (status, _, body_text) = self
             .request(
@@ -1829,37 +1895,105 @@ impl Api {
             ));
         }
         let rows: Vec<Value> = serde_json::from_str(&body_text).unwrap_or_default();
-        Ok(rows
-            .iter()
-            .map(|row| {
-                let sender = {
-                    let display = text(row, "senderDisplayName");
-                    if display.is_empty() {
-                        text(row, "senderUsername")
-                    } else {
-                        display
-                    }
-                };
-                let created = {
-                    let modern = text(row, "createdAt");
-                    if modern.is_empty() {
-                        text(row, "created_at")
-                    } else {
-                        modern
-                    }
-                };
-                Notice {
-                    id: text(row, "id"),
-                    kind: text(row, "type"),
-                    message: text(row, "message"),
-                    sender,
-                    sender_id: text(row, "senderUserId"),
-                    location: notice_location(row),
-                    created_at: created,
-                    seen: row.get("seen").and_then(Value::as_bool).unwrap_or(false),
-                }
-            })
-            .collect())
+        Ok(rows.iter().map(notice_from).collect())
+    }
+
+    /// One notification, straight from VRChat by id. Accepting works from this
+    /// record rather than from whatever kind or instance the window sent.
+    pub async fn notification(&self, notification_id: &str) -> Result<Notice, String> {
+        let id = path_id(notification_id)?;
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let (status, _, body_text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("auth/user/notifications/{id}"),
+                Some(&cookie),
+                None,
+            )
+            .await?;
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err("That notification is no longer waiting.".to_string());
+        }
+        if !status.is_success() {
+            return Err(api_message(status, &body_text));
+        }
+        let value: Value = serde_json::from_str(&body_text)
+            .map_err(|_| "VRChat returned an unexpected notification.".to_string())?;
+        Ok(notice_from(&value))
+    }
+
+    /// The first page plus a count of everything waiting. Friend requests pile
+    /// up until they are answered, so the count pages past the first hundred
+    /// instead of reporting the page size as the total.
+    pub async fn notification_overview(&self) -> Result<NoticeOverview, String> {
+        const PAGE: usize = 100;
+        const MAX_PAGES: usize = 20;
+        let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
+        let mut notices: Vec<Notice> = Vec::new();
+        let mut waiting = 0usize;
+        let mut offset = 0usize;
+
+        for page in 0..MAX_PAGES {
+            let (status, _, body_text) = self
+                .request(
+                    reqwest::Method::GET,
+                    &format!("auth/user/notifications?n={PAGE}&offset={offset}"),
+                    Some(&cookie),
+                    None,
+                )
+                .await?;
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err("Your session expired. Sign in again.".to_string());
+            }
+            if !status.is_success() {
+                return Err(format!(
+                    "VRChat returned {} while loading notifications.",
+                    status.as_u16()
+                ));
+            }
+            let rows: Vec<Value> = serde_json::from_str(&body_text).unwrap_or_default();
+            waiting += rows
+                .iter()
+                .filter(|row| actionable_kind(&text(row, "type")))
+                .count();
+            if page == 0 {
+                notices = rows.iter().map(notice_from).collect();
+            }
+            offset += rows.len();
+            if rows.len() < PAGE {
+                break;
+            }
+        }
+
+        Ok(NoticeOverview { notices, waiting })
+    }
+
+    pub async fn accept_notification(&self, notification_id: &str) -> Result<NoticeOverview, String> {
+        let id = path_id(notification_id)?;
+        let notice = self.notification(&id).await?;
+        match notice.kind.as_str() {
+            "friendRequest" => self.accept_friend_request(&id).await?,
+            "invite" => self.invite_myself_to(&notice.location).await?,
+            "requestInvite" => self.invite_friend(&notice.sender_id).await?,
+            other => {
+                return Err(format!(
+                    "There is nothing to accept on a {other} notification."
+                ))
+            }
+        }
+        self.hide_notification(&id).await?;
+        self.notification_overview().await
+    }
+
+    pub async fn dismiss_notification(
+        &self,
+        notification_id: &str,
+    ) -> Result<NoticeOverview, String> {
+        let id = path_id(notification_id)?;
+        // Confirm the row is still there before hiding anything.
+        let _ = self.notification(&id).await?;
+        self.hide_notification(&id).await?;
+        self.notification_overview().await
     }
 
     // ----------------------------------------------------------------- image
@@ -3719,5 +3853,53 @@ mod notice_location_tests {
             notice_location(&serde_json::json!({ "details": { "worldId": "wrld_a" } })),
             ""
         );
+    }
+}
+
+#[cfg(test)]
+mod notification_record_tests {
+    use super::*;
+
+    #[test]
+    fn a_notification_is_read_from_its_own_record() {
+        let row = serde_json::json!({
+            "id": "not_1",
+            "type": "invite",
+            "senderUserId": "usr_a",
+            "senderDisplayName": "A",
+            "details": { "worldId": "wrld_a", "instanceId": "7" },
+            "created_at": "2026-01-01T00:00:00Z",
+            "seen": false
+        });
+
+        let notice = notice_from(&row);
+
+        assert_eq!(notice.id, "not_1");
+        assert_eq!(notice.kind, "invite");
+        assert_eq!(notice.sender, "A");
+        assert_eq!(notice.sender_id, "usr_a");
+        assert_eq!(notice.location, "wrld_a:7");
+    }
+
+    #[test]
+    fn only_actionable_notification_kinds_count_as_waiting() {
+        for kind in ["friendRequest", "invite", "requestInvite"] {
+            assert!(actionable_kind(kind), "{kind} is waiting on a reply");
+        }
+        for kind in ["friendRequestResponse", "inviteResponse", "message", "boop", ""] {
+            assert!(!actionable_kind(kind), "{kind} needs no reply");
+        }
+    }
+
+    #[test]
+    fn only_vrchat_ids_go_into_request_paths() {
+        assert_eq!(path_id("frq_abc-123").as_deref(), Ok("frq_abc-123"));
+        assert_eq!(path_id("  usr_a  ").as_deref(), Ok("usr_a"));
+
+        for bad in ["", "../../auth/user", "frq/x", "frq abc", "frq?x=1"] {
+            assert!(path_id(bad).is_err(), "{bad:?} must not be a path");
+        }
+        let long = "a".repeat(129);
+        assert!(path_id(&long).is_err(), "overlong ids are rejected too");
     }
 }
