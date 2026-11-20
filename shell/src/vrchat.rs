@@ -349,7 +349,10 @@ impl Api {
         let mut seen: HashSet<String> = HashSet::new();
         let mut degraded = false;
         for bucket in ["false", "true"] {
-            let (page_users, page_degraded) = self.fetch_bucket(&cookie, bucket).await?;
+            let (page_users, page_degraded) = self
+                .fetch_bucket(&cookie, bucket)
+                .await
+                .map_err(PageFailure::to_message)?;
             degraded |= page_degraded;
             for user in page_users {
                 push_unique(&mut users, &mut seen, user);
@@ -367,20 +370,23 @@ impl Api {
         Ok(roster)
     }
 
-    /// The first two online pages, so the UI paints in well under a second and
-    /// accounts with more than 100 online friends are not truncated.
+    /// The first online page, plus a second one when the first page was full,
+    /// so the UI paints in well under a second and accounts with more than 100
+    /// online friends are not truncated.
     pub async fn friends_quick(&self) -> Result<Roster, String> {
         let cookie = self.cookie().ok_or_else(|| "Not signed in.".to_string())?;
-        let (first, second) = futures::join!(
-            self.fetch_page(&cookie, "false", 0),
-            self.fetch_page(&cookie, "false", 100)
-        );
-
-        let mut users = first?;
+        let mut users = self
+            .fetch_page(&cookie, "false", 0)
+            .await
+            .map_err(PageFailure::to_message)?;
         let mut degraded = false;
-        match second {
-            Ok(page) => users.extend(page),
-            Err(_) => degraded = true,
+
+        if needs_second_page(users.len()) {
+            match self.fetch_page(&cookie, "false", 100).await {
+                Ok(page) => users.extend(page),
+                Err(failure @ PageFailure::Expired) => return Err(failure.to_message()),
+                Err(PageFailure::Other(_)) => degraded = true,
+            }
         }
 
         let mut roster = self.build_roster(&users, false);
@@ -468,18 +474,18 @@ impl Api {
         cookie: &str,
         bucket: &str,
         offset: usize,
-    ) -> Result<Vec<Value>, String> {
+    ) -> Result<Vec<Value>, PageFailure> {
         let mut attempt: u32 = 0;
         loop {
             match self.fetch_page_once(cookie, bucket, offset).await {
                 PageOutcome::Ready(page) => return Ok(page),
-                PageOutcome::Failed(message) => return Err(message),
+                PageOutcome::Failed(failure) => return Err(failure),
                 PageOutcome::Throttled(retry_after) => {
                     attempt += 1;
                     if attempt >= PAGE_ATTEMPTS {
-                        return Err(format!(
+                        return Err(PageFailure::Other(format!(
                             "VRChat kept throttling friends page {offset}."
-                        ));
+                        )));
                     }
                     tokio::time::sleep(backoff_delay(attempt, retry_after)).await;
                 }
@@ -498,25 +504,21 @@ impl Api {
             Err(_) => return PageOutcome::Throttled(None),
         };
 
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            self.set_cookie(None);
-            self.set_user(None);
-            return PageOutcome::Failed("Your session expired. Sign in again.".to_string());
+        if let Some(failure) = page_failure(status.as_u16()) {
+            if matches!(failure, PageFailure::Expired) {
+                self.set_cookie(None);
+                self.set_user(None);
+            }
+            return PageOutcome::Failed(failure);
         }
-        if status.is_success() {
-            return match serde_json::from_str::<Vec<Value>>(&text) {
-                Ok(page) => PageOutcome::Ready(page),
-                Err(_) => {
-                    PageOutcome::Failed("VRChat returned an unexpected friend list.".to_string())
-                }
-            };
+        if !status.is_success() {
+            return PageOutcome::Throttled(retry_after_of(&headers));
         }
 
-        match page_class(status.as_u16()) {
-            PageClass::Throttle => PageOutcome::Throttled(retry_after_of(&headers)),
-            PageClass::Fatal => PageOutcome::Failed(format!(
-                "VRChat returned {} while loading friends.",
-                status.as_u16()
+        match serde_json::from_str::<Vec<Value>>(&text) {
+            Ok(page) => PageOutcome::Ready(page),
+            Err(_) => PageOutcome::Failed(PageFailure::Other(
+                "VRChat returned an unexpected friend list.".to_string(),
             )),
         }
     }
@@ -527,7 +529,7 @@ impl Api {
         &self,
         cookie: &str,
         bucket: &str,
-    ) -> Result<(Vec<Value>, bool), String> {
+    ) -> Result<(Vec<Value>, bool), PageFailure> {
         let first = self.fetch_page(cookie, bucket, 0).await?;
         let mut users = first;
         let mut finished = users.len() < 100;
@@ -553,10 +555,8 @@ impl Api {
                         }
                     }
                     // An expired session cannot be recovered by retrying.
-                    Err(error) if error.starts_with("Your session expired") => {
-                        return Err(error)
-                    }
-                    Err(_) => degraded = true,
+                    Err(PageFailure::Expired) => return Err(PageFailure::Expired),
+                    Err(PageFailure::Other(_)) => degraded = true,
                 }
             }
             offset += 600;
@@ -1560,20 +1560,42 @@ const PAGE_ATTEMPTS: u32 = 4;
 enum PageOutcome {
     Ready(Vec<Value>),
     Throttled(Option<Duration>),
-    Failed(String),
+    Failed(PageFailure),
 }
 
+/// Why a page could not be read. The expired session is a variant, so callers
+/// never have to match on the wording of an error message.
 #[derive(Debug, PartialEq)]
-enum PageClass {
-    Throttle,
-    Fatal,
+enum PageFailure {
+    Expired,
+    Other(String),
 }
 
-fn page_class(status: u16) -> PageClass {
-    match status {
-        429 | 500..=599 => PageClass::Throttle,
-        _ => PageClass::Fatal,
+impl PageFailure {
+    fn to_message(self) -> String {
+        match self {
+            PageFailure::Expired => "Your session expired. Sign in again.".to_string(),
+            PageFailure::Other(message) => message,
+        }
     }
+}
+
+/// A response that retrying cannot fix. `None` means "try again later", which
+/// covers throttling, server errors and dropped connections.
+fn page_failure(status: u16) -> Option<PageFailure> {
+    match status {
+        401 => Some(PageFailure::Expired),
+        429 | 500..=599 => None,
+        status if status >= 400 => Some(PageFailure::Other(format!(
+            "VRChat returned {status} while loading friends."
+        ))),
+        _ => None,
+    }
+}
+
+/// Only a full page implies that another one exists.
+fn needs_second_page(page_len: usize) -> bool {
+    page_len == 100
 }
 
 /// 600 ms, 1.2 s, 2.4 s, 4.8 s; a `Retry-After` wins but never waits longer
@@ -1756,13 +1778,43 @@ mod page_retry_tests {
     use super::*;
 
     #[test]
-    fn throttling_statuses_are_retried_and_client_errors_are_not() {
+    fn throttling_and_server_errors_are_retried() {
         for status in [429, 500, 502, 503, 504, 599] {
-            assert_eq!(page_class(status), PageClass::Throttle, "status {status}");
+            assert!(page_failure(status).is_none(), "status {status}");
         }
-        for status in [400, 401, 403, 404, 422] {
-            assert_eq!(page_class(status), PageClass::Fatal, "status {status}");
+        assert!(page_failure(200).is_none());
+    }
+
+    #[test]
+    fn only_401_counts_as_an_expired_session() {
+        assert_eq!(page_failure(401), Some(PageFailure::Expired));
+
+        for status in [400, 403, 404, 422] {
+            match page_failure(status) {
+                Some(PageFailure::Other(_)) => {}
+                other => panic!("status {status} should be fatal, got {other:?}"),
+            }
         }
+    }
+
+    #[test]
+    fn the_expired_failure_carries_the_sign_in_message() {
+        assert!(PageFailure::Expired
+            .to_message()
+            .contains("Sign in again"));
+        assert_eq!(
+            PageFailure::Other("VRChat returned 404 while loading friends.".to_string())
+                .to_message(),
+            "VRChat returned 404 while loading friends."
+        );
+    }
+
+    #[test]
+    fn a_second_quick_page_is_only_needed_after_a_full_page() {
+        assert!(needs_second_page(100));
+        assert!(!needs_second_page(99));
+        assert!(!needs_second_page(1));
+        assert!(!needs_second_page(0));
     }
 
     #[test]
