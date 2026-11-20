@@ -398,7 +398,11 @@ impl Api {
         }
         let api = Arc::clone(self);
         tokio::spawn(async move {
-            let _ = api.friends().await;
+            if let Ok(mut roster) = api.friends().await {
+                // The full roster can mention worlds the quick page never did.
+                let missing = std::mem::take(&mut roster.missing_worlds);
+                api.resolve_worlds_in_background(missing);
+            }
             api.roster_loading.store(false, Ordering::SeqCst);
         });
     }
@@ -544,6 +548,23 @@ impl Api {
         }
 
         Ok(bucket_result(users, finished, degraded))
+    }
+
+    /// World ids the roster's rows cannot name yet, in first-seen order. Only
+    /// the roster knows about worlds that the first page never showed, so this
+    /// is what keeps their rows from settling on raw ids.
+    pub fn missing_world_ids(&self, items: &[Friend]) -> Vec<String> {
+        let cached = self.world_names();
+        let mut ids: Vec<String> = Vec::new();
+        for friend in items {
+            let Some(id) = world_id_of(&friend.location) else {
+                continue;
+            };
+            if !cached.contains_key(&id) && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        ids
     }
 
     pub fn world_names(&self) -> HashMap<String, String> {
@@ -2113,6 +2134,38 @@ mod world_sweep_tests {
             1,
             "one fruitless sweep is enough to stop"
         );
+    }
+
+    fn friend_at(location: &str) -> Friend {
+        Friend {
+            id: "usr_1".to_string(),
+            name: "A".to_string(),
+            status: String::new(),
+            status_description: String::new(),
+            location: location.to_string(),
+            world: String::new(),
+            instance: String::new(),
+            avatar: String::new(),
+            online: false,
+            trust: String::new(),
+        }
+    }
+
+    #[test]
+    fn missing_world_ids_lists_each_unnamed_online_world_once() {
+        let api = Api::new();
+        if let Ok(mut guard) = api.worlds.lock() {
+            guard.insert("wrld_known".to_string(), "Known World".to_string());
+        }
+
+        let items = vec![
+            friend_at("wrld_known:1"),
+            friend_at("wrld_new:1~hidden(usr_1)"),
+            friend_at("wrld_new:2"),
+            friend_at("offline"),
+        ];
+
+        assert_eq!(api.missing_world_ids(&items), vec!["wrld_new".to_string()]);
     }
 
     #[test]

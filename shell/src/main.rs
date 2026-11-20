@@ -410,7 +410,13 @@ async fn friends_quick(api: tauri::State<'_, Arc<Api>>) -> Result<Roster, String
 /// The full roster once the background load has it; `null` while it is loading.
 #[tauri::command]
 fn friends_snapshot(api: tauri::State<'_, Arc<Api>>) -> Option<Roster> {
-    api.roster_snapshot()
+    let snapshot = api.roster_snapshot()?;
+    // Presence and late pages can add worlds after the last lookup started.
+    let missing = api.missing_world_ids(&snapshot.items);
+    if !missing.is_empty() {
+        api.inner().resolve_worlds_in_background(missing);
+    }
+    Some(snapshot)
 }
 
 /// World names the roster could not show yet; the UI polls this while the
