@@ -1,5 +1,0 @@
-{
-  "favoriteAvatars": ["avtr_dupe", "avtr_from_settings", { "id": "avtr_bbb" }],
-  "favoriteWorlds": ["wrld_one", "wrld_two", "wrld_one"],
-  "refreshSeconds": 60
-}
