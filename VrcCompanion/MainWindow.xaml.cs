@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
     private readonly List<string> _sectionOrder = new();
     private const int MaxCachedSectionViews = 4;
+    private bool _isClosed;
 
     public MainWindow()
         : this(new MainViewModel(), initializeOnLoad: true)
@@ -69,6 +70,7 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
+        Closed += OnWindowClosed;
         PreviewMouseWheel += OnPreviewMouseWheel;
         Deactivated += OnWindowDeactivated;
         Activated += OnWindowActivated;
@@ -738,7 +740,14 @@ public partial class MainWindow : Window
     }
 
     private void OnWindowDeactivated(object? sender, EventArgs e)
-        => _backgroundTrimTimer.Start();
+    {
+        // A closing window raises Deactivated after Closing stopped the timer;
+        // restarting it there would keep the window and a later cache trim alive.
+        if (!_isClosed)
+        {
+            _backgroundTrimTimer.Start();
+        }
+    }
 
     private void OnWindowActivated(object? sender, EventArgs e)
     {
@@ -759,6 +768,11 @@ public partial class MainWindow : Window
 
     private void OnWindowStateChanged(object? sender, EventArgs e)
     {
+        if (_isClosed)
+        {
+            return;
+        }
+
         if (WindowState == WindowState.Minimized)
         {
             _backgroundTrimTimer.Start();
@@ -772,7 +786,7 @@ public partial class MainWindow : Window
     private void OnBackgroundTrimTick(object? sender, EventArgs e)
     {
         _backgroundTrimTimer.Stop();
-        if (IsActive && WindowState != WindowState.Minimized)
+        if (_isClosed || (IsActive && WindowState != WindowState.Minimized))
         {
             return;
         }
@@ -793,6 +807,13 @@ public partial class MainWindow : Window
                 Debug.WriteLine("background memory trim: " + ex.Message);
             }
         });
+    }
+
+    private void OnWindowClosed(object? sender, EventArgs e)
+    {
+        _isClosed = true;
+        _refreshTimer.Stop();
+        _backgroundTrimTimer.Stop();
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)
