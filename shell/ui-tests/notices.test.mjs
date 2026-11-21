@@ -116,7 +116,9 @@ async function shell() {
   };
   const overviewCalls = () => server.requests.filter((request) => request.command === "notification_overview");
   const offsets = () => overviewCalls().map((request) => request.args?.offset ?? 0);
-  return { run, ids, state, signIn, serve, loaded, stitch, click, overviewCalls, offsets, element, clock, server };
+  const logs = () =>
+    server.requests.filter((request) => request.command === "notice_log").map((request) => request.args.line);
+  return { run, ids, state, signIn, serve, loaded, stitch, click, overviewCalls, offsets, logs, element, clock, server };
 }
 
 // ------------------------------------------------------------ refresh stitch
@@ -151,6 +153,18 @@ test("a page that shares no row with the window replaces it instead of guessing"
   const h = await shell();
   h.loaded(rows(0, 150));
   assert.deepEqual(h.stitch(rows(200, 100)), rows(200, 100));
+  assert.deepEqual(h.logs(), [], "a page applied while the page is not live is not logged");
+});
+
+test("a first page that meets nothing leaves one line in the shell log", async () => {
+  const h = await shell();
+  h.signIn();
+  h.serve(rows(200, 100));
+  h.loaded(rows(0, 150));
+  assert.deepEqual(h.stitch(rows(200, 100)), rows(200, 100));
+  assert.deepEqual(h.logs(), [
+    "first page did not meet the window offset=0 page=100 window=150 waiting=0 first=n200 tail=n149"
+  ]);
 });
 
 test("an empty first page empties the list", async () => {
@@ -222,6 +236,19 @@ test("load more walks back to the window after 30 notices are answered in VRChat
   assert.deepEqual(h.ids(), rows(0, 130), "the rows between the window and the page are not skipped");
   assert.deepEqual(h.offsets(), [0, 95, 0], "the page that met nothing is walked back from");
   assert.equal(h.element("notice-more").hidden, false, "paging continues past the walk");
+  assert.deepEqual(h.logs(), [], "a walk that found the window is not a gap");
+});
+
+test("a walk that gives up without meeting the window leaves one line in the shell log", async () => {
+  const h = await shell();
+  h.signIn();
+  h.serve(rows(0, 400));
+  await h.run("loadNotifications()");
+  h.server.ids.splice(0, 100); // every loaded row answered, so no page can meet them
+  await h.run("loadMoreNotices()");
+  assert.deepEqual(h.logs(), [
+    "load-more walk gave up without meeting the window offset=0 page=100 window=100 waiting=300 first=n100 tail=n99"
+  ]);
 });
 
 test("a load more that only repeats rows stops offering more", async () => {

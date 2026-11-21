@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -478,6 +479,34 @@ async fn notification_overview(
     offset: Option<usize>,
 ) -> Result<NoticeOverview, String> {
     api.notification_overview(offset.unwrap_or(0)).await
+}
+
+/// One line about notification paging the window could not place: a first page
+/// that met none of the rows on screen, or a load-more walk that gave up before
+/// finding them. Row loss only shows up later as a notice nobody remembers
+/// seeing, so the next report needs the state that produced it. Best effort: a
+/// log that cannot be written must never change what the list does.
+#[tauri::command]
+fn notice_log(line: String) {
+    write_notice_log(&session::shell_dir().join("notices.log"), &line);
+}
+
+/// One line per call, timestamped like the shell's other local files, with any
+/// newline flattened so one event can never look like two.
+fn write_notice_log(path: &Path, line: &str) {
+    let line: String = line
+        .chars()
+        .map(|character| {
+            if character == '\r' || character == '\n' {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{} {}", activity::now_iso(), line.trim());
+    }
 }
 
 // ----------------------------------------------------------- friend actions
@@ -1181,6 +1210,7 @@ fn main() {
             dismiss_notification,
             notification_overview,
             notice_stats,
+            notice_log,
             invite_friend,
             request_invite,
             friend_favorites,
@@ -1197,4 +1227,43 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the KawaiiVrc shell");
+}
+
+#[cfg(test)]
+mod notice_log_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "kawaii-shell-notice-log-{}-{name}.log",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        path
+    }
+
+    #[test]
+    fn each_line_is_timestamped_and_appended() {
+        let path = scratch("append");
+        write_notice_log(&path, "first page did not meet the window");
+        write_notice_log(&path, "load-more walk gave up without meeting the window");
+        let raw = fs::read_to_string(&path).expect("log written");
+        let lines: Vec<&str> = raw.lines().collect();
+        assert_eq!(lines.len(), 2);
+        // The timestamp leads the line, so a report lines up with the day.
+        assert!(lines[0][..24].ends_with('Z'), "{}", lines[0]);
+        assert!(lines[0].ends_with(" first page did not meet the window"));
+        assert!(lines[1].ends_with(" load-more walk gave up without meeting the window"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_line_that_arrived_with_a_newline_stays_one_line() {
+        let path = scratch("newline");
+        write_notice_log(&path, "page=0\nwindow=250\r\nwaiting=321");
+        let raw = fs::read_to_string(&path).expect("log written");
+        assert_eq!(raw.lines().count(), 1, "one event is one line");
+        assert!(raw.ends_with(" waiting=321\n"));
+        let _ = fs::remove_file(path);
+    }
 }

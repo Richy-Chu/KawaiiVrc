@@ -1,6 +1,6 @@
 [package]
 name = "kawaii-shell"
-version = "0.3.37"
+version = "0.3.38"
 edition = "2021"
 description = "Experimental Rust + WebView2 core for KawaiiVrc (rewrite stage 2: auth and roster)"
 

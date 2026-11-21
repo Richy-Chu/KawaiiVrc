@@ -641,6 +641,25 @@ const NOTICE_OVERLAP = 5;
 // meets the window, and this bounds it for a list far deeper than that.
 const NOTICE_WALK_PAGES = 5;
 
+// Row loss only shows up later, as a notice nobody remembers seeing. The two
+// states paging cannot resolve — a page that met nothing, and a walk that gave
+// up before finding the window — leave one line in
+// %LOCALAPPDATA%\KawaiiVrcShell\notices.log, so a report can be checked against
+// what the window actually held. Never awaited: a diagnostic must not change
+// what the list does.
+function noteNoticeGap(what, overview, page, offset) {
+  const shown = state.notices;
+  const line =
+    `${what} offset=${offset} page=${page.length} window=${shown.length}` +
+    ` waiting=${overview.waiting ?? "?"} first=${page.length ? page[0].id : "-"}` +
+    ` tail=${shown.length ? shown[shown.length - 1].id : "-"}`;
+  try {
+    Promise.resolve(invoke("notice_log", { line })).catch(() => {});
+  } catch {
+    // Best effort: the list keeps working without the log.
+  }
+}
+
 function applyNoticeOverview(overview, append = false) {
   const page = overview.notices || [];
   if (append) {
@@ -665,6 +684,12 @@ function applyNoticeOverview(overview, append = false) {
     const known = new Set(page.map((notice) => notice.id));
     // Everything after the deepest row of the page is kept; rows the page also
     // shows (removals pulled them up into it) are dropped rather than repeated.
+    if (anchor < 0 && page.length > 0 && state.notices.length > 0) {
+      // The page shares nothing with the rows on screen: all of them were
+      // answered or pushed out of the first page while the window was open, and
+      // whatever comes next may not start where they ended.
+      noteNoticeGap("first page did not meet the window", overview, page, 0);
+    }
     const older =
       anchor < 0
         ? [] // Nothing in common: the page is the whole window now.
@@ -793,7 +818,14 @@ async function nextNoticePage() {
   for (let walk = 0; ; walk += 1) {
     const overview = await invoke("notification_overview", { offset });
     const page = overview.notices || [];
-    if (meetsWindow(page) || offset === 0 || walk === NOTICE_WALK_PAGES) return overview;
+    if (meetsWindow(page) || offset === 0 || walk === NOTICE_WALK_PAGES) {
+      // Stopping without a match means this page starts past a run of rows the
+      // window never saw; append it as before, but say so in the log.
+      if (!meetsWindow(page) && page.length > 0 && known.size > 0) {
+        noteNoticeGap("load-more walk gave up without meeting the window", overview, page, offset);
+      }
+      return overview;
+    }
     // Offset moves by the server's page length, so step by the longest page
     // seen and keep the walk on top of the rows below it.
     step = Math.max(step, page.length);
