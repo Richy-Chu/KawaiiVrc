@@ -2002,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "kawaii-shell"
-version = "0.3.34"
+version = "0.3.35"
 dependencies = [
  "futures",
  "reqwest 0.12.28",
