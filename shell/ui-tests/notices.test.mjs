@@ -20,9 +20,9 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appSource = fs.readFileSync(path.join(here, "..", "ui", "app.js"), "utf8");
 
-const notice = (id, kind = "friendRequest") => ({
+const notice = (id) => ({
   id,
-  kind,
+  kind: "friendRequest",
   sender: "Someone",
   message: "hello",
   created_at: 0,
@@ -30,8 +30,6 @@ const notice = (id, kind = "friendRequest") => ({
 });
 // n0, n1, ... — ids sort the way the server does, newest first.
 const rows = (from, count) => Array.from({ length: count }, (_, index) => `n${from + index}`);
-const unique = (list) => new Set(list).size === list.length;
-const firstPage = (list) => ({ notices: list.map((id) => notice(id)), waiting: 0, offset: 0, has_more: true });
 
 async function shell() {
   const clock = { now: 1_700_000_000_000 };
@@ -41,50 +39,27 @@ async function shell() {
     }
   }
 
-  const noop = () => {};
+  // Only what the notification pane touches: listeners it attaches have to stay
+  // reachable, and the fields its rows and badge write have to hold a value. The
+  // tab wiring at load only needs querySelectorAll to answer with nothing.
   const elements = new Map();
   const element = (id) => {
     if (elements.has(id)) return elements.get(id);
     const listeners = {};
-    const target = {
-      id,
+    const node = {
       hidden: false,
       disabled: false,
-      checked: false,
       value: "",
       textContent: "",
       innerHTML: "",
       title: "",
-      dataset: {},
-      style: {},
       listeners,
-      classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
-      addEventListener: (name, fn) => (listeners[name] = listeners[name] || []).push(fn),
-      removeEventListener: noop,
-      appendChild: noop,
-      prepend: noop,
-      focus: noop,
-      blur: noop,
-      setAttribute: noop,
-      removeAttribute: noop,
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      closest: () => null
+      addEventListener: (name, fn) => (listeners[name] = listeners[name] || []).push(fn)
     };
-    elements.set(id, target);
-    return target;
+    elements.set(id, node);
+    return node;
   };
-  const document = {
-    getElementById: element,
-    addEventListener: noop,
-    removeEventListener: noop,
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    createElement: () => element("__created"),
-    body: element("__body"),
-    documentElement: element("__html"),
-    visibilityState: "visible"
-  };
+  const document = { getElementById: element, querySelectorAll: () => [], visibilityState: "visible" };
 
   // A stand-in for VRChat's notification list: positional paging, newest first.
   const server = { ids: [], fail: false, requests: [] };
@@ -108,41 +83,10 @@ async function shell() {
     }
     return {};
   };
-  const invoke = (command, args) => reply(command, args);
-  const window = {
-    __TAURI__: { core: { invoke } },
-    addEventListener: noop,
-    removeEventListener: noop,
-    matchMedia: () => ({ matches: false, addEventListener: noop }),
-    localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
-    navigator: { userAgent: "node" }
-  };
-  const context = vm.createContext({
-    window,
-    document,
-    console,
-    Date: ClockDate,
-    setTimeout,
-    clearTimeout,
-    setInterval: () => 0,
-    clearInterval: noop,
-    requestAnimationFrame: noop,
-    navigator: { userAgent: "node" },
-    localStorage: window.localStorage,
-    Intl,
-    Math,
-    JSON,
-    Promise,
-    Map,
-    Set,
-    Array,
-    Object,
-    String,
-    Number,
-    Boolean,
-    RegExp,
-    Error
-  });
+  const window = { __TAURI__: { core: { invoke: (command, args) => reply(command, args) } } };
+  // A vm context brings the standard builtins itself, so only the host-side
+  // objects the page reaches for are supplied here; `Date` is the fake clock.
+  const context = vm.createContext({ window, document, console, Date: ClockDate });
   vm.runInContext(appSource, context, { filename: "shell/ui/app.js" });
 
   const run = (expression) => vm.runInContext(expression, context);
@@ -150,18 +94,18 @@ async function shell() {
   const state = (name) => run(`state.${name}`);
   const signIn = () => run("state.signedIn = true");
   const serve = (list) => {
-    server.ids = list.map((id) => id);
+    server.ids = [...list];
     server.fail = false;
     live = true;
-    return server;
   };
-  // The loaded rows a refresh starts from, without going through paging.
+  // The rows a refresh starts from, without going through paging.
   const loaded = (list) => {
     run(`state.notices = ${JSON.stringify(list.map((id) => notice(id)))}`);
-    return ids();
   };
-  const stitch = (list, extra = {}) => {
-    run(`applyNoticeOverview(${JSON.stringify({ ...firstPage(list), ...extra })})`);
+  // One refreshed first page, applied the way refreshNotices applies it.
+  const stitch = (list) => {
+    const page = { notices: list.map((id) => notice(id)), waiting: 0, offset: 0, has_more: true };
+    run(`applyNoticeOverview(${JSON.stringify(page)})`);
     return ids();
   };
   const click = (action, id, kind = "friendRequest") => {
@@ -180,25 +124,19 @@ async function shell() {
 test("a refresh keeps every loaded row when notices arrive at the top", async () => {
   const h = await shell();
   h.loaded(rows(0, 150));
-  const out = h.stitch(["a0", "a1", ...rows(0, 98)]);
-  assert.deepEqual(out, ["a0", "a1", ...rows(0, 150)]);
-  assert.ok(out.includes("n99"), "the row pushed past the page's end is not lost");
+  assert.deepEqual(h.stitch(["a0", "a1", ...rows(0, 98)]), ["a0", "a1", ...rows(0, 150)]);
 });
 
 test("a refresh drops rows answered elsewhere and keeps the rest once, in order", async () => {
   const h = await shell();
   h.loaded(rows(0, 150));
-  const out = h.stitch(rows(5, 100));
-  assert.deepEqual(out, rows(5, 145));
-  assert.ok(unique(out));
+  assert.deepEqual(h.stitch(rows(5, 100)), rows(5, 145));
 });
 
 test("a row answered inside the refreshed page is not shown twice", async () => {
   const h = await shell();
   h.loaded(rows(0, 150));
-  const out = h.stitch([...rows(0, 50), ...rows(51, 50)]);
-  assert.deepEqual(out, [...rows(0, 50), ...rows(51, 99)]);
-  assert.ok(unique(out));
+  assert.deepEqual(h.stitch([...rows(0, 50), ...rows(51, 50)]), [...rows(0, 50), ...rows(51, 99)]);
 });
 
 test("a refresh with arrivals and removals together still leaves one window in order", async () => {
@@ -207,7 +145,6 @@ test("a refresh with arrivals and removals together still leaves one window in o
   const gone = ["n10", "n20", "n30"];
   const out = h.stitch(["b0", ...rows(0, 100).filter((id) => !gone.includes(id))]);
   assert.deepEqual(out, ["b0", ...rows(0, 150).filter((id) => !gone.includes(id))]);
-  assert.ok(unique(out));
 });
 
 test("a page that shares no row with the window replaces it instead of guessing", async () => {
@@ -261,9 +198,7 @@ test("a notice arriving after a refresh cannot hide a row from load more", async
   assert.deepEqual(h.ids(), ["arrival0", ...rows(0, 100)]);
 
   await h.run("loadMoreNotices()");
-  const out = h.ids();
-  assert.deepEqual(out, ["arrival0", ...rows(0, 195)]);
-  assert.ok(unique(out));
+  assert.deepEqual(h.ids(), ["arrival0", ...rows(0, 195)]);
   assert.deepEqual(h.offsets(), [0, 0, 101 - h.run("NOTICE_OVERLAP")], "a refresh stays one request");
 });
 
@@ -327,7 +262,6 @@ test("dismissing an invite drops its row too", async () => {
   // The dismissal pulls n100 up into the refreshed page, and the window is
   // exactly that page: the answered row is gone and nothing is repeated.
   assert.deepEqual(h.ids(), [...rows(0, 7), ...rows(8, 93)]);
-  assert.ok(unique(h.ids()));
 });
 
 test("a failed refresh keeps the list and retries in 15 seconds, a good one waits the minute", async () => {

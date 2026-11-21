@@ -1,0 +1,29 @@
+name: Shell UI tests
+
+# shell/ui-tests drives the real shell/ui/app.js in a stub DOM. Notification
+# paging has lost rows three times, so every push runs those cases instead of
+# waiting for someone to remember the command. The Rust tests are not run here;
+# this job needs nothing but Node.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      # A broken case exits non-zero and fails the job.
+      - name: Notification stitching and paging
+        run: node --test shell/ui-tests/notices.test.mjs
