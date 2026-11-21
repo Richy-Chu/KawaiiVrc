@@ -641,12 +641,13 @@ function applyNoticeOverview(overview, append = false) {
   if (append) {
     const known = new Set(state.notices.map((notice) => notice.id));
     state.notices = state.notices.concat(page.filter((notice) => !known.has(notice.id)));
-  } else if (state.notices.length > page.length) {
+  } else {
     // A periodic refresh replaces the first page but keeps the older pages the
     // user already asked for. The page and the loaded rows are lined up by id
     // rather than by position: a notice arriving at the top pushes one row past
     // the page's end, and that row has to stay where the next page continues
-    // from, or it is skipped for good.
+    // from, or it is skipped for good. This also has to run when the page is
+    // exactly as long as the list, which is the one-page case an arrival hits.
     const shown = new Map(state.notices.map((notice, index) => [notice.id, index]));
     let anchor = -1;
     for (let i = page.length - 1; i >= 0; i -= 1) {
@@ -664,8 +665,6 @@ function applyNoticeOverview(overview, append = false) {
         ? [] // Nothing in common: the page is the whole window now.
         : state.notices.slice(anchor + 1).filter((notice) => !known.has(notice.id));
     state.notices = page.concat(older);
-  } else {
-    state.notices = page;
   }
   state.noticeTotal = Number(overview.waiting) || 0;
   state.noticesHasMore = Boolean(overview.has_more);
