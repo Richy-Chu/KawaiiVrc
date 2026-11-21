@@ -181,7 +181,21 @@ public sealed class ActivityStore
             }
 
             var temp = _path + ".tmp";
-            File.WriteAllText(temp, json);
+
+            // Share delete so whoever clears the data directory while this queued
+            // write is in flight can still remove the snapshot: the write then
+            // loses its rename and is dropped along with the directory, instead
+            // of failing their delete with a sharing violation.
+            using (var stream = new FileStream(
+                temp,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read | FileShare.Delete))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(json);
+            }
+
             File.Move(temp, _path, overwrite: true);
 
             lock (_sync)
