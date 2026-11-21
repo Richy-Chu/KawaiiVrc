@@ -820,11 +820,11 @@ async function nextNoticePage() {
     const page = overview.notices || [];
     if (meetsWindow(page) || offset === 0 || walk === NOTICE_WALK_PAGES) {
       // Stopping without a match means this page starts past a run of rows the
-      // window never saw; append it as before, but say so in the log.
+      // window never saw, so it is the caller's call whether to keep the window.
       if (!meetsWindow(page) && page.length > 0 && known.size > 0) {
         noteNoticeGap("load-more walk gave up without meeting the window", overview, page, offset);
       }
-      return overview;
+      return { overview, met: meetsWindow(page) };
     }
     // Offset moves by the server's page length, so step by the longest page
     // seen and keep the walk on top of the rows below it.
@@ -839,8 +839,18 @@ async function loadMoreNotices() {
   const button = el("notice-more");
   button.disabled = true;
   try {
+    const { overview, met } = await nextNoticePage();
+    if (!met) {
+      // Appending a page that starts past rows the window never saw leaves a
+      // hole nobody can point at, so start the window over from the page the
+      // walk settled on. Clearing first keeps it from logging the gap twice:
+      // the walk already said what it replaced.
+      state.notices = [];
+      applyNoticeOverview(overview);
+      return;
+    }
     const before = state.notices.length;
-    applyNoticeOverview(await nextNoticePage(), true);
+    applyNoticeOverview(overview, true);
     if (state.notices.length === before) {
       // Nothing but repeats: the list ends here, so stop offering more instead
       // of asking for the same rows again.

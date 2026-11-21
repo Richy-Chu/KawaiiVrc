@@ -239,16 +239,18 @@ test("load more walks back to the window after 30 notices are answered in VRChat
   assert.deepEqual(h.logs(), [], "a walk that found the window is not a gap");
 });
 
-test("a walk that gives up without meeting the window leaves one line in the shell log", async () => {
+test("a walk that gives up restarts the window from its page and says so once", async () => {
   const h = await shell();
   h.signIn();
   h.serve(rows(0, 400));
   await h.run("loadNotifications()");
   h.server.ids.splice(0, 100); // every loaded row answered, so no page can meet them
   await h.run("loadMoreNotices()");
+  assert.deepEqual(h.ids(), rows(100, 100), "the window starts over at the page instead of keeping a hole");
   assert.deepEqual(h.logs(), [
     "load-more walk gave up without meeting the window offset=0 page=100 window=100 waiting=300 first=n100 tail=n99"
-  ]);
+  ], "the restart does not log the same gap twice");
+  assert.equal(h.element("notice-more").hidden, false, "paging continues from the new window");
 });
 
 test("a load more that only repeats rows stops offering more", async () => {
