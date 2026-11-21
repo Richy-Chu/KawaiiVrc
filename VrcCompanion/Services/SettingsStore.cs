@@ -346,7 +346,17 @@ public sealed class CompanionSettings
 /// </summary>
 public sealed class SettingsStore
 {
-    public static SettingsStore Shared { get; } = new();
+    private static SettingsStore? _shared;
+
+    public static SettingsStore Shared => _shared ??= new();
+
+    /// <summary>
+    /// Points every component that shares the app's settings at an isolated file.
+    /// The test assembly calls this before the first test, so a run neither reads
+    /// nor writes the real %LOCALAPPDATA% settings (shields policy, lite mode,
+    /// sorts) and every run starts from the same defaults.
+    /// </summary>
+    internal static void RedirectSharedForTests(string path) => _shared = new SettingsStore(path);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

@@ -17,7 +17,8 @@ namespace VrcCompanion.Tests;
 /// Drives AvatarViewModel through its real call paths with the fake community
 /// handler installed, and asserts what the status line actually shows.
 /// </summary>
-[Collection("CommunityHandler")]
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class AvatarViewModelBrowseTests
 {
     private sealed class ToggleHandler : HttpMessageHandler

@@ -749,7 +749,7 @@ public partial class MainWindow : Window
         // bar fills in without opening Settings.
         try
         {
-            _viewModel.UpdateViewModel?.RequestCheckIfStale(TimeSpan.FromMinutes(2));
+            _ = _viewModel.UpdateViewModel?.RequestCheckIfStale(TimeSpan.FromMinutes(2));
         }
         catch (Exception ex)
         {

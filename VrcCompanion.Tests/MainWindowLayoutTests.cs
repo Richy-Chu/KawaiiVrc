@@ -18,6 +18,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class MainWindowLayoutTests
 {
     [Fact]

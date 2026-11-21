@@ -20,6 +20,8 @@ namespace VrcCompanion.Tests;
 /// Opens a picture in the real Media page and checks the world, session and
 /// player metadata is on screen and wired to the right buttons.
 /// </summary>
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class MediaViewerRenderTests
 {
     private const string JapanId = "wrld_4cf554b4-430c-4f8f-b53e-1f294eed230b";

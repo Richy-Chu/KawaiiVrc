@@ -131,6 +131,9 @@ public class PhotoMetadataTests
         viewModel.GroupLookup = groupId => groupId == GroupId ? ("Kawaii Club", "https://example.test/group.png") : default;
 
         await viewModel.LoadAsync(force: true);
+        // The picture's own metadata is read by the background pass; opening the
+        // viewer before it finishes would show a picture with no context.
+        await viewModel.PhotoContextsTask;
         viewModel.OpenViewer(viewModel.Groups[0].Items[0]);
 
         Assert.True(viewModel.HasViewerContext);

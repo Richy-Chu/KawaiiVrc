@@ -15,6 +15,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class NotificationPersistenceTests : IDisposable
 {
     private readonly string _directory = Path.Combine(

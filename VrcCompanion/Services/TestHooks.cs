@@ -210,6 +210,31 @@ internal static class TestHooks
 
     public static void ResetClock() => UtcNow = () => DateTime.UtcNow;
 
+    /// <summary>
+    /// Puts every seam back to its production default. The tests that mutate these
+    /// run in one serial collection and call this around each test, so a leftover
+    /// hook or launcher cannot decide what the next test sees.
+    /// </summary>
+    public static void ResetAll()
+    {
+        UseCommunityHandler(null);
+        ClearLoggedAvatars();
+        ResetClock();
+        UseUriLauncher(null);
+        UseHandlerPathProvider(null);
+        UseHandlerLauncher(null);
+        UseGameRunningProbe(null);
+        UseRunningGameLauncher(null);
+        UseFolderLauncher(null);
+        UseDownloadPathProvider(null);
+        // A friend refresh a test started can outlive it; the reset makes that
+        // late answer discard itself instead of deciding what the next test sees.
+        CosmeticCatalog.ResetForTests();
+        // AppPerformance is deliberately left alone: setting it here fires its
+        // change event at the aurora backdrop of whatever window the previous test
+        // left behind, and that object only accepts a change on its own dispatcher.
+    }
+
     /// <summary>Observes launch URIs instead of handing them to Windows; null restores.</summary>
     public static void UseUriLauncher(Action<string>? launcher)
         => LaunchService.UriLauncher = launcher ?? LaunchService.DefaultUriLauncher;

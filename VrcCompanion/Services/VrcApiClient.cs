@@ -1626,8 +1626,29 @@ public sealed class VrcApiClient : IDisposable
     private readonly Dictionary<string, Avatar> _avatarCache = new(StringComparer.Ordinal);
 
     private static HttpClient? _communityHttp;
+    private static int _communityGeneration;
+
+    // Snapshot of the pipeline this client was created under: a swapped handler
+    // belongs to whoever swaps it, never to work left over from before the swap.
+    private readonly int _communityPipelineGeneration = CommunityGeneration;
+
+    internal static int CommunityGeneration => Volatile.Read(ref _communityGeneration);
 
     private static HttpClient CommunityHttp => _communityHttp ??= CreateCommunityHttp();
+
+    private HttpClient CommunityHttpForThisClient
+    {
+        get
+        {
+            if (_communityPipelineGeneration != CommunityGeneration)
+            {
+                throw new OperationCanceledException(
+                    "The community pipeline this client was created with has been replaced.");
+            }
+
+            return CommunityHttp;
+        }
+    }
 
     /// <summary>
     /// Test seam: swaps the community HTTP pipeline for a fake handler (pass null
@@ -1635,6 +1656,7 @@ public sealed class VrcApiClient : IDisposable
     /// </summary>
     internal static void SetCommunityHandler(HttpMessageHandler? handler)
     {
+        Interlocked.Increment(ref _communityGeneration);
         _communityHttp?.Dispose();
         _communityHttp = handler is null
             ? null
@@ -1997,7 +2019,7 @@ public sealed class VrcApiClient : IDisposable
         }
     }
 
-    private static async Task<Avatar?> FetchVrcxAvatarByFileIdAsync(
+    private async Task<Avatar?> FetchVrcxAvatarByFileIdAsync(
         string name,
         string url,
         CancellationToken cancellationToken)
@@ -2006,7 +2028,7 @@ public sealed class VrcApiClient : IDisposable
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.TryAddWithoutValidation("Referer", "https://vrcx.app");
-            using var response = await CommunityHttp.SendAsync(request, cancellationToken);
+            using var response = await CommunityHttpForThisClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -2027,7 +2049,7 @@ public sealed class VrcApiClient : IDisposable
     /// the requested file id, so a profile picture can resolve even when the
     /// index does not expose a VRCX ?fileId= endpoint.
     /// </summary>
-    private static async Task<Avatar?> FetchAvtrIcuByFileIdAsync(
+    private async Task<Avatar?> FetchAvtrIcuByFileIdAsync(
         string fileId,
         CancellationToken cancellationToken)
     {
@@ -2041,7 +2063,7 @@ public sealed class VrcApiClient : IDisposable
             };
             request.Headers.TryAddWithoutValidation("Referer", "https://vrccompanion.app");
 
-            using var response = await CommunityHttp.SendAsync(request, cancellationToken);
+            using var response = await CommunityHttpForThisClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -2356,7 +2378,7 @@ public sealed class VrcApiClient : IDisposable
         var results = new List<Avatar>();
         try
         {
-            using var response = await CommunityHttp.GetAsync(
+            using var response = await CommunityHttpForThisClient.GetAsync(
                 $"https://db.vrcnext.com/api/search?q={Uri.EscapeDataString(query)}&limit={limit}&page={page}",
                 cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -2620,7 +2642,7 @@ public sealed class VrcApiClient : IDisposable
                 request.Headers.TryAddWithoutValidation("User-Agent", "VRCX/2025.10.1");
             }
 
-            using var response = await CommunityHttp.SendAsync(request, cancellationToken);
+            using var response = await CommunityHttpForThisClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 System.Diagnostics.Debug.WriteLine($"{name}: HTTP {(int)response.StatusCode}");
@@ -2761,7 +2783,7 @@ public sealed class VrcApiClient : IDisposable
         var results = new List<Avatar>();
         try
         {
-            using var response = await CommunityHttp.GetAsync(
+            using var response = await CommunityHttpForThisClient.GetAsync(
                 $"https://avtr.icu/{path}",
                 cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -3603,8 +3625,11 @@ public sealed class VrcApiClient : IDisposable
     public void Dispose()
     {
         _http.Dispose();
-        _requestGate.Dispose();
-        _avatarMutationGate.Dispose();
+        // The request gates are deliberately left alone. A SemaphoreSlim only holds
+        // unmanaged state while a wait is parked, and disposing one strands whoever
+        // is already parked there: the wait never completes and its token does not
+        // wake it. A background read that outlives this client would then never
+        // return, and any lock it held on the way in would stay held for good.
     }
 
     private async Task<string> SendApiAsync(

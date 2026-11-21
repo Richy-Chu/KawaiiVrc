@@ -16,7 +16,8 @@ namespace VrcCompanion.Tests;
 /// Feeds a real captured HTML body through the fetch methods themselves (not the
 /// parse helper) and checks the status line names indexes that failed.
 /// </summary>
-[Collection("CommunityHandler")]
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class FetchGuardTests
 {
     private sealed class HtmlHandler : HttpMessageHandler

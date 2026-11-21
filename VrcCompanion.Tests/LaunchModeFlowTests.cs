@@ -9,6 +9,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public sealed class LaunchModeFlowTests
 {
     private const string Location =

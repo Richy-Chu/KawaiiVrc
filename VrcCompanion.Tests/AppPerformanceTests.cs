@@ -3,11 +3,17 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public sealed class AppPerformanceTests
 {
     [Fact]
     public void StoredChoiceOverridesDetection()
     {
+        // Lite mode is process-wide and every shell constructor applies the saved
+        // settings, so the count below only means anything from a known baseline.
+        AppPerformance.Set(false);
+
         var notified = 0;
         void Handler() => notified++;
         AppPerformance.Changed += Handler;

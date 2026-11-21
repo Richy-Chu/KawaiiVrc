@@ -246,19 +246,20 @@ public sealed class UpdateViewModel : ViewModelBase
     /// this when it is activated, so a release published after launch reaches
     /// the bottom bar without opening Settings.
     /// </summary>
-    public void RequestCheckIfStale(TimeSpan minAge)
+    /// <returns>The check it started, or a completed task when it skipped one.</returns>
+    public Task RequestCheckIfStale(TimeSpan minAge)
     {
         if (!_service.IsSupported || IsBusy)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         if (_lastCheckAt is { } last && DateTimeOffset.UtcNow - last < minAge)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        _ = CheckNowAsync(manual: false);
+        return CheckNowAsync(manual: false);
     }
 
     /// <summary>

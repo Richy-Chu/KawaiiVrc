@@ -244,6 +244,10 @@ public class MediaMetadataTests
         };
 
         await viewModel.LoadAsync(force: true);
+        // The world and people dropdowns are filled by the background pass that
+        // reads metadata out of the pictures, so the grid is only filtered once
+        // that pass has finished.
+        await viewModel.PhotoContextsTask;
 
         Assert.Equal(3, viewModel.PictureCount);
         var world = Assert.Single(viewModel.WorldFilters);
@@ -295,6 +299,7 @@ public class MediaMetadataTests
         };
 
         await viewModel.LoadAsync(force: true);
+        await viewModel.PhotoContextsTask;
 
         Assert.Equal("All worlds", viewModel.WorldFilterOptions[0].Label);
         Assert.Equal("All people", viewModel.PeopleFilterOptions[0].Label);

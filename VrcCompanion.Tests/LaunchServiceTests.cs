@@ -9,6 +9,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class LaunchServiceTests
 {
     private const string WorldId = "wrld_4432ea9b-729c-46e3-8eaf-846f7706d3d5";

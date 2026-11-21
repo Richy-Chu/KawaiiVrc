@@ -27,6 +27,7 @@ public static class CosmeticCatalog
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly ConcurrentDictionary<string, bool> LoadedTypes = new(StringComparer.Ordinal);
     private static long _retryAfterTicks;
+    private static int _generation;
 
     internal static TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -46,11 +47,31 @@ public static class CosmeticCatalog
             return;
         }
 
+        // The caller is normally a fire-and-forget friend refresh on the UI thread.
+        // Resuming on that window's dispatcher would leave the load (and the gate
+        // every other caller waits on) stuck for as long as the window is busy, so
+        // the request runs where nothing can hold it hostage.
+        if (SynchronizationContext.Current is not null)
+        {
+            await Task.Run(() => EnsureLoadedAsync(api, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
         var loadedAny = false;
         var failed = false;
-        await Gate.WaitAsync(cancellationToken);
+        // The wait itself is never cancelled: a cancelled waiter can leave the gate
+        // without a holder while everyone behind it keeps queueing, and the whole
+        // process then never loads a decoration again. The caller's token is
+        // honoured as soon as the gate is ours, and it is always released.
+        await Gate.WaitAsync().ConfigureAwait(false);
+        // A reset clears what an earlier attempt was about to publish; that
+        // attempt's answer is stale and must not mark anything loaded.
+        var generation = Volatile.Read(ref _generation);
+
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (IsLoaded || UtcNow().UtcDateTime.Ticks < Volatile.Read(ref _retryAfterTicks))
             {
                 return;
@@ -66,7 +87,13 @@ public static class CosmeticCatalog
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    var items = await api.GetCosmeticsAsync(type, cancellationToken);
+                    var items = await api.GetCosmeticsAsync(type, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (generation != Volatile.Read(ref _generation))
+                    {
+                        return;
+                    }
+
                     foreach (var item in items)
                     {
                         if (!string.IsNullOrWhiteSpace(item.Id))
@@ -85,6 +112,11 @@ public static class CosmeticCatalog
                 {
                     // VRChat has no index for a decoration type it no longer
                     // publishes. Treating that as retryable would poll forever.
+                    if (generation != Volatile.Read(ref _generation))
+                    {
+                        return;
+                    }
+
                     LoadedTypes[type] = true;
                     loadedAny = true;
                 }
@@ -108,7 +140,7 @@ public static class CosmeticCatalog
             Gate.Release();
         }
 
-        if (loadedAny)
+        if (loadedAny && generation == Volatile.Read(ref _generation))
         {
             Changed?.Invoke();
         }
@@ -159,6 +191,7 @@ public static class CosmeticCatalog
 
     internal static void ResetForTests()
     {
+        Interlocked.Increment(ref _generation);
         foreach (var catalog in Entries.Values)
         {
             catalog.Clear();

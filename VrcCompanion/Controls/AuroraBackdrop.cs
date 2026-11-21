@@ -236,6 +236,21 @@ public sealed class AuroraBackdrop : FrameworkElement
 
     private void OnPerformanceChanged()
     {
+        // The performance mode is process-wide, so it can change from any thread
+        // (a settings load, another window). Touching this control's composition
+        // hook from that thread would throw, so the work always lands on the
+        // dispatcher that owns it.
+        if (!Dispatcher.CheckAccess())
+        {
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(new Action(OnPerformanceChanged));
+            return;
+        }
+
         UpdateAnimationHook();
         InvalidateVisual();
     }

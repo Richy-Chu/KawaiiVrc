@@ -35,6 +35,9 @@ public class MediaPagingTests
             (_, _) => groups,
             cachePath: cachePath);
         await viewModel.LoadAsync(force: true);
+        // The background metadata pass decides the filters and can start another
+        // apply; paging is only stable once it has finished.
+        await viewModel.PhotoContextsTask;
         return viewModel;
     }
 
@@ -82,6 +85,7 @@ public class MediaPagingTests
 
         viewModel.NextPageCommand.Execute(null);
         await viewModel.LoadAsync(force: true);
+        await viewModel.PhotoContextsTask;
 
         Assert.Equal(1, viewModel.CurrentPage);
         Assert.Equal(48, viewModel.PageCards.Count(card => card.HasItem));

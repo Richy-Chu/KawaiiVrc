@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Runtime.CompilerServices;
 using VrcCompanion.Controls;
@@ -16,6 +17,20 @@ internal static class TestLog
     {
         var directory = Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "logs");
         LifecycleLog.RedirectTo(Path.Combine(directory, "lifecycle.log"));
+    }
+
+    /// <summary>
+    /// Keeps the shared settings store off the user's real settings file. Several
+    /// tests save through it (sorts, shields policy, lite mode), so without this a
+    /// run inherits whatever the installed app last wrote and changes it too.
+    /// </summary>
+    [ModuleInitializer]
+    internal static void IsolateSharedSettings()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "shared");
+        Directory.CreateDirectory(directory);
+        SettingsStore.RedirectSharedForTests(
+            Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json"));
     }
 
     /// <summary>

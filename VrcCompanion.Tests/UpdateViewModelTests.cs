@@ -7,6 +7,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class UpdateViewModelTests : IDisposable
 {
     private readonly string _directory;
@@ -170,17 +172,17 @@ public class UpdateViewModelTests : IDisposable
         var viewModel = new UpdateViewModel(service, _settings);
 
         // Nothing has been checked yet, so the first activation checks.
-        viewModel.RequestCheckIfStale(TimeSpan.FromMinutes(2));
+        await viewModel.RequestCheckIfStale(TimeSpan.FromMinutes(2));
         Assert.Equal(1, service.CheckCalls);
 
         // A fresh result is reused instead of hitting GitHub again.
-        viewModel.RequestCheckIfStale(TimeSpan.FromMinutes(2));
+        await viewModel.RequestCheckIfStale(TimeSpan.FromMinutes(2));
         Assert.Equal(1, service.CheckCalls);
 
         // Once a real check finishes, the age guard applies as well.
         await viewModel.CheckNowAsync(manual: false);
         Assert.Equal(2, service.CheckCalls);
-        viewModel.RequestCheckIfStale(TimeSpan.FromMinutes(2));
+        await viewModel.RequestCheckIfStale(TimeSpan.FromMinutes(2));
         Assert.Equal(2, service.CheckCalls);
     }
 

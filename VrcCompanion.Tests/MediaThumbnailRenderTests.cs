@@ -14,6 +14,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class MediaThumbnailRenderTests
 {
     private const int PictureCount = 937;

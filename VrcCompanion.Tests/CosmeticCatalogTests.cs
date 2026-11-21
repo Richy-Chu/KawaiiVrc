@@ -6,7 +6,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
-[Collection("CommunityHandler")]
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class CosmeticCatalogTests
 {
     [Fact]

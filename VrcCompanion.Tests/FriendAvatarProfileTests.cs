@@ -13,6 +13,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class FriendAvatarProfileTests
 {
     private const string UserId = "usr_avatar_profile";
@@ -582,7 +584,9 @@ public class FriendAvatarProfileTests
         finally
         {
             TestHooks.UseCommunityHandler(null);
-            Directory.Delete(directory, recursive: true);
+            // The profile's avatar store saves on a background thread, so the file
+            // can still be open for a moment after the assertion that saw it.
+            await DeleteDirectoryAsync(directory);
         }
     }
 
@@ -1279,6 +1283,26 @@ public class FriendAvatarProfileTests
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Deletes a test folder, waiting out a store that is still finishing a
+    /// background save. The folder is disposable state, not an assertion.
+    /// </summary>
+    private static async Task DeleteDirectoryAsync(string directory)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 20)
+            {
+                await Task.Delay(50);
+            }
         }
     }
 

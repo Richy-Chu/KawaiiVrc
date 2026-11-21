@@ -10,6 +10,8 @@ using Xunit;
 
 namespace VrcCompanion.Tests;
 
+[Collection(Seams.Collection)]
+[ResetSeams]
 public class WorldInstanceCreationTests
 {
     [Fact]

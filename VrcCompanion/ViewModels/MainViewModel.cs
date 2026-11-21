@@ -63,6 +63,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private ImageSource? _avatarImage;
     private FriendItem? _selectedFriend;
     private FriendDetailViewModel? _friendDetail;
+    private readonly CancellationTokenSource _cosmeticsCancellation = new();
     private CancellationTokenSource? _friendDetailCancellation;
     private WorldDialogViewModel? _worldDialog;
     private CancellationTokenSource? _worldDialogCancellation;
@@ -3183,11 +3184,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     private async Task LoadFriendCosmeticsAsync()
     {
+        var cancellationToken = _cosmeticsCancellation.Token;
         if (!CosmeticCatalog.IsLoaded)
         {
             try
             {
-                await CosmeticCatalog.EnsureLoadedAsync(_api);
+                await CosmeticCatalog.EnsureLoadedAsync(_api, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // The shell was closed, so nobody is left to repaint.
+                return;
             }
             catch (Exception ex)
             {
@@ -3196,7 +3203,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
         }
 
-        if (_disposed)
+        if (_disposed || cancellationToken.IsCancellationRequested)
         {
             return;
         }
@@ -9404,6 +9411,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
         _disposed = true;
+        _cosmeticsCancellation.Cancel();
         CosmeticCatalog.Changed -= OnCosmeticCatalogChanged;
         _friendChanges.Dispose();
         _friendDetailCancellation?.Cancel();
