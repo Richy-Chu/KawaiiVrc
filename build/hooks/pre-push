@@ -1,13 +1,27 @@
 #!/bin/sh
-# Lints .github/workflows before a push leaves the machine, so a YAML or expression
-# mistake fails here instead of in Actions. Enable it once per clone with:
+# Runs the cheap checks a broken push would otherwise only fail in Actions:
+# lints .github/workflows and runs the shell UI tests. Enable it once per clone
+# with:
 #   git config core.hooksPath build/hooks
 #
-# Runs the same actionlint the Lint workflows job uses, and skips with a warning when
-# actionlint is not installed so a push is never blocked by a missing tool.
+# Runs the same actionlint the Lint workflows job uses and the same command the
+# Shell UI tests job runs, and skips either with a warning when its tool is not
+# installed, so a push is never blocked by a missing tool.
 # Bypass a deliberate failure with: git push --no-verify
 
 set -u
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+# Notification paging has lost rows three times, so the cases in shell/ui-tests
+# run before a push too. Node is optional for the rest of the repo.
+if ! command -v node >/dev/null 2>&1; then
+    echo "pre-push: node is not installed; skipping the shell UI tests." >&2
+    echo "pre-push: install it from https://nodejs.org/ to run them locally." >&2
+elif ! node --test "$root/shell/ui-tests/notices.test.mjs"; then
+    echo "pre-push: shell UI tests failed. Fix them, or push with --no-verify to skip." >&2
+    exit 1
+fi
 
 if ! command -v actionlint >/dev/null 2>&1; then
     echo "pre-push: actionlint is not installed; skipping the workflow lint." >&2
@@ -22,7 +36,6 @@ if ! command -v shellcheck >/dev/null 2>&1; then
     echo "pre-push: install it with: go install github.com/koalaman/shellcheck/cmd/shellcheck@latest" >&2
 fi
 
-root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 set -- "$root"/.github/workflows/*.yml
 if [ ! -f "$1" ]; then
     exit 0
