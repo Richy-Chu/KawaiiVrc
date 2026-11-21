@@ -77,9 +77,7 @@ public static class MediaIndexCache
                     .ToList()
             };
 
-            var temp = path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(file, JsonOptions));
-            File.Move(temp, path, overwrite: true);
+            AtomicFile.WriteAllText(path, JsonSerializer.Serialize(file, JsonOptions));
         }
         catch (Exception ex)
         {

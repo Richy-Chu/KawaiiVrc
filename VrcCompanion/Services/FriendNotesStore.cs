@@ -131,9 +131,7 @@ public sealed class FriendNotesStore
                 pair => pair.Key,
                 pair => new StoredNote { Text = pair.Value.Text, UpdatedAt = pair.Value.UpdatedAt },
                 StringComparer.Ordinal);
-            var temp = _path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(payload, JsonOptions));
-            File.Move(temp, _path, overwrite: true);
+            AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(payload, JsonOptions));
         }
         catch (Exception ex)
         {

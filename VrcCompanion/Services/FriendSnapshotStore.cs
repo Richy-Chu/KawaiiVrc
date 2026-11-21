@@ -263,9 +263,7 @@ public sealed class FriendSnapshotStore
             Directory.CreateDirectory(directory);
         }
 
-        var temp = _path + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(file, JsonOptions));
-        File.Move(temp, _path, overwrite: true);
+        AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(file, JsonOptions));
 
         var info = new FileInfo(_path);
         _cachedFile = file;

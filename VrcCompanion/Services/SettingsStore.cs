@@ -404,9 +404,7 @@ public sealed class SettingsStore
             {
                 var directory = Path.GetDirectoryName(_path)!;
                 Directory.CreateDirectory(directory);
-                var temp = _path + ".tmp";
-                File.WriteAllText(temp, JsonSerializer.Serialize(Settings, JsonOptions));
-                File.Move(temp, _path, overwrite: true);
+                AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(Settings, JsonOptions));
             }
             catch
             {

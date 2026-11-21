@@ -43,9 +43,7 @@ public sealed class ContextSnapshotStore
             Directory.CreateDirectory(directory);
         }
 
-        var temporary = FilePath + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(snapshot, Options));
-        File.Move(temporary, FilePath, overwrite: true);
+        AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(snapshot, Options));
     }
 
     public ContextSnapshot? Read()

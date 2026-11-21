@@ -180,23 +180,7 @@ public sealed class ActivityStore
                 Directory.CreateDirectory(directory);
             }
 
-            var temp = _path + ".tmp";
-
-            // Share delete so whoever clears the data directory while this queued
-            // write is in flight can still remove the snapshot: the write then
-            // loses its rename and is dropped along with the directory, instead
-            // of failing their delete with a sharing violation.
-            using (var stream = new FileStream(
-                temp,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.Read | FileShare.Delete))
-            using (var writer = new StreamWriter(stream))
-            {
-                writer.Write(json);
-            }
-
-            File.Move(temp, _path, overwrite: true);
+            AtomicFile.WriteAllText(_path, json);
 
             lock (_sync)
             {

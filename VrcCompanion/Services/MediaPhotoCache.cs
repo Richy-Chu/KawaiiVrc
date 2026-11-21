@@ -69,9 +69,7 @@ public static class MediaPhotoCache
             }
 
             var file = new CacheFile { Entries = rows.Values.ToList() };
-            var temp = path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(file, JsonOptions));
-            File.Move(temp, path, overwrite: true);
+            AtomicFile.WriteAllText(path, JsonSerializer.Serialize(file, JsonOptions));
         }
         catch (Exception ex)
         {
