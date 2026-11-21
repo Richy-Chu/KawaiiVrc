@@ -635,6 +635,11 @@ function updateNoticeBadge() {
 // the rows below it up one place. Pages overlap a little and are stitched by
 // id, so a row that moved is fetched as a repeat instead of being skipped.
 const NOTICE_OVERLAP = 5;
+// The overlap only covers a few answers between two clicks. A longer run pulls
+// the next rows up past the offset, so a page that met nothing is walked back
+// rather than appended past the gap. The walk stops at the first page that
+// meets the window, and this bounds it for a list far deeper than that.
+const NOTICE_WALK_PAGES = 5;
 
 function applyNoticeOverview(overview, append = false) {
   const page = overview.notices || [];
@@ -774,17 +779,36 @@ async function loadNotifications() {
 
 // Older notifications stay reachable: each page is one request, and the count
 // on the tab already says how many are waiting.
+//
+// The rows on screen are the window paging continues from, so the page starts a
+// few rows behind them. When it meets none of them, more than the overlap was
+// answered above the window since the last page and the offset now lands past
+// the seam; the walk comes back up a page at a time until the rows between are
+// in view again, which is a second request rather than a lost run of notices.
+async function nextNoticePage() {
+  const known = new Set(state.notices.map((notice) => notice.id));
+  const meetsWindow = (page) => page.some((notice) => known.has(notice.id));
+  let offset = Math.max(0, state.notices.length - NOTICE_OVERLAP);
+  let step = 0;
+  for (let walk = 0; ; walk += 1) {
+    const overview = await invoke("notification_overview", { offset });
+    const page = overview.notices || [];
+    if (meetsWindow(page) || offset === 0 || walk === NOTICE_WALK_PAGES) return overview;
+    // Offset moves by the server's page length, so step by the longest page
+    // seen and keep the walk on top of the rows below it.
+    step = Math.max(step, page.length);
+    offset = Math.max(0, offset - step);
+  }
+}
+
 async function loadMoreNotices() {
   if (!state.signedIn || state.noticesBusy || !state.noticesHasMore) return;
   state.noticesBusy = true;
   const button = el("notice-more");
   button.disabled = true;
   try {
-    // The rows on screen are the window paging continues from, so start a few
-    // rows behind them and let the id stitch drop whatever comes back twice.
-    const offset = Math.max(0, state.notices.length - NOTICE_OVERLAP);
     const before = state.notices.length;
-    applyNoticeOverview(await invoke("notification_overview", { offset }), true);
+    applyNoticeOverview(await nextNoticePage(), true);
     if (state.notices.length === before) {
       // Nothing but repeats: the list ends here, so stop offering more instead
       // of asking for the same rows again.

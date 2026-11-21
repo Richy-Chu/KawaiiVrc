@@ -212,6 +212,18 @@ test("load more reaches the rows below removals that shifted the list", async ()
   assert.deepEqual(h.ids(), rows(0, 198));
 });
 
+test("load more walks back to the window after 30 notices are answered in VRChat", async () => {
+  const h = await shell();
+  h.signIn();
+  h.serve(rows(0, 400));
+  await h.run("loadNotifications()");
+  h.server.ids.splice(10, 30); // more than the overlap covers, so the offset lands past the seam
+  await h.run("loadMoreNotices()");
+  assert.deepEqual(h.ids(), rows(0, 130), "the rows between the window and the page are not skipped");
+  assert.deepEqual(h.offsets(), [0, 95, 0], "the page that met nothing is walked back from");
+  assert.equal(h.element("notice-more").hidden, false, "paging continues past the walk");
+});
+
 test("a load more that only repeats rows stops offering more", async () => {
   const h = await shell();
   h.signIn();
