@@ -153,6 +153,16 @@ VrcCompanion\bin\Release\net8.0-windows10.0.19041.0\KawaiiVrc.exe
 
 You can also open `VrcCompanion.sln` in Visual Studio 2022 and run the `VrcCompanion` project as **KawaiiVrc**.
 
+### Git hooks
+
+A fresh clone has no hooks enabled, so run this once from the repository root:
+
+```powershell
+git config core.hooksPath build/hooks
+```
+
+The tracked `pre-push` hook then runs the shell UI tests (`node --test shell/ui-tests`) before every push, because notification paging has lost rows more than once, and lints `.github/workflows` with actionlint. Either check is skipped with a warning when its tool (`node`, `actionlint`) is not installed, so a push is never blocked by a missing tool. Bypass a deliberate failure with `git push --no-verify`.
+
 ## Data and security
 
 - Login credentials go directly to `https://api.vrchat.cloud` over HTTPS.
