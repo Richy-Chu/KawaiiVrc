@@ -786,12 +786,11 @@ public partial class MainWindow : Window
     private void OnBackgroundTrimTick(object? sender, EventArgs e)
     {
         _backgroundTrimTimer.Stop();
-        if (_isClosed || (IsActive && WindowState != WindowState.Minimized))
+        if (!TryTrimBackgroundImages())
         {
             return;
         }
 
-        ImageLoader.Shared.TrimMemory();
         _ = Task.Run(() =>
         {
             try
@@ -808,6 +807,32 @@ public partial class MainWindow : Window
             }
         });
     }
+
+    /// <summary>
+    /// Drops decoded artwork while the app is in the background. A closed window
+    /// must never do this: its timer can outlive the page that armed it.
+    /// </summary>
+    internal bool TryTrimBackgroundImages()
+    {
+        if (!ShouldTrimBackgroundImages(_isClosed, IsActive, WindowState))
+        {
+            return false;
+        }
+
+        ImageLoader.Shared.TrimMemory();
+        return true;
+    }
+
+    internal static bool ShouldTrimBackgroundImages(
+        bool isClosed,
+        bool isActive,
+        WindowState state)
+        => !isClosed && !(isActive && state != WindowState.Minimized);
+
+    internal bool IsBackgroundTrimScheduled => _backgroundTrimTimer.IsEnabled;
+
+    internal void RaiseWindowDeactivatedForTest()
+        => OnWindowDeactivated(this, EventArgs.Empty);
 
     private void OnWindowClosed(object? sender, EventArgs e)
     {
