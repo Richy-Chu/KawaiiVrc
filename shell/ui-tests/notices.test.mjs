@@ -84,9 +84,34 @@ async function shell() {
     return {};
   };
   const window = { __TAURI__: { core: { invoke: (command, args) => reply(command, args) } } };
+  // Timers are fake too: an arrival refresh waits a second for the burst to end,
+  // and `advance` runs whatever is due at the fake clock's new time.
+  const timers = new Map();
+  let timerSeq = 0;
+  const later = (fn, ms) => {
+    timerSeq += 1;
+    timers.set(timerSeq, { fn, at: clock.now + ms });
+    return timerSeq;
+  };
+  const cancel = (id) => timers.delete(id);
+  const advance = async (ms) => {
+    clock.now += ms;
+    for (const [id, timer] of [...timers]) {
+      if (timer.at > clock.now) continue;
+      timers.delete(id);
+      await timer.fn();
+    }
+  };
   // A vm context brings the standard builtins itself, so only the host-side
   // objects the page reaches for are supplied here; `Date` is the fake clock.
-  const context = vm.createContext({ window, document, console, Date: ClockDate });
+  const context = vm.createContext({
+    window,
+    document,
+    console,
+    Date: ClockDate,
+    setTimeout: later,
+    clearTimeout: cancel
+  });
   vm.runInContext(appSource, context, { filename: "shell/ui/app.js" });
 
   const run = (expression) => vm.runInContext(expression, context);
@@ -118,7 +143,23 @@ async function shell() {
   const offsets = () => overviewCalls().map((request) => request.args?.offset ?? 0);
   const logs = () =>
     server.requests.filter((request) => request.command === "notice_log").map((request) => request.args.line);
-  return { run, ids, state, signIn, serve, loaded, stitch, click, overviewCalls, offsets, logs, element, clock, server };
+  return {
+    run,
+    ids,
+    state,
+    signIn,
+    serve,
+    loaded,
+    stitch,
+    click,
+    overviewCalls,
+    offsets,
+    logs,
+    advance,
+    element,
+    clock,
+    server
+  };
 }
 
 // ------------------------------------------------------------ refresh stitch
@@ -337,4 +378,53 @@ test("a failed refresh keeps the list and retries in 15 seconds, a good one wait
   h.clock.now += 1_000;
   await h.run("refreshNotices()");
   assert.equal(h.overviewCalls().length, 4);
+});
+
+// ------------------------------------------------------------ pipeline arrivals
+
+test("a notice arriving on the pipeline refreshes the list ahead of the poll", async () => {
+  const h = await shell();
+  h.signIn();
+  h.serve(rows(0, 250));
+  await h.run("loadNotifications()");
+  h.server.ids.unshift("arrival0");
+  h.run("noticeArrived()");
+  assert.deepEqual(h.ids(), rows(0, 100), "nothing is fetched until the burst settles");
+
+  await h.advance(h.run("NOTICE_ARRIVAL_MS"));
+  assert.equal(h.ids()[0], "arrival0");
+  assert.deepEqual(h.offsets(), [0, 0], "one request, a minute ahead of the poll");
+  assert.equal(h.state("noticeTotal"), 251);
+});
+
+test("a burst of arrivals is one refresh", async () => {
+  const h = await shell();
+  h.signIn();
+  h.serve(rows(0, 250));
+  await h.run("loadNotifications()");
+  h.server.ids.unshift("a0", "a1");
+  h.run("noticeArrived()");
+  h.run("noticeArrived()");
+  h.run("noticeArrived()");
+  await h.advance(h.run("NOTICE_ARRIVAL_MS"));
+  assert.deepEqual(h.offsets(), [0, 0], "three arrivals, one refresh");
+  assert.deepEqual(h.ids().slice(0, 2), ["a0", "a1"]);
+});
+
+test("an arrival while a request is out is refreshed once that request lands", async () => {
+  const h = await shell();
+  h.signIn();
+  h.serve(rows(0, 250));
+  await h.run("loadNotifications()");
+  h.run("state.noticesBusy = true");
+  h.server.ids.unshift("a0");
+  h.run("noticeArrived()");
+
+  await h.advance(h.run("NOTICE_ARRIVAL_MS"));
+  assert.deepEqual(h.offsets(), [0], "the list is left alone while it is busy");
+
+  h.run("state.noticesBusy = false");
+  await h.advance(h.run("NOTICE_ARRIVAL_MS"));
+  assert.equal(h.ids()[0], "a0");
+  assert.deepEqual(h.offsets(), [0, 0]);
 });

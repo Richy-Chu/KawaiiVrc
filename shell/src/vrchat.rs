@@ -1523,6 +1523,13 @@ impl Api {
     }
 
     fn handle_realtime(self: &Arc<Self>, raw: &str) {
+        // A notification frame carries `senderUserId`/`receiverUserId` but no
+        // `userId`, so the presence parser drops it. The window only needs to
+        // know the list changed, which is what keeps it current between polls.
+        if is_notification_frame(raw) {
+            self.announce_notice();
+            return;
+        }
         let Some(event) = parse_pipeline_event(raw) else {
             return;
         };
@@ -1584,6 +1591,17 @@ impl Api {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Tells the window a notification arrived, so the list updates without
+    /// waiting for its minute poll. The poll stays the fallback: a frame missed
+    /// while the socket reconnects only costs freshness, not the notice.
+    fn announce_notice(self: &Arc<Self>) {
+        let app = self.app.lock().ok().and_then(|guard| guard.clone());
+        if let Some(app) = app {
+            use tauri::Emitter;
+            let _ = app.emit("notice-arrived", ());
         }
     }
 
@@ -2444,6 +2462,20 @@ pub(crate) struct PipelineEvent {
     pub display_name: String,
 }
 
+/// The pipeline pushes a `notification` frame the moment one is created, with
+/// the notification itself as `content` and no `userId` anywhere in it.
+fn is_notification_frame(raw: &str) -> bool {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(|message| {
+            message
+                .get("type")
+                .and_then(Value::as_str)
+                .map(|kind| kind == "notification")
+        })
+        .unwrap_or(false)
+}
+
 /// The pipeline sends `content` either as an object or as a JSON string,
 /// sometimes with the user nested under `user`; all three shapes are real.
 pub(crate) fn parse_pipeline_event(raw: &str) -> Option<PipelineEvent> {
@@ -2659,6 +2691,25 @@ mod tests {
         let event = parse_pipeline_event(raw).expect("event");
         assert_eq!(event.kind, "friend-offline");
         assert_eq!(event.location, "");
+    }
+
+    #[test]
+    fn recognises_a_notification_frame_the_presence_parser_drops() {
+        let raw = r#"{"type":"notification","content":{"id":"not_1","type":"friendRequest","senderUserId":"usr_9","receiverUserId":"usr_1","message":"hi"}}"#;
+        assert!(is_notification_frame(raw));
+        // No userId in the frame, which is why it is checked before the parser.
+        assert!(parse_pipeline_event(raw).is_none());
+    }
+
+    #[test]
+    fn only_the_notification_type_counts_as_one() {
+        assert!(!is_notification_frame(
+            r#"{"type":"friend-online","content":{"userId":"usr_2"}}"#
+        ));
+        assert!(!is_notification_frame(
+            r#"{"type":"friend-add","content":{"userId":"usr_2"}}"#
+        ));
+        assert!(!is_notification_frame("not json"));
     }
 
     #[test]

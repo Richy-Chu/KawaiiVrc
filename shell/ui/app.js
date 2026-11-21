@@ -788,6 +788,31 @@ async function refreshNotices(force = false) {
   }
 }
 
+// The pipeline pushes a notification the moment it arrives, so the list can be
+// current within a second. The minute poll stays the fallback: a frame missed
+// while the socket reconnects only costs freshness, not the notice.
+const NOTICE_ARRIVAL_MS = 1_000;
+let noticeArrival = 0;
+
+function noticeArrived() {
+  if (!state.signedIn) return;
+  // A burst of arrivals is one refresh, not one request per notice.
+  clearTimeout(noticeArrival);
+  noticeArrival = setTimeout(async () => {
+    if (state.noticesBusy) {
+      // A request is already out; look again once it has landed.
+      noticeArrived();
+      return;
+    }
+    await refreshNotices(true);
+  }, NOTICE_ARRIVAL_MS);
+}
+
+const listenNotices = window.__TAURI__?.event?.listen;
+if (listenNotices) {
+  listenNotices("notice-arrived", () => noticeArrived());
+}
+
 async function loadNotifications() {
   if (!state.signedIn) {
     noticeList.innerHTML = `<div class="empty">Sign in to load notifications.</div>`;
