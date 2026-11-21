@@ -207,6 +207,7 @@ The tracked `pre-push` hook then runs the shell UI tests (`node --test shell/ui-
 - **Join or Launch VRChat does nothing:** install VRChat and make sure it is registered for `vrchat://` links. Launching it once from the official website or Steam usually registers the handler.
 - **No active instances are listed:** VRChat only exposes public and friends-visible instances to this API; create one from the world popup instead.
 - **A friend change says "detected on next launch":** the app found it by comparing the last saved friend list. VRChat does not expose the exact offline friendship-change time, so the displayed timestamp is when the next launch verified it.
+- **A notification seems to be missing in the shell:** the shell writes one line to `%LOCALAPPDATA%\KawaiiVrcShell\notices.log` whenever it cannot line up a page with the notifications already on screen. `first page did not meet the window` means a refresh matched none of the loaded rows; `load-more walk gave up without meeting the window` means paging stopped before finding one. A line records the offset, the page and window sizes, and the first and last notice ids involved, but no names, messages, or account details, so the file is safe to attach to a bug report. It only appears after one of those two events.
 
 ## Project layout
 
