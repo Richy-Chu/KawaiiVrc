@@ -506,7 +506,33 @@ fn write_notice_log(path: &Path, line: &str) {
         .collect();
     if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{} {}", activity::now_iso(), line.trim());
+        drop(file);
+        trim_notice_log(path);
     }
+}
+
+/// A line is around 100 bytes, so this holds a few hundred events: enough to
+/// explain a report, small enough to attach to one.
+const NOTICE_LOG_MAX_BYTES: u64 = 64 * 1024;
+const NOTICE_LOG_KEEP_LINES: usize = 300;
+
+/// A window that never meets its page can log on every poll, so the file keeps
+/// only its newest lines instead of growing without bound.
+fn trim_notice_log(path: &Path) {
+    let Ok(meta) = fs::metadata(path) else {
+        return;
+    };
+    if meta.len() <= NOTICE_LOG_MAX_BYTES {
+        return;
+    }
+    let Ok(raw) = fs::read_to_string(path) else {
+        return;
+    };
+    let lines: Vec<&str> = raw.lines().collect();
+    let start = lines.len().saturating_sub(NOTICE_LOG_KEEP_LINES);
+    let mut text = lines[start..].join("\n");
+    text.push('\n');
+    let _ = fs::write(path, text);
 }
 
 // ----------------------------------------------------------- friend actions
@@ -1254,6 +1280,28 @@ mod notice_log_tests {
         assert!(lines[0][..24].ends_with('Z'), "{}", lines[0]);
         assert!(lines[0].ends_with(" first page did not meet the window"));
         assert!(lines[1].ends_with(" load-more walk gave up without meeting the window"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_log_that_keeps_growing_keeps_only_its_newest_lines() {
+        let path = scratch("trim");
+        let body = "x".repeat(120);
+        for index in 0..900 {
+            write_notice_log(&path, &format!("gap {index} {body}"));
+        }
+        let raw = fs::read_to_string(&path).expect("log written");
+        let len = fs::metadata(&path).expect("log stays").len();
+        assert!(len <= NOTICE_LOG_MAX_BYTES, "{len} bytes kept");
+        // The cap is in bytes, so the file sits somewhere between the last trim
+        // and the next one; what it must never do is hold everything written.
+        assert!(
+            raw.lines().count() < 900,
+            "trimmed, not left to grow: {} lines",
+            raw.lines().count()
+        );
+        assert!(raw.contains("gap 899"), "the newest line survives");
+        assert!(!raw.contains("gap 0 "), "the oldest line is trimmed away");
         let _ = fs::remove_file(path);
     }
 

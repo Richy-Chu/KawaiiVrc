@@ -792,20 +792,30 @@ async function refreshNotices(force = false) {
 // current within a second. The minute poll stays the fallback: a frame missed
 // while the socket reconnects only costs freshness, not the notice.
 const NOTICE_ARRIVAL_MS = 1_000;
+// A stream of invites would otherwise refresh once a second; anything the gap
+// skips is what the minute poll is still there for.
+const NOTICE_ARRIVAL_GAP_MS = 10_000;
 let noticeArrival = 0;
+let noticeArrivedAt = 0;
 
 function noticeArrived() {
   if (!state.signedIn) return;
-  // A burst of arrivals is one refresh, not one request per notice.
+  // A burst of arrivals is one refresh, not one request per notice, and a
+  // steady stream still waits out the gap measured from the last one.
   clearTimeout(noticeArrival);
+  const wait = Math.max(
+    NOTICE_ARRIVAL_MS,
+    noticeArrivedAt + NOTICE_ARRIVAL_GAP_MS - Date.now()
+  );
   noticeArrival = setTimeout(async () => {
     if (state.noticesBusy) {
       // A request is already out; look again once it has landed.
       noticeArrived();
       return;
     }
+    noticeArrivedAt = Date.now();
     await refreshNotices(true);
-  }, NOTICE_ARRIVAL_MS);
+  }, wait);
 }
 
 const listenNotices = window.__TAURI__?.event?.listen;

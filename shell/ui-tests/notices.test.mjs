@@ -411,6 +411,30 @@ test("a burst of arrivals is one refresh", async () => {
   assert.deepEqual(h.ids().slice(0, 2), ["a0", "a1"]);
 });
 
+test("a stream of arrivals refreshes at most once per gap", async () => {
+  const h = await shell();
+  h.signIn();
+  h.serve(rows(0, 250));
+  await h.run("loadNotifications()");
+  h.server.ids.unshift("a0");
+  h.run("noticeArrived()");
+  await h.advance(h.run("NOTICE_ARRIVAL_MS"));
+  assert.deepEqual(h.offsets(), [0, 0], "the first arrival refreshes");
+
+  // A second arrival a second later waits out the gap instead of asking again.
+  h.server.ids.unshift("a1");
+  h.run("noticeArrived()");
+  await h.advance(h.run("NOTICE_ARRIVAL_MS"));
+  assert.deepEqual(h.offsets(), [0, 0], "inside the gap the list is left alone");
+  assert.equal(h.ids()[0], "a0", "so the arrival waits on screen");
+
+  // The poll still covers it; an arrival after the gap refreshes at once.
+  h.run("noticeArrived()");
+  await h.advance(h.run("NOTICE_ARRIVAL_GAP_MS"));
+  assert.deepEqual(h.offsets(), [0, 0, 0]);
+  assert.equal(h.ids()[0], "a1");
+});
+
 test("an arrival while a request is out is refreshed once that request lands", async () => {
   const h = await shell();
   h.signIn();
