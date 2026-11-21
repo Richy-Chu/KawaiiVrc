@@ -768,11 +768,6 @@ public partial class MainWindow : Window
 
     private void OnWindowStateChanged(object? sender, EventArgs e)
     {
-        if (_isClosed)
-        {
-            return;
-        }
-
         if (WindowState == WindowState.Minimized)
         {
             _backgroundTrimTimer.Start();
@@ -829,10 +824,7 @@ public partial class MainWindow : Window
         WindowState state)
         => !isClosed && !(isActive && state != WindowState.Minimized);
 
-    internal bool IsBackgroundTrimScheduled => _backgroundTrimTimer.IsEnabled;
-
-    internal void RaiseWindowDeactivatedForTest()
-        => OnWindowDeactivated(this, EventArgs.Empty);
+    internal bool IsBackgroundTrimScheduledForTest => _backgroundTrimTimer.IsEnabled;
 
     private void OnWindowClosed(object? sender, EventArgs e)
     {

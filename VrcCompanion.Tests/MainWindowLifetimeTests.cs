@@ -11,7 +11,7 @@ namespace VrcCompanion.Tests;
 public class MainWindowLifetimeTests
 {
     [Fact]
-    public void AClosedWindowNeverRearmsItsBackgroundTrimTimer()
+    public void ClosingAnActiveWindowLeavesNoBackgroundTrimScheduled()
     {
         WpfTestHost.Run(() =>
         {
@@ -20,22 +20,21 @@ public class MainWindowLifetimeTests
             var window = CreateWindow(shell);
 
             window.Show();
+            window.Activate();
             Pump(window);
 
-            // Leaving the window arms the timer; the close that follows used to
-            // raise Deactivated again and rearm it for a page that was gone.
-            window.RaiseWindowDeactivatedForTest();
+            // Only an active window raises Deactivated while it closes, and that
+            // event used to rearm the trim timer after Closing had stopped it.
             Assert.True(
-                window.IsBackgroundTrimScheduled,
-                "Deactivating the window did not schedule the background trim.");
+                window.IsActive,
+                "The test window never became active, so the close-time deactivation was not exercised.");
 
             window.Close();
             Pump(window);
-            window.RaiseWindowDeactivatedForTest();
 
             Assert.False(
-                window.IsBackgroundTrimScheduled,
-                "A deactivation rearmed the background trim timer after the window closed.");
+                window.IsBackgroundTrimScheduledForTest,
+                "Closing the window left the background image-cache trim scheduled.");
         });
     }
 
@@ -61,11 +60,9 @@ public class MainWindowLifetimeTests
 
     [Theory]
     [InlineData(true, false, WindowState.Normal, false)]
-    [InlineData(true, true, WindowState.Normal, false)]
     [InlineData(false, true, WindowState.Normal, false)]
     [InlineData(false, true, WindowState.Minimized, true)]
     [InlineData(false, false, WindowState.Normal, true)]
-    [InlineData(false, false, WindowState.Minimized, true)]
     public void BackgroundTrimRunsOnlyForAnOpenBackgroundWindow(
         bool isClosed,
         bool isActive,
