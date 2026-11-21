@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -176,5 +178,55 @@ public sealed class ActivityPersistenceTests : IDisposable
         Assert.Equal(2, loaded.Count);
         Assert.Equal(newer.Id, loaded[0].Id);
         Assert.Empty(store.Load("usr_other"));
+    }
+
+    [Fact]
+    public void ClearingTheDataDirectoryWhileAQueuedWriteRunsDoesNotFailTheDelete()
+    {
+        // The store serialises its snapshot on a worker thread, so a caller can
+        // remove the data directory while the .tmp snapshot is still open. The
+        // temp file must be opened with FileShare.Delete, otherwise every one of
+        // these deletes fails with "activity.json.tmp is being used by another
+        // process" after the test's own assertions have already passed.
+        var observedWriteInFlight = 0;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var directory = Path.Combine(_directory, "queued-write-" + attempt);
+            var path = Path.Combine(directory, "activity.json");
+            Directory.CreateDirectory(directory);
+
+            var store = new ActivityStore(path);
+            store.Save(
+                "usr_owner",
+                Enumerable.Range(0, 20_000)
+                    .Select(index => new ActivityEntry
+                    {
+                        Id = "friend-added-usr_" + index,
+                        Type = ActivityType.FriendAdded,
+                        UserId = "usr_" + index,
+                        Details = new string('x', 200)
+                    })
+                    .ToList());
+
+            var temp = path + ".tmp";
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (!File.Exists(temp) && DateTime.UtcNow < deadline)
+            {
+                Thread.SpinWait(100);
+            }
+
+            if (File.Exists(temp))
+            {
+                observedWriteInFlight++;
+            }
+
+            // Throws IOException while the fix is reverted.
+            Directory.Delete(directory, recursive: true);
+        }
+
+        Assert.True(
+            observedWriteInFlight > 0,
+            "Every queued write finished before the directory was cleared, so " +
+            "the delete never overlapped an open snapshot.");
     }
 }
