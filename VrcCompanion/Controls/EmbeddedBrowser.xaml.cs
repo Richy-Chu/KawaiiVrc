@@ -1081,11 +1081,20 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
         try
         {
-            ObservedAdBlockRequests++;
             if (!Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri))
             {
                 return;
             }
+
+            // Shields leaves local addresses alone: a filter rule matching the
+            // request path would otherwise treat a loopback server as third
+            // party and block its downloads outright.
+            if (IsLocalAddress(uri))
+            {
+                return;
+            }
+
+            ObservedAdBlockRequests++;
 
             // Use Brave's engine for every request so filter-list exceptions,
             // $domain rules, redirects, and removeparam rules behave exactly as

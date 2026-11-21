@@ -196,8 +196,15 @@ public class EmbeddedBrowserAdBlockTests
                         "JSON.stringify({marker:window.__vrcBraveDocumentScript,error:window.__fetchError,text:window.__fetchText})"));
 
                 var text = await ReadAsync(core, "window.__fetchText");
+
+                // Brave ships several overlapping rules for the player response: one
+                // replaces "adPlacements" with "no_ads", another deletes the block.
+                // The engine assembles the injected script from an unordered set, so
+                // which rule runs first varies run to run. Assert the contract both
+                // orders satisfy: the player payload survives without its ad blocks.
+                Assert.Contains("videoDetails", text);
                 Assert.DoesNotContain("adPlacements", text, StringComparison.OrdinalIgnoreCase);
-                Assert.Contains("no_ads", text);
+                Assert.DoesNotContain("adSlots", text, StringComparison.OrdinalIgnoreCase);
             }
             finally
             {
