@@ -348,6 +348,9 @@ public class MediaMetadataTests
         };
 
         await viewModel.LoadAsync(force: true);
+        // LoadAsync starts the photo-metadata pass in the background and that pass
+        // re-groups when it finishes, so let it finish before reading the grid.
+        await viewModel.PhotoContextsTask;
         viewModel.OpenViewer(viewModel.Groups[0].Items[0]);
 
         Assert.True(viewModel.HasViewerContext);
@@ -396,6 +399,9 @@ public class MediaMetadataTests
         };
 
         await viewModel.LoadAsync(force: true);
+        // LoadAsync starts the photo-metadata pass in the background and that pass
+        // re-groups when it finishes, so let it finish before reading the grid.
+        await viewModel.PhotoContextsTask;
         viewModel.OpenViewer(viewModel.Groups[0].Items[0]);
 
         await viewModel.ViewerHydration;
@@ -428,6 +434,9 @@ public class MediaMetadataTests
         };
 
         await viewModel.LoadAsync(force: true);
+        // LoadAsync starts the photo-metadata pass in the background and that pass
+        // re-groups when it finishes, so let it finish before reading the grid.
+        await viewModel.PhotoContextsTask;
         viewModel.OpenViewer(viewModel.Groups[0].Items[0]);
 
         Assert.False(viewModel.HasViewerContext);

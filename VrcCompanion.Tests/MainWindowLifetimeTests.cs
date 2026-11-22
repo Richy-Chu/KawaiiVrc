@@ -20,8 +20,14 @@ public class MainWindowLifetimeTests
             var window = CreateWindow(shell);
 
             window.Show();
-            window.Activate();
-            Pump(window);
+
+            // The window is shown unactivated, so Activate can be refused while
+            // another window is still settling; retry instead of assuming once.
+            for (var attempt = 0; attempt < 20 && !window.IsActive; attempt++)
+            {
+                window.Activate();
+                Pump(window);
+            }
 
             // Only an active window raises Deactivated while it closes, and that
             // event used to rearm the trim timer after Closing had stopped it.
