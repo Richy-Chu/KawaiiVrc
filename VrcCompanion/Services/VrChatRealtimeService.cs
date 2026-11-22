@@ -143,6 +143,7 @@ public sealed class VrChatRealtimeService : IDisposable
     private readonly object _gate = new();
     private CancellationTokenSource? _cancellation;
     private Task? _loop;
+    private Task? _retired;
     private string _lastRaw = string.Empty;
     private long _generation;
     private bool _disposed;
@@ -206,6 +207,13 @@ public sealed class VrChatRealtimeService : IDisposable
             }
 
             previous = _cancellation;
+            // The session being replaced is cancelled below and then runs its own
+            // socket disposal, so keep its loop around for StopAsync to wait on.
+            if (_loop is not null)
+            {
+                _retired = _retired is null ? _loop : Task.WhenAll(_retired, _loop);
+            }
+
             _lastRaw = string.Empty;
             _cancellation = new CancellationTokenSource();
             var owned = _cancellation;
@@ -277,6 +285,24 @@ public sealed class VrChatRealtimeService : IDisposable
             try
             {
                 await loop.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        Task? retired;
+        lock (_gate)
+        {
+            retired = _retired;
+            _retired = null;
+        }
+
+        if (retired is not null)
+        {
+            try
+            {
+                await retired.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -536,6 +562,7 @@ public sealed class VrChatRealtimeService : IDisposable
         try
         {
             _loop?.Wait(TimeSpan.FromSeconds(2));
+            _retired?.Wait(TimeSpan.FromSeconds(2));
         }
         catch (AggregateException)
         {

@@ -173,7 +173,10 @@ public sealed class VrChatWebSocketTests
 
         service.Start();
         await WaitUntilAsync(() => service.Status.State == VrChatRealtimeState.Connected);
-        await Task.Delay(400);
+
+        // The heartbeat is a 20 ms timer, so wait for it to tick instead of
+        // assuming the pool fires three of them inside one fixed 400 ms sleep.
+        await WaitUntilAsync(() => sockets.Any(candidate => candidate.PingCount >= 3), 5000);
         await service.StopAsync();
 
         var socket = Assert.Single(sockets);
