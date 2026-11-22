@@ -291,7 +291,30 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel
     private double RowHeight(int row)
         => _rowHeights.TryGetValue(row, out var height)
             ? height
-            : Math.Max(EstimatedItemHeight, _tallestRow);
+            : UnmeasuredRowHeight();
+
+    /// <summary>
+    /// Height to assume for a row that has never been on screen. Once anything
+    /// has been measured the average of those rows is the best guess: borrowing
+    /// the tallest row made every unmeasured row too tall, so the extent fell as
+    /// ordinary rows replaced it and the scrollbar visibly shrank mid-scroll.
+    /// The estimated height is only used until a row has been measured.
+    /// </summary>
+    private double UnmeasuredRowHeight()
+    {
+        if (_rowHeights.Count == 0)
+        {
+            return Math.Max(EstimatedItemHeight, _tallestRow);
+        }
+
+        var total = 0d;
+        foreach (var height in _rowHeights.Values)
+        {
+            total += height;
+        }
+
+        return total / _rowHeights.Count;
+    }
 
     private double RowTop(int row)
     {

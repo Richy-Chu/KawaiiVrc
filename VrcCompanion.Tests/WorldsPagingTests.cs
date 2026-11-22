@@ -76,6 +76,145 @@ public class WorldsPagingTests
     }
 
     [Fact]
+    public void FlippingAWorldsPageLeavesNoStaleCardsBehind()
+    {
+        using var handler = new WorldsHandler(total: 60);
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.SetLoggedIn(shell);
+
+        WpfTestHost.Run(() =>
+        {
+            var window = new MainWindow(shell, initializeOnLoad: false)
+            {
+                Width = 1100,
+                Height = 720,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = 100,
+                Top = 100
+            };
+
+            window.Show();
+            shell.SelectedSection = shell.Sections.Single(section => section.Key == "worlds");
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+            Assert.True(
+                WaitUntil(() => shell.Worlds.Count == VrcApiClient.WorldsPageSize, 8000),
+                "the first world page never arrived");
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+            var pageOneIds = shell.Worlds
+                .Select(world => world.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            Assert.NotEmpty(pageOneIds);
+
+            var list = FindDescendant<ListBox>(window, box =>
+                ReferenceEquals(box.ItemsSource, shell.Worlds));
+            Assert.NotNull(list);
+
+            var flipping = shell.GoToWorldsPageAsync(2);
+            Assert.True(
+                WaitUntil(() => flipping.IsCompleted && shell.WorldsPageNumber == 2, 8000),
+                "the second world page never arrived");
+
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            window.UpdateLayout();
+
+            Assert.Equal("Page 2", shell.WorldsPageText);
+            var currentIds = shell.Worlds.Select(world => world.Id).ToHashSet(StringComparer.Ordinal);
+            Assert.Empty(pageOneIds.Intersect(currentIds));
+
+            var cards = Enumerable.Range(0, list!.Items.Count)
+                .Select(index => list.ItemContainerGenerator.ContainerFromIndex(index))
+                .OfType<ListBoxItem>()
+                .ToList();
+
+            Assert.NotEmpty(cards);
+            foreach (var card in cards)
+            {
+                var world = Assert.IsType<WorldItem>(card.DataContext);
+                Assert.Contains(world.Id, currentIds);
+            }
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void TheWorldsScrollbarKeepsItsLengthWhileScrolling()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            // Names and tags vary the card height row by row, which is what made
+            // an estimated row height read as a shrinking scrollbar.
+            TestHooks.SeedWorlds(shell, Enumerable.Range(0, 120).Select(index => new VrcWorld
+            {
+                Id = $"wrld_{index}",
+                Name = index % 3 == 0
+                    ? $"A very long world name that wraps inside the card {index}"
+                    : $"World {index}",
+                AuthorName = "AB",
+                Tags = Enumerable.Range(0, index % 4)
+                    .Select(tag => $"author_tag_word{tag}")
+                    .ToList()
+            }));
+
+            var window = new MainWindow(shell, initializeOnLoad: false)
+            {
+                Width = 1100,
+                Height = 720,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = 100,
+                Top = 100
+            };
+
+            window.Show();
+            shell.SelectedSection = shell.Sections.Single(section => section.Key == "worlds");
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            window.UpdateLayout();
+
+            var list = FindDescendant<ListBox>(window, box =>
+                ReferenceEquals(box.ItemsSource, shell.Worlds));
+            Assert.NotNull(list);
+            var scroll = FindDescendant<ScrollViewer>(list!);
+            Assert.NotNull(scroll);
+
+            var extents = new List<double> { scroll!.ExtentHeight };
+            var step = Math.Max(240, scroll.ViewportHeight * 0.9);
+            for (var y = step; y <= scroll.ScrollableHeight + step; y += step)
+            {
+                scroll.ScrollToVerticalOffset(Math.Min(y, scroll.ScrollableHeight));
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+                extents.Add(scroll.ExtentHeight);
+            }
+
+            var longest = extents.Max();
+            var shortest = extents.Min();
+            Assert.True(longest > 0, "the worlds grid reported no extent");
+            Assert.True(
+                (longest - shortest) / longest < 0.01,
+                $"the scrollbar changed length by {(longest - shortest) / longest:P1} " +
+                $"({shortest:0} to {longest:0} px) while scrolling");
+
+            window.Close();
+        });
+    }
+
+    [Fact]
     public void TheWorldsGridOnlyKeepsTheCardsNearTheViewportResident()
     {
         WpfTestHost.Run(() =>
@@ -153,6 +292,23 @@ public class WorldsPagingTests
 
             window.Close();
         });
+    }
+
+    private static bool WaitUntil(Func<bool> condition, int timeoutMs = 3000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            if (condition())
+            {
+                return true;
+            }
+
+            Thread.Sleep(20);
+        }
+
+        return condition();
     }
 
     private static int RealizedCount(ListBox list)

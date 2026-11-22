@@ -328,6 +328,35 @@ public class AvatarTabSwitchTests
     }
 
     [Fact]
+    public void TheFavouritesGridOnlyKeepsTheCardsNearTheViewportResident()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            var rows = Library(120);
+            var viewModel = new AvatarViewModel(new VrcApiClient());
+            TestHooks.AttachAvatarViewModel(shell, viewModel);
+            viewModel.SeedFavoritesForTests(rows);
+            viewModel.SeedLibraryForTests(rows);
+            TestHooks.MarkAvatarsLoaded(viewModel);
+
+            var window = CreateWindow(shell);
+            window.Show();
+            Select(shell, window, "favorites");
+
+            Assert.Equal(120, viewModel.FavoriteAvatars.Count);
+            var panel = FindDescendant<VirtualizingWrapPanel>(window);
+            Assert.NotNull(panel);
+            Assert.True(
+                panel!.Children.Count > 0 && panel.Children.Count < 120,
+                $"the favourites grid kept {panel.Children.Count} of 120 cards resident");
+
+            window.Close();
+        });
+    }
+
+    [Fact]
     public void ScrollingThroughTheWholeLibraryNeverLeavesTheGridBlank()
     {
         WpfTestHost.Run(() =>

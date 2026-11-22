@@ -240,9 +240,10 @@
                 <Setter.Value>
                     <ItemsPanelTemplate>
                         <!-- A catalog page is long enough to scroll, and the panel
-                             keeps only the rows near the viewport built. -->
+                             keeps only the rows near the viewport built. 334 is the
+                             row height these cards actually measure. -->
                         <controls:VirtualizingWrapPanel ItemWidth="274"
-                                                        EstimatedItemHeight="290"
+                                                        EstimatedItemHeight="334"
                                                         CacheViewports="0.75" />
                     </ItemsPanelTemplate>
                 </Setter.Value>
@@ -2802,10 +2803,16 @@
                             </StackPanel>
                         </Border>
 
-                        <ItemsControl ItemsSource="{Binding AvatarViewModel.GlobalResults}">
+                        <ItemsControl ItemsSource="{Binding AvatarViewModel.GlobalResults}"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <WrapPanel Orientation="Horizontal" />
+                                    <!-- Same bound as the uploaded grid: only the
+                                         cards near the viewport stay built. -->
+                                    <controls:VirtualizingWrapPanel ItemWidth="236"
+                                                                    EstimatedItemHeight="320"
+                                                                    CacheViewports="0.75" />
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
@@ -3148,10 +3155,16 @@
                         </StackPanel>
                     </Border>
 
-                    <ItemsControl ItemsSource="{Binding AvatarViewModel.FavoriteAvatars}">
+                    <ItemsControl ItemsSource="{Binding AvatarViewModel.FavoriteAvatars}"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <WrapPanel Orientation="Horizontal" />
+                                <!-- Same bound as the uploaded grid: only the
+                                     cards near the viewport stay built. -->
+                                <controls:VirtualizingWrapPanel ItemWidth="236"
+                                                                EstimatedItemHeight="320"
+                                                                CacheViewports="0.75" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
