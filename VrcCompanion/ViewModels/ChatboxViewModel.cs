@@ -3389,7 +3389,10 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _pollingMedia = true;
         try
         {
-            var track = await _nowPlaying.GetCurrentAsync().ConfigureAwait(true);
+            // The Windows media session API blocks while it reads the current
+            // session, and this poll runs every ten seconds: reading it on the
+            // UI thread froze the window for about half a second each time.
+            var track = await Task.Run(() => _nowPlaying.GetCurrentAsync()).ConfigureAwait(true);
             if (!Equals(track, CurrentTrack))
             {
                 CurrentTrack = track;

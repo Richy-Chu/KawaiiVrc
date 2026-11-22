@@ -29,6 +29,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     private ObservableCollection<ActivityEntry> _entries = new();
     private List<ActivityEntry> _allEntries = new();
     private IReadOnlyList<VrcUser>? _previousFriends;
+    private string? _previousFeedSignature;
     private ActivityType? _selectedFilter;
     private ActivityFilterOption? _selectedFilterOption;
     private string _searchQuery = string.Empty;
@@ -503,7 +504,10 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             DateTimeOffset.UtcNow,
             addEntry: true,
             updateCheckedAt: true);
-        SaveBioBaselines();
+        // The scanner runs every ten seconds and the baseline file holds every
+        // friend, so rewriting it on the UI thread froze the window on every
+        // tick. One background writer at a time is enough.
+        QueueBioBaselineSave();
 
         // A realtime event for a friend who was missing from the local roster is
         // still the first proof that they are online/friended. Build against an
@@ -812,6 +816,21 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     /// avatar changes show up from the background refresh instead of waiting
     /// for a full offline download.
     /// </summary>
+    private static string FeedSignature(IReadOnlyList<VrcUser> users)
+    {
+        var builder = new System.Text.StringBuilder(users.Count * 32);
+        foreach (var user in users)
+        {
+            builder.Append(user.Id).Append('|')
+                   .Append(user.Location).Append('|')
+                   .Append(user.Status).Append('|')
+                   .Append(user.StatusDescription).Append('|')
+                   .Append(user.CurrentAvatarImageUrl).Append('\n');
+        }
+
+        return builder.ToString();
+    }
+
     public void ApplyOnlineFriends(
         IReadOnlyList<VrcUser> friends,
         IReadOnlySet<string>? knownOfflineFriendIds = null)
@@ -872,6 +891,18 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         }
 
         var bioEntries = ObserveFriendBios(online, DateTimeOffset.UtcNow);
+        // Most polls see exactly the same people in exactly the same worlds.
+        // Rebuilding the page for that produced a visible freeze every poll,
+        // so an unchanged snapshot only refreshes the bookkeeping.
+        var signature = FeedSignature(current);
+        if (bioEntries.Count == 0 &&
+            string.Equals(signature, _previousFeedSignature, StringComparison.Ordinal))
+        {
+            _previousFriends = current;
+            return;
+        }
+
+        _previousFeedSignature = signature;
         SetFeed(current);
         if (bioEntries.Count > 0)
         {
@@ -993,6 +1024,28 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         HasLoaded = true;
         SaveHistory();
         return true;
+    }
+
+    private int _bioBaselineSavePending;
+
+    private void QueueBioBaselineSave()
+    {
+        if (Interlocked.Exchange(ref _bioBaselineSavePending, 1) == 1)
+        {
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                SaveBioBaselines();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _bioBaselineSavePending, 0);
+            }
+        });
     }
 
     /// <summary>

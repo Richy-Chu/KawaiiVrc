@@ -128,6 +128,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private InstanceHistoryRecorder? _instanceHistoryRecorder;
     private DispatcherTimer? _instanceHistoryTimer;
     private DispatcherTimer? _activityPollTimer;
+
+    // Signature of the last friend poll so an unchanged snapshot can skip the
+    // friend list and feed rebuild entirely.
+    private string? _lastFriendPollSignature;
     private bool _activityPollBusy;
     private DispatcherTimer? _bioPollTimer;
     private bool _bioPollBusy;
@@ -2911,6 +2915,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// cost one request per 100 friends, so only the fast-changing data is
     /// fetched here; the full download stays on startup and manual refresh.
     /// </summary>
+    private static string FriendPollSignature(IReadOnlyList<VrcUser> friends)
+    {
+        var builder = new System.Text.StringBuilder(friends.Count * 32);
+        foreach (var friend in friends)
+        {
+            builder.Append(friend.Id).Append('|')
+                   .Append(friend.Location).Append('|')
+                   .Append(friend.Status).Append('|')
+                   .Append(friend.StatusDescription).Append('|')
+                   .Append(friend.CurrentAvatarImageUrl).Append('\n');
+        }
+
+        return builder.ToString();
+    }
+
     private async void OnActivityPollTick(object? sender, EventArgs e)
     {
         if (!IsLoggedIn || IsBusy || _activityPollBusy || IsMainWindowMinimized())
@@ -2929,7 +2948,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            FriendAvatarStore.Shared.ObserveAll(CurrentUser?.Id, friends);
             var onlineIds = new HashSet<string>(
                 friends.Select(friend => friend.Id),
                 StringComparer.Ordinal);
@@ -2940,6 +2958,23 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 offlineIds = null;
             }
+
+            // Polls that return the same people in the same places used to
+            // rebuild every friend row and the whole activity page, which froze
+            // the window about once every ten seconds for no visible change.
+            var signature = FriendPollSignature(friends);
+            if (string.Equals(signature, _lastFriendPollSignature, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _lastFriendPollSignature = signature;
+
+            // The store re-reads its JSON file before deciding what changed, so
+            // it is both pointless and expensive when the poll saw the same
+            // people as last time. Off the UI thread because that read is disk.
+            var accountId = CurrentUser?.Id;
+            _ = Task.Run(() => FriendAvatarStore.Shared.ObserveAll(accountId, friends));
 
             // The Friends tab has to demote the same people the Activity feed
             // does; otherwise a friend who left can stay green until a manual
