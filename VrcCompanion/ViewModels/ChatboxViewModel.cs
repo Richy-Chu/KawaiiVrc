@@ -3415,13 +3415,21 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         }
 
         _pollingIntegrations = true;
+        // The probes below read NIC and component counters, which block for
+        // hundreds of milliseconds. They run on the pool so the window keeps
+        // painting instead of freezing for the length of a poll.
+        _ = PollIntegrationsAsync();
+    }
+
+    private async Task PollIntegrationsAsync()
+    {
         try
         {
             var changed = false;
 
             if (IsProviderEnabled("Network"))
             {
-                var network = _networkStats.Poll();
+                var network = await Task.Run(() => _networkStats.Poll()).ConfigureAwait(true);
                 changed |= UpdateText(ref _networkText, network is null
                     ? string.Empty
                     : ChatboxTemplate.Format(
@@ -3436,7 +3444,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
             if (IsProviderEnabled("ComponentStats"))
             {
-                var system = _systemStats.Poll();
+                var system = await Task.Run(() => _systemStats.Poll()).ConfigureAwait(true);
                 changed |= UpdateText(ref _componentText, system is null
                     ? string.Empty
                     : ChatboxTemplate.Format(
@@ -3455,7 +3463,7 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
             if (IsProviderEnabled("VrcRadar"))
             {
-                var radar = _radarService.Poll();
+                var radar = await Task.Run(() => _radarService.Poll()).ConfigureAwait(true);
                 changed |= UpdateText(ref _radarText, radar is null
                     ? string.Empty
                     : ChatboxTemplate.Format(

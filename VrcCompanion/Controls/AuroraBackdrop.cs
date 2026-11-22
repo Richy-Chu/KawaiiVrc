@@ -314,7 +314,10 @@ public sealed class AuroraBackdrop : FrameworkElement
     {
         var now = Stopwatch.GetTimestamp();
         var elapsed = now - _lastFrameTicks;
-        if (elapsed < Stopwatch.Frequency / 15)
+        // 10 fps: a full-window repaint is the most expensive thing that runs
+        // while the window is idle, and the aurora fields move slowly enough
+        // that the difference is not visible.
+        if (elapsed < Stopwatch.Frequency / 10)
         {
             return;
         }

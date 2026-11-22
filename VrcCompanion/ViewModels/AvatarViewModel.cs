@@ -40,7 +40,15 @@ public sealed class AvatarViewModel : ViewModelBase
     private readonly HashSet<string> _localFavoriteIds = new(StringComparer.Ordinal);
     private bool _favoritesLoaded;
     private bool _favoritesLoading;
-    private const int FavoriteFetchBatch = 6;
+
+    // The in-flight favourites load, if any. It replaces every record, so an
+    // add or remove has to wait for it before writing.
+    private Task? _favoritesLoad;
+    // Each favourite needs its own avatar call, so the list used to fill in
+    // groups of six while the rest waited their turn. Sixteen at a time keeps
+    // well inside the API's limits and cuts the wait for a large list by more
+    // than half.
+    private const int FavoriteFetchBatch = 16;
 
     // The account's complete avatar library; the grid shows a filtered view of it.
     private List<Avatar> _library = new();
@@ -975,6 +983,9 @@ public sealed class AvatarViewModel : ViewModelBase
         ErrorMessage = null;
         try
         {
+            // A load that finishes after this add would clear the record again.
+            await EnsureFavoritesAsync();
+
             var isVrchatFavorite = false;
             if (string.Equals(tag, "local", StringComparison.Ordinal))
             {
@@ -2047,6 +2058,9 @@ public sealed class AvatarViewModel : ViewModelBase
         ErrorMessage = null;
         try
         {
+            // Opening the slot picker must not wait on the network, so the load
+            // is only joined here when nothing is in flight; a load that is
+            // already running cannot be extended without delaying the picker.
             if (!_favoritesLoaded && !_favoritesLoading)
             {
                 await EnsureFavoritesAsync();
@@ -2288,13 +2302,22 @@ public sealed class AvatarViewModel : ViewModelBase
     }
 
     /// <summary>Loads the account's favourites without waiting for the avatar library.</summary>
-    public async Task EnsureFavoritesAsync()
+    public Task EnsureFavoritesAsync()
     {
-        if (_favoritesLoaded || _favoritesLoading)
+        if (_favoritesLoaded)
         {
-            return;
+            return Task.CompletedTask;
         }
 
+        // Callers that are already loading share the same task instead of
+        // returning early: a caller that is about to change a favourite needs
+        // to know when the record set has been replaced, otherwise the load
+        // can land afterwards and wipe the record the change just wrote.
+        return _favoritesLoad ??= LoadFavoritesCoreAsync();
+    }
+
+    private async Task LoadFavoritesCoreAsync()
+    {
         _favoritesLoading = true;
         OnPropertyChanged(nameof(FavoritesLoadingText));
         try
@@ -2328,6 +2351,7 @@ public sealed class AvatarViewModel : ViewModelBase
         }
         finally
         {
+            _favoritesLoad = null;
             _favoritesLoading = false;
             OnPropertyChanged(nameof(FavoritesLoadingText));
             OnPropertyChanged(nameof(HasFavorites));

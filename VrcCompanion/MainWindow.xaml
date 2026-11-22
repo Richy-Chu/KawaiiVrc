@@ -11692,11 +11692,14 @@
                     </Grid>
 
                     <Grid Grid.Row="2" Margin="16,6,16,8">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                      HorizontalScrollBarVisibility="Disabled"
-                                      Padding="4,0,4,0">
-                            <ItemsControl ItemsSource="{Binding EntriesView}">
-                                <ItemsControl.ItemTemplate>
+                        <!-- A ListBox rather than an ItemsControl in a ScrollViewer:
+                             the page rows are only realised as they scroll into
+                             view instead of every row being built at once. -->
+                        <ListBox Style="{StaticResource BareListBox}"
+                                 ItemsSource="{Binding EntriesView}"
+                                 Padding="4,0,4,0"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Border Style="{StaticResource ListRow}"
                                                 Padding="10,8"
@@ -11870,9 +11873,8 @@
                                             </Grid>
                                         </Border>
                                     </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
+                                </ListBox.ItemTemplate>
+                        </ListBox>
 
                         <Border Style="{StaticResource EmptyStateCard}"
                                 VerticalAlignment="Center"

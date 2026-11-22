@@ -3375,9 +3375,29 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         PushBusy(refreshUser ? "Refreshing your VRChat data…" : "Loading your VRChat data…");
         try
         {
-            if (refreshUser)
+            // These three requests do not need each other's results, and launch
+            // used to pay for them one after another: about three round trips.
+            // Starting them together leaves the slowest one as the cost.
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            var userTask = refreshUser ? _api.GetCurrentUserAsync() : null;
+            var friendsTask = _api.GetFriendsAsync(
+                forceRefresh: true,
+                onlineOnly: true,
+                onPartial: partial => UpdateFriends(partial, keepMissing: true));
+            var notificationsTask = _api.GetNotificationsAsync();
+
+            var pending = new List<Task> { friendsTask, notificationsTask };
+            if (userTask is not null)
             {
-                var result = await _api.GetCurrentUserAsync();
+                pending.Insert(0, userTask);
+            }
+
+            await Task.WhenAll(pending).ConfigureAwait(true);
+            var fetchedIn = started.ElapsedMilliseconds;
+
+            if (userTask is not null)
+            {
+                var result = await userTask;
                 if (result.User is null)
                 {
                     SignOutLocally("Your VRChat session expired. Sign in again.");
@@ -3390,10 +3410,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             // Only fast-changing data blocks the UI: current user, online friends
             // and notifications. Offline friends stream in after the overlay clears.
-            var friends = await _api.GetFriendsAsync(
-                forceRefresh: true,
-                onlineOnly: true,
-                onPartial: partial => UpdateFriends(partial, keepMissing: true));
+            var friends = await friendsTask;
 
             // Anyone missing from the online set has gone offline; demote them
             // instead of leaving a stale "Online" badge until the next full load.
@@ -3406,11 +3423,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 }
             }
 
-            var notifications = await _api.GetNotificationsAsync();
+            var notifications = await notificationsTask;
 
             UpdateFriends(friends, keepMissing: true);
             ActivityFeedViewModel?.ApplyOnlineFriends(friends);
             UpdateNotifications(notifications);
+
+            Services.LifecycleLog.Write(
+                $"refresh: fetched={fetchedIn}ms total={started.ElapsedMilliseconds}ms friends={friends.Count} notifications={notifications.Count}");
 
             _lastUpdated = DateTimeOffset.Now;
             OnPropertyChanged(nameof(LastUpdatedText));

@@ -51,6 +51,12 @@ public sealed class VrcApiClient : IDisposable
     private readonly HttpClient _http;
     private readonly SessionStore _sessionStore;
     private readonly SemaphoreSlim _requestGate = new(1, 1);
+
+    // Avatar detail lookups are independent, read-only requests. Queuing them
+    // behind the one-at-a-time spacing gate made a list of favourites fill in
+    // one avatar every 200 ms; a small parallel gate is still polite to the API
+    // and lets the whole list arrive together.
+    private readonly SemaphoreSlim _avatarReadGate = new(4, 4);
     private readonly SemaphoreSlim _avatarMutationGate = new(1, 1);
     private DateTimeOffset _lastAvatarMutationAt = DateTimeOffset.MinValue;
     private readonly ConcurrentDictionary<string, CacheEntry<VrcWorld>> _worldCache = new(StringComparer.Ordinal);
@@ -3639,7 +3645,11 @@ public sealed class VrcApiClient : IDisposable
         CancellationToken cancellationToken,
         string? basicAuthToken = null)
     {
-        await _requestGate.WaitAsync(cancellationToken);
+        var parallelRead = method == HttpMethod.Get &&
+                           content is null &&
+                           path.StartsWith("avatars/", StringComparison.Ordinal);
+        var gate = parallelRead ? _avatarReadGate : _requestGate;
+        await gate.WaitAsync(cancellationToken);
         try
         {
             for (var attempt = 0; ; attempt++)
@@ -3650,13 +3660,16 @@ public sealed class VrcApiClient : IDisposable
                     request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basicAuthToken);
                 }
 
-                var elapsed = DateTimeOffset.UtcNow - _lastRequestAt;
-                if (elapsed < MinimumRequestInterval)
+                if (!parallelRead)
                 {
-                    await Task.Delay(MinimumRequestInterval - elapsed, cancellationToken);
-                }
+                    var elapsed = DateTimeOffset.UtcNow - _lastRequestAt;
+                    if (elapsed < MinimumRequestInterval)
+                    {
+                        await Task.Delay(MinimumRequestInterval - elapsed, cancellationToken);
+                    }
 
-                _lastRequestAt = DateTimeOffset.UtcNow;
+                    _lastRequestAt = DateTimeOffset.UtcNow;
+                }
                 using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
@@ -3679,7 +3692,7 @@ public sealed class VrcApiClient : IDisposable
         }
         finally
         {
-            _requestGate.Release();
+            gate.Release();
         }
     }
 

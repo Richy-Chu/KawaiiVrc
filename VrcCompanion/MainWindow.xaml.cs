@@ -804,9 +804,13 @@ public partial class MainWindow : Window
         {
             try
             {
-                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                // A blocking full collect freezes every thread in the process
+                // for the length of the sweep, which read as a UI stall every
+                // time the trim ran. The working-set trim below is what gives
+                // the memory back to Windows, so the collect only needs to
+                // hint.
+                GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
                 GC.WaitForPendingFinalizers();
-                GC.Collect(2, GCCollectionMode.Forced, blocking: false, compacting: false);
                 using var process = Process.GetCurrentProcess();
                 EmptyWorkingSet(process.Handle);
             }
