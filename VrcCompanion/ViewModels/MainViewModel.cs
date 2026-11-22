@@ -2680,6 +2680,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         if (!_api.HasSavedSession)
         {
+            Services.LifecycleLog.Write($"init: no saved session at {_api.SessionFilePath}");
             return;
         }
 

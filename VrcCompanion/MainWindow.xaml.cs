@@ -103,12 +103,14 @@ public partial class MainWindow : Window
         }
 
         LifecycleLog.Write($"window-loaded {Program.Startup.ElapsedMilliseconds}ms");
+        await _viewModel.InitializeAsync();
         _refreshTimer.Start();
 
         if (!_viewModel.IsLoggedIn && !_viewModel.IsTwoFactorRequired)
         {
             UsernameBox.Focus();
         }
+
     }
 
     private async void OnRefreshTimerTick(object? sender, EventArgs e)

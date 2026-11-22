@@ -101,6 +101,9 @@ public sealed class VrcApiClient : IDisposable
 
     public bool HasSavedSession => _sessionStore.Exists;
 
+    /// <summary>Where the session is kept, for diagnostics in the lifecycle log.</summary>
+    public string SessionFilePath => _sessionStore.FilePath;
+
     // ---------------------------------------------------------------- auth
 
     public async Task<LoginResult> LoginAsync(string username, string password, CancellationToken cancellationToken = default)

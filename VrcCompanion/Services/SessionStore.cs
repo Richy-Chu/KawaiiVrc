@@ -30,6 +30,8 @@ public sealed class SessionStore
         _path = Path.Combine(_directory, "session.dat");
     }
 
+    public string FilePath => _path;
+
     public bool Exists
     {
         get
