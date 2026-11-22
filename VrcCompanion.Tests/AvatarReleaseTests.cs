@@ -29,12 +29,30 @@ public class AvatarReleaseTests
         // The rows go with the page...
         Assert.Empty(vm.FavoriteAvatars);
         Assert.Empty(vm.FavoriteSlots);
-        Assert.Empty(vm.FavoriteSlotChoices);
 
         // ...but the record set stays, so stars in the library, the details panel
         // and the slot picker still see this avatar as favourited.
         Assert.True(vm.HasFavorites);
         Assert.True(favourite.IsFavorite);
+    }
+
+    [Fact]
+    public void SlotPickerStillOffersEverySlotAfterFavouritesAreReleased()
+    {
+        using var api = new VrcApiClient();
+        var vm = new AvatarViewModel(api);
+        var favourite = new Avatar { Id = "avtr_fav", Name = "Favourite" };
+        vm.SeedLibraryForTests(new[] { favourite });
+        vm.SeedFavoritesForTests(new[] { favourite });
+
+        vm.ReleaseFavoritesData();
+        vm.OpenSlotPickerForTests("avtr_fav");
+
+        // The picker used to come up as an empty dialog when its rows were
+        // cleared while it was still on screen.
+        Assert.True(vm.IsSlotPickerOpen);
+        Assert.Equal(5, vm.FavoriteSlotChoices.Count);
+        Assert.Equal("avatars1", vm.FavoriteSlotChoices[0].Tag);
     }
 
     [Fact]

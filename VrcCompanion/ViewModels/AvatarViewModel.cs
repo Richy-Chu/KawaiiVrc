@@ -907,7 +907,18 @@ public sealed class AvatarViewModel : ViewModelBase
     public bool IsSlotPickerOpen
     {
         get => _isSlotPickerOpen;
-        private set => SetProperty(ref _isSlotPickerOpen, value);
+        private set
+        {
+            if (value && FavoriteSlotChoices.Count == 0)
+            {
+                // The list is rebuilt on every open so VRC+ status is current;
+                // rebuilding here as well means a picker that is shown without
+                // them can never come up as an empty dialog.
+                BuildFavoriteSlotChoices();
+            }
+
+            SetProperty(ref _isSlotPickerOpen, value);
+        }
     }
 
     public string PendingFavoriteAvatarName
@@ -936,27 +947,33 @@ public sealed class AvatarViewModel : ViewModelBase
 
         // Rebuilt every time so the list reflects VRC+ status right now (the
         // account can be upgraded mid-session).
-        {
-            FavoriteSlotChoices.Clear();
-            for (var slot = 1; slot <= 4; slot++)
-            {
-                var locked = slot > 1 && !IsVrcPlusAccount;
-                FavoriteSlotChoices.Add(new FavoriteSlotChoice(
-                    $"Slot {slot}",
-                    $"avatars{slot}",
-                    slot == 1
-                        ? "Always available"
-                        : locked ? "Needs VRC+ — not available on this account" : "VRC+ slot",
-                    locked));
-            }
-
-            FavoriteSlotChoices.Add(new FavoriteSlotChoice("Local (unlimited)", "local", "Kept by the app, no VRChat limit", false));
-        }
+        BuildFavoriteSlotChoices();
 
         SlotPickerMessage = IsVrcPlusAccount
             ? string.Empty
             : "Slots 2–4 need VRC+. Without it they cannot be saved to VRChat — use Slot 1 or Local.";
         IsSlotPickerOpen = true;
+    }
+
+    /// <summary>Test seam: opens the slot picker without going through a command.</summary>
+    internal void OpenSlotPickerForTests(string avatarId) => BeginFavorite(avatarId);
+
+    private void BuildFavoriteSlotChoices()
+    {
+        FavoriteSlotChoices.Clear();
+        for (var slot = 1; slot <= 4; slot++)
+        {
+            var locked = slot > 1 && !IsVrcPlusAccount;
+            FavoriteSlotChoices.Add(new FavoriteSlotChoice(
+                $"Slot {slot}",
+                $"avatars{slot}",
+                slot == 1
+                    ? "Always available"
+                    : locked ? "Needs VRC+ — not available on this account" : "VRC+ slot",
+                locked));
+        }
+
+        FavoriteSlotChoices.Add(new FavoriteSlotChoice("Local (unlimited)", "local", "Kept by the app, no VRChat limit", false));
     }
 
     private async Task ChooseFavoriteSlotAsync(string? tag)
@@ -1603,7 +1620,6 @@ public sealed class AvatarViewModel : ViewModelBase
         _favoritesGeneration++;
         FavoriteAvatars.Clear();
         FavoriteSlots.Clear();
-        FavoriteSlotChoices.Clear();
         UnresolvedFavoriteIds.Clear();
         _favoriteAvatars.Clear();
         _failedFavoriteIds.Clear();

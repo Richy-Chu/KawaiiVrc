@@ -17,10 +17,16 @@ public sealed class SessionStore
     private readonly string _path;
 
     public SessionStore()
-    {
-        _directory = Path.Combine(
+        : this(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "VrcCompanion");
+            "VrcCompanion"))
+    {
+    }
+
+    /// <summary>Test seam: keeps the suite away from the real profile.</summary>
+    internal SessionStore(string directory)
+    {
+        _directory = directory;
         _path = Path.Combine(_directory, "session.dat");
     }
 
@@ -61,9 +67,12 @@ public sealed class SessionStore
             // the old session or the new one, never a truncated file.
             AtomicFile.WriteAllBytes(_path, encrypted);
         }
-        catch
+        catch (Exception ex)
         {
-            // A failure to remember the session should never block sign-in.
+            // A failure to remember the session should never block sign-in, but
+            // it must be visible: this is how an account ends up signed out on
+            // the next launch.
+            LifecycleLog.Write($"session: save failed {ex.GetType().Name}");
         }
     }
 
@@ -81,11 +90,12 @@ public sealed class SessionStore
             var session = JsonSerializer.Deserialize<StoredSession>(payload);
             return string.IsNullOrWhiteSpace(session?.AuthCookie) ? null : session.AuthCookie;
         }
-        catch
+        catch (Exception ex)
         {
             // Keep the file: a decrypt that failed once (a profile still loading,
             // a locked read) is not proof that the session is gone, and deleting
             // it would sign the account out for good.
+            LifecycleLog.Write($"session: unreadable file kept {ex.GetType().Name}");
             return null;
         }
     }
