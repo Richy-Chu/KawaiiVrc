@@ -505,8 +505,11 @@ public class PagerLayoutTests
         }
 
         var items = context.GetType().GetProperty("Items")?.GetValue(context) as System.Collections.ICollection;
+        var path = System.Windows.Data.BindingOperations
+            .GetBinding(pager, FrameworkElement.DataContextProperty)
+            ?.Path?.Path ?? "?";
         return $"{context.GetType().Name} hash={RuntimeHelpers.GetHashCode(context)} " +
-               $"items={items?.Count.ToString() ?? "?"}";
+               $"items={items?.Count.ToString() ?? "?"} binding={path}";
     }
 
     private static void ClickNext(ListPager pager)

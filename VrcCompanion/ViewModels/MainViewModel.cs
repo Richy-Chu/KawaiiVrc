@@ -2775,7 +2775,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 // VRChat just accepted: that looked like a failed sign-in and
                 // sent the user back to the login screen.
                 Debug.WriteLine(ex);
-                Services.LifecycleLog.Write($"init: current-user apply failed {ex.GetType().Name}");
+                var detail = ex.ToString().Replace("\r", " ").Replace("\n", " | ");
+                if (detail.Length > 2000)
+                {
+                    detail = detail[..2000];
+                }
+                Services.LifecycleLog.Write($"init: current-user apply failed: {detail}");
                 CurrentUser ??= user;
             }
             Services.LifecycleLog.Write($"init: current-user {Program.Startup.ElapsedMilliseconds}ms");
@@ -3511,6 +3516,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void LoadFriendChangesFromHistory(IReadOnlyList<ActivityEntry> entries)
     {
+        // The history warm-up can complete on a worker thread, and FriendChanges
+        // is bound to a CollectionView that only accepts dispatcher changes.
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(() => LoadFriendChangesFromHistory(entries)));
+            return;
+        }
+
         FriendChanges.Clear();
         foreach (var entry in entries
                      .Where(entry => entry.Type is ActivityType.FriendAdded or ActivityType.FriendRemoved)

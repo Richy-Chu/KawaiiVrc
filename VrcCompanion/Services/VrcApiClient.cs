@@ -212,6 +212,18 @@ public sealed class VrcApiClient : IDisposable
             ClearAuthCookie();
             return null;
         }
+        catch (VrcApiException ex) when (ex.StatusCode == 0)
+        {
+            // A garbled account response is not a rejection. Keep the cookie so
+            // the next launch can retry instead of signing the user out.
+            ClearAuthCookie();
+            return null;
+        }
+        catch (JsonException)
+        {
+            ClearAuthCookie();
+            return null;
+        }
     }
 
     public void SaveSession()

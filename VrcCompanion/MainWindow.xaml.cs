@@ -649,6 +649,10 @@ public partial class MainWindow : Window
                 : Visibility.Collapsed;
         }
 
+        Services.LifecycleLog.Write(
+            $"section: {key} shown={_shownSectionKey} " +
+            $"visible=[{string.Join(",", _sectionViews.Where(pair => pair.Value.Visibility == Visibility.Visible).Select(pair => pair.Key))}]");
+
         // The leave hook trusts the previous-section key, which can be stale if
         // the selection moved twice before layout settled. Sweep cached avatar
         // sections so their library is handed back regardless.
@@ -708,7 +712,19 @@ public partial class MainWindow : Window
     private void ReleaseAvatarData(string key)
     {
         CancelDataRelease(key);
-        if (!_viewModel.ReleaseSectionData(key, LiveSectionKeys()))
+        // The section being released never counts as live, even if the selected
+        // key and the cached-view bookkeeping briefly disagree during a switch.
+        var liveKeys = LiveSectionKeys()
+            .Where(candidate => !string.Equals(candidate, key, StringComparison.Ordinal))
+            .ToList();
+        var released = _viewModel.ReleaseSectionData(key, liveKeys);
+        Services.LifecycleLog.Write(
+            $"avatar-release: {key} released={released} " +
+            $"busy={_viewModel.AvatarViewModel?.IsBusy} " +
+            $"rows={_viewModel.AvatarViewModel?.Avatars.Count} " +
+            $"selected={_viewModel.SelectedSection.Key} live=[{string.Join(",", liveKeys)}] " +
+            $"cached=[{string.Join(",", _sectionViews.Keys)}]");
+        if (!released)
         {
             // The library was still arriving; hand it back once it has landed.
             ScheduleDataRelease(key, AvatarReleaseRetryDelay);
@@ -782,7 +798,16 @@ public partial class MainWindow : Window
                 }
 
                 _pendingReleases.Remove(key);
-                _viewModel.ReleaseSectionData(key, LiveSectionKeys());
+                var liveKeys = LiveSectionKeys()
+                    .Where(candidate => !string.Equals(candidate, key, StringComparison.Ordinal))
+                    .ToList();
+                if (!_viewModel.ReleaseSectionData(key, liveKeys))
+                {
+                    // A retry can land while the library is still busy. Keeping
+                    // the retry armed is what makes the release eventually happen.
+                    ScheduleDataRelease(key, AvatarReleaseRetryDelay);
+                }
+
                 ScheduleSettle();
             });
         });
