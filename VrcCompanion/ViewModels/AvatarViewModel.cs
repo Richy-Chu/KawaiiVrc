@@ -39,6 +39,7 @@ public sealed class AvatarViewModel : ViewModelBase
     private readonly HashSet<string> _failedFavoriteIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _localFavoriteIds = new(StringComparer.Ordinal);
     private bool _favoritesLoaded;
+    private int _favoritesGeneration;
     private bool _favoritesLoading;
 
     // The in-flight favourites load, if any. It replaces every record, so an
@@ -1539,11 +1540,33 @@ public sealed class AvatarViewModel : ViewModelBase
     /// binds its own rows and is not touched. The next visit reloads because
     /// HasLoaded is reset.
     /// </summary>
-    public void ReleaseLibraryData()
+    public void ReleaseLibraryData(bool keepFavoriteRows)
     {
         if (IsBusy)
         {
             return;
+        }
+
+        if (keepFavoriteRows)
+        {
+            // The Favourites page can still be on screen and resolves its rows
+            // from the library first, so hand it just those avatars before the
+            // rest of the library goes; otherwise its list would shrink the next
+            // time it rebuilds.
+            var byId = new Dictionary<string, Avatar>(StringComparer.Ordinal);
+            foreach (var avatar in _library)
+            {
+                byId[avatar.Id] = avatar;
+            }
+
+            foreach (var favoriteId in _favoriteRecords.Keys.Concat(_localFavoriteIds))
+            {
+                if (byId.TryGetValue(favoriteId, out var avatar) &&
+                    !_favoriteAvatars.ContainsKey(favoriteId))
+                {
+                    _favoriteAvatars[favoriteId] = avatar;
+                }
+            }
         }
 
         SelectedAvatar = null;
@@ -1564,7 +1587,12 @@ public sealed class AvatarViewModel : ViewModelBase
         GlobalResults.ReplaceAll(Array.Empty<Avatar>());
     }
 
-    /// <summary>Drops the favourite rows and their slot state.</summary>
+    /// <summary>
+    /// Drops the favourite rows, slot counts and fetched details, but keeps the
+    /// record set itself: stars in the library, the avatar details panel and the
+    /// slot picker all read <see cref="_favoriteRecords"/>, and clearing it here
+    /// would show unfavourited stars everywhere until the next reload.
+    /// </summary>
     public void ReleaseFavoritesData()
     {
         if (_favoritesLoading)
@@ -1572,11 +1600,13 @@ public sealed class AvatarViewModel : ViewModelBase
             return;
         }
 
+        _favoritesGeneration++;
         FavoriteAvatars.Clear();
         FavoriteSlots.Clear();
-        _favoriteRecords.Clear();
-        _localFavoriteIds.Clear();
+        FavoriteSlotChoices.Clear();
         UnresolvedFavoriteIds.Clear();
+        _favoriteAvatars.Clear();
+        _failedFavoriteIds.Clear();
         _favoritesLoaded = false;
     }
 
@@ -2290,6 +2320,7 @@ public sealed class AvatarViewModel : ViewModelBase
     /// </summary>
     private async Task HydrateFavoriteAvatarsAsync()
     {
+        var generation = _favoritesGeneration;
         var libraryIds = new HashSet<string>(_library.Select(avatar => avatar.Id), StringComparer.Ordinal);
         var ids = new HashSet<string>(_favoriteRecords.Keys, StringComparer.Ordinal);
         ids.UnionWith(_localFavoriteIds);
@@ -2322,6 +2353,12 @@ public sealed class AvatarViewModel : ViewModelBase
                         return (Id: id, Avatar: (Avatar?)null);
                     }
                 }));
+
+                if (generation != _favoritesGeneration)
+                {
+                    // The rows were released while this batch was in flight.
+                    return;
+                }
 
                 foreach (var (id, avatar) in fetched)
                 {

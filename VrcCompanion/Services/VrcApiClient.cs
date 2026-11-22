@@ -193,7 +193,8 @@ public sealed class VrcApiClient : IDisposable
             var result = await GetCurrentUserAsync(cancellationToken);
             if (result.User is null)
             {
-                _sessionStore.Clear();
+                // An empty body is not a rejection. Keep the saved session so the
+                // next launch can retry instead of starting signed out for good.
                 ClearAuthCookie();
                 return null;
             }

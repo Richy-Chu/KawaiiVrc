@@ -151,7 +151,7 @@ public sealed class MultiAccountService : IDisposable
                 Encoding.UTF8.GetBytes(authCookie),
                 Entropy,
                 DataProtectionScope.CurrentUser);
-            File.WriteAllBytes(path, encrypted);
+            AtomicFile.WriteAllBytes(path, encrypted);
         }
         catch { /* Best effort */ }
     }
@@ -200,7 +200,7 @@ public sealed class MultiAccountService : IDisposable
             };
             var path = Path.Combine(_accountsDirectory, ActiveAccountFile);
             Directory.CreateDirectory(_accountsDirectory);
-            File.WriteAllText(path, JsonSerializer.Serialize(data, JsonOptions));
+            AtomicFile.WriteAllText(path, JsonSerializer.Serialize(data, JsonOptions));
         }
         catch { /* Best effort */ }
     }
@@ -227,7 +227,7 @@ public sealed class MultiAccountService : IDisposable
         {
             var path = Path.Combine(_accountsDirectory, $"{accountId}.json");
             Directory.CreateDirectory(_accountsDirectory);
-            File.WriteAllText(path, JsonSerializer.Serialize(profile, JsonOptions));
+            AtomicFile.WriteAllText(path, JsonSerializer.Serialize(profile, JsonOptions));
         }
         catch { /* Best effort */ }
     }

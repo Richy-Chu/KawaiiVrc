@@ -41,6 +41,13 @@ public sealed class SessionStore
 
     public void Save(string authCookie)
     {
+        // Never replace a working session with nothing: a rotation that comes
+        // back empty would otherwise sign the account out on the next launch.
+        if (string.IsNullOrWhiteSpace(authCookie))
+        {
+            return;
+        }
+
         try
         {
             Directory.CreateDirectory(_directory);
@@ -50,7 +57,9 @@ public sealed class SessionStore
                 SavedAt = DateTimeOffset.UtcNow
             });
             var encrypted = ProtectedData.Protect(payload, Entropy, DataProtectionScope.CurrentUser);
-            File.WriteAllBytes(_path, encrypted);
+            // Staged and flushed before the rename, so a force-kill leaves either
+            // the old session or the new one, never a truncated file.
+            AtomicFile.WriteAllBytes(_path, encrypted);
         }
         catch
         {
@@ -74,8 +83,9 @@ public sealed class SessionStore
         }
         catch
         {
-            // Corrupt or inaccessible data: forget it.
-            Clear();
+            // Keep the file: a decrypt that failed once (a profile still loading,
+            // a locked read) is not proof that the session is gone, and deleting
+            // it would sign the account out for good.
             return null;
         }
     }

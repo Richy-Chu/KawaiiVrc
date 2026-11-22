@@ -10,6 +10,24 @@ namespace VrcCompanion.Services;
 /// </summary>
 internal static class AtomicFile
 {
+    public static void WriteAllBytes(string path, byte[] contents)
+    {
+        var temporary = path + ".tmp";
+
+        using (var stream = new FileStream(
+            temporary,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.Read | FileShare.Delete))
+        {
+            stream.Write(contents, 0, contents.Length);
+            // A force-kill must not leave a half-written file behind the rename.
+            stream.Flush(flushToDisk: true);
+        }
+
+        File.Move(temporary, path, overwrite: true);
+    }
+
     public static void WriteAllText(string path, string contents)
     {
         var temporary = path + ".tmp";

@@ -985,7 +985,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             case "avatarsearch":
                 if (!liveKeys.Contains("avatars") && !liveKeys.Contains("avatarsearch"))
                 {
-                    AvatarViewModel?.ReleaseLibraryData();
+                    AvatarViewModel?.ReleaseLibraryData(keepFavoriteRows: liveKeys.Contains("favorites"));
                 }
                 if (!liveKeys.Contains("avatarsearch"))
                 {
