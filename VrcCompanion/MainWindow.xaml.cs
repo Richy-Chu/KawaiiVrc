@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private readonly bool _initializeOnLoad;
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _backgroundTrimTimer;
+    private readonly UiStallMonitor _stallMonitor;
     private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
     private readonly List<string> _sectionOrder = new();
     private const int MaxCachedSectionViews = 4;
@@ -75,6 +76,16 @@ public partial class MainWindow : Window
         Deactivated += OnWindowDeactivated;
         Activated += OnWindowActivated;
         StateChanged += OnWindowStateChanged;
+
+        // A background-priority timer that only ticks when the dispatcher is
+        // free: the gap between ticks is exactly the time the UI could not
+        // respond. Started before the window shows so startup freezes are
+        // recorded too, and quiet while minimised where none of it is visible.
+        _stallMonitor = new UiStallMonitor(
+            milliseconds => LifecycleLog.Write($"ui stall {milliseconds}ms"),
+            () => WindowState == WindowState.Minimized);
+        _stallMonitor.Start();
+
         LifecycleLog.Write($"window-ready {Program.Startup.ElapsedMilliseconds}ms");
     }
 
@@ -834,6 +845,7 @@ public partial class MainWindow : Window
         _isClosed = true;
         _refreshTimer.Stop();
         _backgroundTrimTimer.Stop();
+        _stallMonitor.Dispose();
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)
