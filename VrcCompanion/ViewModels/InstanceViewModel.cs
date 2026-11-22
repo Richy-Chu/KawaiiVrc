@@ -102,10 +102,20 @@ public sealed class InstanceViewModel : ViewModelBase
         get => _instance;
         private set
         {
-            if (SetProperty(ref _instance, value))
+            var previousLocation = _instance?.Location;
+            if (!SetProperty(ref _instance, value))
             {
-                OnAllPropertiesChanged();
+                return;
             }
+
+            // A live refresh of the same world must not move the reader; a
+            // different world starts its roster at the first page.
+            if (!string.Equals(previousLocation, value?.Location, StringComparison.Ordinal))
+            {
+                PlayersPage.ResetPage();
+            }
+
+            OnAllPropertiesChanged();
         }
     }
 
@@ -141,7 +151,7 @@ public sealed class InstanceViewModel : ViewModelBase
         {
             if (SetProperty(ref _playerSearch, value ?? string.Empty))
             {
-                RefreshPlayersView();
+                RefreshPlayersView(resetPage: true);
             }
         }
     }
@@ -620,6 +630,7 @@ public sealed class InstanceViewModel : ViewModelBase
         IsLoading = false;
         IsResolvingProfiles = false;
         PlayerSearch = string.Empty;
+        PlayersPage.Clear();
         _lastUpdated = null;
         _lastCurrentUser = null;
         _lastFriends = Array.Empty<FriendItem>();
@@ -1299,10 +1310,12 @@ public sealed class InstanceViewModel : ViewModelBase
         OnPropertyChanged(nameof(PlayerListNotice));
     }
 
-    private void RefreshPlayersView()
+    private void RefreshPlayersView(bool resetPage = false)
     {
         _playersView.Refresh();
-        PlayersPage.SetSource(_playersView.Cast<InstancePlayerItem>(), resetPage: true);
+        // Live joins and leaves update the rows without moving the reader off
+        // the page they are reading; search and a new world reset it.
+        PlayersPage.SetSource(_playersView.Cast<InstancePlayerItem>(), resetPage);
         OnPropertyChanged(nameof(HasVisiblePlayers));
         OnPropertyChanged(nameof(PlayersSummary));
         OnPropertyChanged(nameof(PlayersEmptyMessage));

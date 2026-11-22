@@ -62,8 +62,12 @@ public class AvatarTabSwitchTests
             window.Show();
 
             Select(shell, window, "avatars");
+            Assert.Equal("avatars", shell.SelectedSection.Key);
+            Assert.Equal("avatars", ShownSectionKey(window));
             TestHooks.SetAvatarBusy(shell.AvatarViewModel!, true);
             Select(shell, window, "friends");
+            Assert.Equal("friends", shell.SelectedSection.Key);
+            Assert.Equal("friends", ShownSectionKey(window));
 
             // Still downloading, so this pass has to leave the rows alone.
             Assert.NotEmpty(shell.AvatarViewModel!.Avatars);
@@ -72,7 +76,7 @@ public class AvatarTabSwitchTests
 
             Assert.True(
                 WaitUntil(() => shell.AvatarViewModel!.Avatars.Count == 0),
-                "the deferred release never retried, so a library that was still loading stayed resident");
+                DescribeRefusedRelease(shell, window));
 
             window.Close();
         });
@@ -630,18 +634,55 @@ public class AvatarTabSwitchTests
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
     }
 
-    private static bool WaitUntil(Func<bool> condition, int timeoutMs = 3000)
+    private static string ShownSectionKey(MainWindow window)
+        => (string?)typeof(MainWindow)
+            .GetField(
+                "_shownSectionKey",
+                System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)
+            ?.GetValue(window) ?? string.Empty;
+
+    private static string DescribeRefusedRelease(MainViewModel shell, MainWindow window)
+    {
+        var pending = (System.Collections.IDictionary?)typeof(MainWindow)
+            .GetField(
+                "_pendingReleases",
+                System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)
+            ?.GetValue(window);
+        var keys = pending is null ? "?" : string.Join(",", pending.Keys.Cast<object>());
+        return "the deferred release never retried, so a library that was still loading stayed resident. " +
+               $"rows={shell.AvatarViewModel!.Avatars.Count} " +
+               $"busy={shell.AvatarViewModel.IsBusy} " +
+               $"loaded={shell.AvatarViewModel.HasLoaded} " +
+               $"pending=[{keys}] delay={window.AvatarReleaseRetryDelay}";
+    }
+
+    private static bool WaitUntil(Func<bool> condition, int timeoutMs = 10000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < deadline)
         {
-            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            // Drain every priority for a bounded slice. A single Background
+            // invoke can miss a retry that a thread-pool continuation queues
+            // while the suite is busy.
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer(DispatcherPriority.Send)
+            {
+                Interval = TimeSpan.FromMilliseconds(20)
+            };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                frame.Continue = false;
+            };
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+
             if (condition())
             {
                 return true;
             }
-
-            Thread.Sleep(20);
         }
 
         return condition();

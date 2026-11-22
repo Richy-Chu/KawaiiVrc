@@ -1046,6 +1046,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     };
 
     private bool _isLoggedIn;
+    /// <summary>
+    /// Signed-in means a live session and the account it belongs to, not just
+    /// the flag: a failed restore or a sign-out leaves no user, so signed-in
+    /// work must check both.
+    /// </summary>
+    public bool HasLoggedInSession =>
+        IsLoggedIn && CurrentUser is not null && !string.IsNullOrWhiteSpace(CurrentUser.Id);
+
     public bool IsLoggedIn
     {
         get => _isLoggedIn;
@@ -2865,17 +2873,27 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private async Task LoadInstanceAsync()
     {
         var viewModel = InstanceViewModel;
-        if (!IsLoggedIn || viewModel is null)
+        if (!HasLoggedInSession || viewModel is null)
         {
             return;
         }
 
+        var accountId = CurrentUser?.Id;
         try
         {
             var result = await _api.GetCurrentUserAsync();
             if (result.User is null)
             {
                 viewModel.SetError("Your VRChat session expired. Sign in again.");
+                return;
+            }
+
+            // A sign-out or account switch while this request was in flight must
+            // not publish the previous session's roster.
+            if (!HasLoggedInSession ||
+                !string.Equals(CurrentUser?.Id, accountId, StringComparison.Ordinal))
+            {
+                Services.LifecycleLog.Write("instance: discarded a roster from a stale session");
                 return;
             }
 

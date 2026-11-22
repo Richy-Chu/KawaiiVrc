@@ -76,6 +76,18 @@ public sealed class PagedList<T> : ViewModelBase
 
     public void Clear() => SetSource(Array.Empty<T>(), resetPage: true);
 
+    /// <summary>Goes back to the first page without touching the rows.</summary>
+    public void ResetPage()
+    {
+        if (_pageIndex == 0)
+        {
+            return;
+        }
+
+        _pageIndex = 0;
+        Publish();
+    }
+
     private void Previous()
     {
         if (!HasPrevious)
