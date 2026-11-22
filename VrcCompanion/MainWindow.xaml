@@ -10637,7 +10637,7 @@
         <!-- Friend locations popup                                    -->
         <!-- ========================================================= -->
         <Grid Panel.ZIndex="23"
-              Visibility="{Binding IsFriendLocationsOpen, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding IsFriendLocationsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CloseFriendLocationsCommand}"
                     Focusable="False"
                     Cursor="Arrow"
@@ -11125,7 +11125,7 @@
         <!-- Friend-list changes popup                                 -->
         <!-- ========================================================= -->
         <Grid Panel.ZIndex="24"
-              Visibility="{Binding IsFriendChangesOpen, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding IsFriendChangesOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CloseFriendChangesCommand}"
                     Focusable="False" Cursor="Arrow" ToolTip="Close">
                 <Button.Template>
@@ -11237,7 +11237,7 @@
         <!-- Avatar detail popup (Avatars, Favourites, Avatar Search)  -->
         <!-- ========================================================= -->
         <Grid Panel.ZIndex="40"
-              Visibility="{Binding AvatarViewModel.IsAvatarDetailsOpen, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding AvatarViewModel.IsAvatarDetailsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed, TargetNullValue=Collapsed}">
             <Button Command="{Binding AvatarViewModel.CloseAvatarDetailsCommand}"
                     Focusable="False"
                     IsTabStop="False"
@@ -11494,7 +11494,7 @@
 
         <!-- Which favourite slot?                                     -->
         <Grid Panel.ZIndex="50"
-              Visibility="{Binding AvatarViewModel.IsSlotPickerOpen, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding AvatarViewModel.IsSlotPickerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed, TargetNullValue=Collapsed}">
             <Button Command="{Binding AvatarViewModel.CancelFavoriteSlotCommand}"
                     Focusable="False"
                     Cursor="Arrow"
@@ -12312,7 +12312,7 @@
         <!-- Launch chooser                                            -->
         <!-- ========================================================= -->
         <Grid Panel.ZIndex="35"
-              Visibility="{Binding IsLaunchChooserOpen, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding IsLaunchChooserOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelLaunchChoiceCommand}"
                     Focusable="False"
                     Cursor="Arrow"
@@ -12390,7 +12390,7 @@
 
         <!-- Advanced launch profiles -->
         <Grid Panel.ZIndex="62"
-              Visibility="{Binding IsAdvancedLaunchOpen, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding IsAdvancedLaunchOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelAdvancedLaunchCommand}"
                     Focusable="False"
                     Cursor="Arrow"
@@ -12586,7 +12586,7 @@
         <!-- World details modal                                       -->
         <!-- ========================================================= -->
         <Grid Panel.ZIndex="20"
-              Visibility="{Binding HasWorldDialog, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding HasWorldDialog, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Border Background="#B8060810" />
             <Grid Margin="24">
                 <Border Background="{StaticResource SidebarBrush}"
@@ -13029,7 +13029,7 @@
 
         <!-- Profile invite / request composer -->
         <Grid Panel.ZIndex="60"
-              Visibility="{Binding IsInviteComposerOpen, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding IsInviteComposerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelInviteComposerCommand}"
                     Focusable="False"
                     Cursor="Arrow"
@@ -13237,7 +13237,7 @@
 
         <!-- Decline with a custom message -->
         <Grid Panel.ZIndex="61"
-              Visibility="{Binding IsResponseComposerOpen, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding IsResponseComposerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelResponseComposerCommand}"
                     Focusable="False"
                     Cursor="Arrow"
