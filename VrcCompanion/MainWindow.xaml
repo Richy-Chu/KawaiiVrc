@@ -1274,7 +1274,7 @@
                                 CornerRadius="16"
                                 Padding="20,18,18,22">
                             <Border.Effect>
-                                <DropShadowEffect BlurRadius="30" ShadowDepth="0" Opacity="0.6" Color="#000000" />
+                                <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
                             </Border.Effect>
                             <ScrollViewer VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled"
@@ -1667,7 +1667,7 @@
                                 Padding="18"
                                 DataContext="{Binding BoopPreview}">
                             <Border.Effect>
-                                <DropShadowEffect BlurRadius="30" ShadowDepth="0" Opacity="0.6" Color="#000000" />
+                                <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
                             </Border.Effect>
                             <Grid>
                                 <Grid.RowDefinitions>
@@ -3431,7 +3431,7 @@
                             CornerRadius="16"
                             DataContext="{Binding GroupViewModel.SelectedGroup}">
                         <Border.Effect>
-                            <DropShadowEffect BlurRadius="30" ShadowDepth="0" Opacity="0.6" Color="#000000" />
+                            <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
                         </Border.Effect>
                         <Grid>
                             <Grid.RowDefinitions>
@@ -9317,10 +9317,7 @@
                                 BorderThickness="1"
                                 CornerRadius="16">
                             <Border.Effect>
-                                <DropShadowEffect BlurRadius="30"
-                                                  ShadowDepth="0"
-                                                  Opacity="0.6"
-                                                  Color="#000000" />
+                                <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
                             </Border.Effect>
                             <Grid>
                                 <Border CornerRadius="15" ClipToBounds="True"
@@ -11263,7 +11260,7 @@
                     BorderThickness="1"
                     CornerRadius="16">
                 <Border.Effect>
-                    <DropShadowEffect BlurRadius="30" ShadowDepth="0" Opacity="0.6" Color="#000000" />
+                    <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
                 </Border.Effect>
             <!-- Avatar detail view: opens in its own page when a card is clicked -->
             <ScrollViewer VerticalScrollBarVisibility="Auto"

@@ -32,6 +32,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _backgroundTrimTimer;
     private readonly UiStallMonitor _stallMonitor;
     private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
+    private bool _settleScheduled;
+    private DateTimeOffset _lastSettleAt = DateTimeOffset.MinValue;
     private readonly List<string> _sectionOrder = new();
     // Every cached section view keeps its whole visual tree, item containers
     // and decoded images alive. Two is enough to keep back-and-forth snappy
@@ -101,9 +103,7 @@ public partial class MainWindow : Window
         }
 
         LifecycleLog.Write($"window-loaded {Program.Startup.ElapsedMilliseconds}ms");
-        await _viewModel.InitializeAsync();
-        LifecycleLog.Write($"initialized {Program.Startup.ElapsedMilliseconds}ms");
-        LogMemory("loaded");
+
         _refreshTimer.Start();
 
         if (!_viewModel.IsLoggedIn && !_viewModel.IsTwoFactorRequired)
@@ -649,6 +649,62 @@ public partial class MainWindow : Window
         SectionHost.Children.Remove(view);
         view.Content = null;
         view.ContentTemplate = null;
+        ScheduleSettle();
+    }
+
+    /// <summary>
+    /// Dropping a section view releases its visual tree, but the objects it held
+    /// are only returned once a collection runs, and the pages stay resident
+    /// until the working set is trimmed. Visiting a heavy tab used to leave a
+    /// permanently higher footprint; this settles it back down shortly after.
+    /// </summary>
+    private void ScheduleSettle()
+    {
+        if (_settleScheduled)
+        {
+            return;
+        }
+
+        if (DateTimeOffset.UtcNow - _lastSettleAt < TimeSpan.FromSeconds(20))
+        {
+            return;
+        }
+
+        _settleScheduled = true;
+        _lastSettleAt = DateTimeOffset.UtcNow;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                // A non-blocking hint leaves the segments committed, so the
+                // process stayed at the high-water mark after a heavy tab was
+                // dropped. A compacting collection hands the empty segments back
+                // to the OS; it runs off the UI thread and at most every 20s.
+                System.Runtime.GCSettings.LargeObjectHeapCompactionMode =
+                    System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+                GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                GC.WaitForPendingFinalizers();
+                // The evicted page's images are only reachable through the
+                // decode cache now; dropping it costs a re-decode from the disk
+                // cache and frees up to 24 MB.
+                ImageLoader.Shared.TrimMemory();
+                using (var process = Process.GetCurrentProcess())
+                {
+                    EmptyWorkingSet(process.Handle);
+                }
+
+                LogMemory("after-evict");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+            finally
+            {
+                _settleScheduled = false;
+            }
+        });
     }
 
     private bool SectionHasBrowserActivity(string key)
