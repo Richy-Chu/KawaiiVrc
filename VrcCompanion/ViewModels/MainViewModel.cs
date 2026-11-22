@@ -2940,9 +2940,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _activityPollBusy = true;
         try
         {
-            var friends = await _api.GetFriendsAsync(
+            // The response is parsed into 280 friend records. Doing that on the
+            // UI thread made every ten-second poll allocate and collect on the
+            // same thread the window paints on, which is the freeze that showed
+            // up in the stall log regardless of what the poll then did with the
+            // result. Task.Run has no dispatcher context, so the parse stays on
+            // the pool and only the finished list comes back here.
+            var friends = await Task.Run(() => _api.GetFriendsAsync(
                 forceRefresh: true,
-                onlineOnly: true);
+                onlineOnly: true));
             if (!IsLoggedIn)
             {
                 return;
@@ -2957,6 +2963,36 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             if (offlineIds is { Count: 0 })
             {
                 offlineIds = null;
+            }
+
+            // Avatar switches made from VRChat's own menu are not part of the
+            // friend payload. Refresh the signed-in user separately, less often
+            // than the friend poll, so those switches still become self Activity.
+            // This runs before the unchanged-snapshot shortcut below: the friend
+            // set standing still says nothing about the account's own avatar.
+            if (DateTimeOffset.UtcNow - _lastSelfActivityRefreshAt >= TimeSpan.FromSeconds(10))
+            {
+                _lastSelfActivityRefreshAt = DateTimeOffset.UtcNow;
+                try
+                {
+                    var self = await Task.Run(() => _api.GetCurrentUserAsync());
+                    if (IsLoggedIn &&
+                        self.User is { } latest &&
+                        CurrentUser is { } current &&
+                        ((!string.IsNullOrWhiteSpace(latest.CurrentAvatar) &&
+                          !string.Equals(latest.CurrentAvatar, current.CurrentAvatar, StringComparison.Ordinal)) ||
+                         (!string.IsNullOrWhiteSpace(latest.CurrentAvatarName) &&
+                          !string.Equals(latest.CurrentAvatarName, current.CurrentAvatarName, StringComparison.Ordinal)) ||
+                         (latest.Bio is not null &&
+                          !string.Equals(latest.Bio, current.Bio, StringComparison.Ordinal))))
+                    {
+                        ApplyCurrentUser(latest);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"activity self poll: {ex.Message}");
+                }
             }
 
             // Polls that return the same people in the same places used to
@@ -2992,33 +3028,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ActivityFeedViewModel?.ApplyOnlineFriends(friends, offlineIds);
             RefreshFriendsView();
 
-            // Avatar switches made from VRChat's own menu are not part of the
-            // friend payload. Refresh the signed-in user separately, less often
-            // than the friend poll, so those switches still become self Activity.
-            if (DateTimeOffset.UtcNow - _lastSelfActivityRefreshAt >= TimeSpan.FromSeconds(10))
-            {
-                _lastSelfActivityRefreshAt = DateTimeOffset.UtcNow;
-                try
-                {
-                    var self = await _api.GetCurrentUserAsync();
-                    if (IsLoggedIn &&
-                        self.User is { } latest &&
-                        CurrentUser is { } current &&
-                        ((!string.IsNullOrWhiteSpace(latest.CurrentAvatar) &&
-                          !string.Equals(latest.CurrentAvatar, current.CurrentAvatar, StringComparison.Ordinal)) ||
-                         (!string.IsNullOrWhiteSpace(latest.CurrentAvatarName) &&
-                          !string.Equals(latest.CurrentAvatarName, current.CurrentAvatarName, StringComparison.Ordinal)) ||
-                         (latest.Bio is not null &&
-                          !string.Equals(latest.Bio, current.Bio, StringComparison.Ordinal))))
-                    {
-                        ApplyCurrentUser(latest);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"activity self poll: {ex.Message}");
-                }
-            }
         }
         catch (Exception ex)
         {
