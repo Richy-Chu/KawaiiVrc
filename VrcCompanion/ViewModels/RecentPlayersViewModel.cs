@@ -345,6 +345,9 @@ public sealed class RecentPlayersViewModel : ViewModelBase
 
     public ICollectionView PlayersView => _playersView;
 
+    /// <summary>One page of people; a history with thousands of names stays bounded.</summary>
+    public PagedList<RecentPlayerItem> PlayersPage { get; } = new();
+
     public ObservableCollection<FilterOption> SortOptions { get; }
 
     public FilterOption SelectedSort
@@ -359,6 +362,7 @@ public sealed class RecentPlayersViewModel : ViewModelBase
 
             ApplySort();
             _playersView.Refresh();
+            RefreshPlayersPage(resetPage: true);
         }
     }
 
@@ -373,6 +377,7 @@ public sealed class RecentPlayersViewModel : ViewModelBase
             }
 
             _playersView.Refresh();
+            RefreshPlayersPage(resetPage: true);
             OnPropertyChanged(nameof(HasNoPlayers));
         }
     }
@@ -430,6 +435,9 @@ public sealed class RecentPlayersViewModel : ViewModelBase
         ? "Join a VRChat world while this app is running. Recent people are built from the same local log VRCX uses, and stay here after you close the app."
         : $"No recorded player matches \u201c{SearchText.Trim()}\u201d.";
 
+    private void RefreshPlayersPage(bool resetPage = false)
+        => PlayersPage.SetSource(_playersView.Cast<RecentPlayerItem>(), resetPage);
+
     public RelayCommand CloseCommand { get; }
 
     public AsyncRelayCommand RefreshCommand { get; }
@@ -454,6 +462,7 @@ public sealed class RecentPlayersViewModel : ViewModelBase
         }
 
         _playersView.Refresh();
+        RefreshPlayersPage();
     }
 
     public void Show(string accountUserId, IEnumerable<string> friendIds)
@@ -492,6 +501,7 @@ public sealed class RecentPlayersViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(_accountUserId))
         {
             _players.Clear();
+            RefreshPlayersPage(resetPage: true);
             UpdateSummary();
             return Task.CompletedTask;
         }
@@ -524,6 +534,7 @@ public sealed class RecentPlayersViewModel : ViewModelBase
 
             ApplySort();
             _playersView.Refresh();
+            RefreshPlayersPage();
             UpdateSummary();
             _ = HydrateAsync(players, version);
             return Task.CompletedTask;

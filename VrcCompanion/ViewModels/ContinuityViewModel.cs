@@ -126,6 +126,13 @@ public sealed class ContinuityViewModel : ViewModelBase
 
     public ICollectionView WorldsView { get; }
 
+    /// <summary>One page per tab; a 6,000-person history still builds 24 rows.</summary>
+    public PagedList<ContinuitySessionItem> SessionsPage { get; } = new();
+
+    public PagedList<ContinuityPersonItem> PeoplePage { get; } = new();
+
+    public PagedList<ContinuityWorldItem> WorldsPage { get; } = new();
+
     public RelayCommand ShowTimelineCommand { get; }
     public RelayCommand ShowPeopleCommand { get; }
     public RelayCommand ShowWorldsCommand { get; }
@@ -933,6 +940,10 @@ public sealed class ContinuityViewModel : ViewModelBase
         SessionsView.Refresh();
         PeopleView.Refresh();
         WorldsView.Refresh();
+        // A search or a fresh import starts at the top of each list.
+        SessionsPage.SetSource(SessionsView.Cast<ContinuitySessionItem>(), resetPage: true);
+        PeoplePage.SetSource(PeopleView.Cast<ContinuityPersonItem>(), resetPage: true);
+        WorldsPage.SetSource(WorldsView.Cast<ContinuityWorldItem>(), resetPage: true);
     }
 
     private bool FilterSession(object item)

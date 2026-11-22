@@ -1403,7 +1403,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public ICollectionView FriendsView => _friendsView;
 
+    /// <summary>The friends list one page at a time; FriendsView still holds the filter.</summary>
+    public PagedList<FriendItem> FriendsPage { get; } = new();
+
     public ICollectionView FriendLocationsView => _friendLocationsView;
+
+    public PagedList<FriendItem> FriendLocationsPage { get; } = new();
 
     public bool IsFriendLocationsOpen
     {
@@ -1803,7 +1808,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             if (value is not null && SetProperty(ref _selectedFriendFilter, value))
             {
-                RefreshFriendsView();
+                RefreshFriendsView(resetPage: true);
             }
         }
     }
@@ -1816,7 +1821,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             if (SetProperty(ref _showOnlineOnly, value))
             {
-                RefreshFriendsView();
+                RefreshFriendsView(resetPage: true);
             }
         }
     }
@@ -1829,7 +1834,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             if (SetProperty(ref _friendFilter, value ?? string.Empty))
             {
-                RefreshFriendsView();
+                RefreshFriendsView(resetPage: true);
             }
         }
     }
@@ -1903,6 +1908,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ObservableCollection<NotificationItem> Notifications { get; }
 
     public ICollectionView NotificationsView => _notificationsView;
+
+    public PagedList<NotificationItem> NotificationsPage { get; } = new();
 
     public ObservableCollection<FilterOption> NotificationFilters { get; }
 
@@ -8997,10 +9004,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SelectedFriend = change.Friend;
     }
 
-    private void RefreshFriendsView()
+    private void RefreshFriendsView(bool resetPage = false)
     {
         _friendsView.Refresh();
         _friendLocationsView.Refresh();
+        // Presence refreshes keep the page being read; a filter or search starts over.
+        FriendsPage.SetSource(_friendsView.Cast<FriendItem>(), resetPage);
+        FriendLocationsPage.SetSource(_friendLocationsView.Cast<FriendItem>(), resetPage);
         UpdateFriendsSummary();
         OnPropertyChanged(nameof(FriendLocationsSummary));
         OnPropertyChanged(nameof(HasFriendLocations));
@@ -9072,6 +9082,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private void RefreshNotificationsView()
     {
         _notificationsView.Refresh();
+        // A refresh can add a request at the top, so show the newest page.
+        NotificationsPage.SetSource(_notificationsView.Cast<NotificationItem>(), resetPage: true);
         UpdateNotificationFilterState();
     }
 

@@ -214,6 +214,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <TextBlock Text="{Binding SessionCountText}"
@@ -221,7 +222,7 @@
                        Margin="2,0,0,8" />
 
             <ListBox Grid.Row="1"
-                     ItemsSource="{Binding SessionsView}"
+                     ItemsSource="{Binding SessionsPage.Items}"
                      Style="{StaticResource ContinuityList}">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
@@ -286,6 +287,10 @@
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
+
+            <controls:ListPager Grid.Row="2"
+                                DataContext="{Binding SessionsPage}"
+                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
         </Grid>
 
         <!-- People -->
@@ -301,12 +306,13 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="{Binding PersonCountText}"
                            Style="{StaticResource MutedText}"
                            Margin="2,0,0,8" />
                 <ListBox Grid.Row="1"
-                         ItemsSource="{Binding PeopleView}"
+                         ItemsSource="{Binding PeoplePage.Items}"
                          ItemContainerStyle="{StaticResource ContinuityPersonRow}"
                          Style="{StaticResource ContinuityList}">
                     <ListBox.ItemTemplate>
@@ -367,6 +373,10 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+
+                <controls:ListPager Grid.Row="2"
+                                    DataContext="{Binding PeoplePage}"
+                                    Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
             </Grid>
 
             <Border Grid.Column="2"
@@ -526,12 +536,13 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="{Binding WorldCountText}"
                            Style="{StaticResource MutedText}"
                            Margin="2,0,0,8" />
                 <ListBox Grid.Row="1"
-                         ItemsSource="{Binding WorldsView}"
+                         ItemsSource="{Binding WorldsPage.Items}"
                          Style="{StaticResource ContinuityList}">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
@@ -591,6 +602,10 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+
+                <controls:ListPager Grid.Row="2"
+                                    DataContext="{Binding WorldsPage}"
+                                    Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
             </Grid>
 
             <Border Grid.Column="2"

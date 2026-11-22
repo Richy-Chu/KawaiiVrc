@@ -778,8 +778,13 @@
                             CornerRadius="16"
                             Padding="6">
                         <Grid>
-                            <ListBox Style="{StaticResource FriendListBox}"
-                                     ItemsSource="{Binding FriendsView}"
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <ListBox Grid.Row="0"
+                                     Style="{StaticResource FriendListBox}"
+                                     ItemsSource="{Binding FriendsPage.Items}"
                                      SelectedItem="{Binding SelectedFriend, Mode=TwoWay}">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
@@ -903,6 +908,10 @@
                                                TextAlignment="Center" />
                                 </StackPanel>
                             </Border>
+
+                            <controls:ListPager Grid.Row="1"
+                                                DataContext="{Binding FriendsPage}"
+                                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
                         </Grid>
                     </Border>
 
@@ -1060,8 +1069,13 @@
                             CornerRadius="16"
                             Padding="6">
                         <Grid>
-                            <ListBox Style="{StaticResource BareListBox}"
-                                     ItemsSource="{Binding NotificationsView}"
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <ListBox Grid.Row="0"
+                                     Style="{StaticResource BareListBox}"
+                                     ItemsSource="{Binding NotificationsPage.Items}"
                                      SelectedItem="{Binding SelectedNotification, Mode=TwoWay}">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
@@ -1253,6 +1267,10 @@
                                                TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
+
+                            <controls:ListPager Grid.Row="1"
+                                                DataContext="{Binding NotificationsPage}"
+                                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
                         </Grid>
                     </Border>
 
@@ -2809,9 +2827,10 @@
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <!-- Same bound as the uploaded grid: only the
-                                         cards near the viewport stay built. -->
+                                         cards near the viewport stay built.
+                                         Measured row height is 324.5 px. -->
                                     <controls:VirtualizingWrapPanel ItemWidth="236"
-                                                                    EstimatedItemHeight="320"
+                                                                    EstimatedItemHeight="325"
                                                                     CacheViewports="0.75" />
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
@@ -3161,9 +3180,10 @@
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <!-- Same bound as the uploaded grid: only the
-                                     cards near the viewport stay built. -->
+                                     cards near the viewport stay built.
+                                     Measured row height is 303.7 px. -->
                                 <controls:VirtualizingWrapPanel ItemWidth="236"
-                                                                EstimatedItemHeight="320"
+                                                                EstimatedItemHeight="304"
                                                                 CacheViewports="0.75" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
@@ -5214,10 +5234,15 @@
                                     </StackPanel>
 
                                     <Grid Grid.Row="3">
-                                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <ScrollViewer Grid.Row="0"
+                                                      VerticalScrollBarVisibility="Auto"
                                                       HorizontalScrollBarVisibility="Disabled"
                                                       Padding="0,0,6,0">
-                                            <ItemsControl ItemsSource="{Binding InstanceViewModel.VisiblePlayers}">
+                                            <ItemsControl ItemsSource="{Binding InstanceViewModel.PlayersPage.Items}">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
                                                         <Border Style="{StaticResource ListRow}" Padding="11" Margin="0,0,0,8">
@@ -5356,6 +5381,10 @@
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
                                         </ScrollViewer>
+
+                                        <controls:ListPager Grid.Row="1"
+                                                            DataContext="{Binding InstanceViewModel.PlayersPage}"
+                                                            Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
 
                                         <Border Style="{StaticResource EmptyStateCard}"
                                                 VerticalAlignment="Top"
@@ -10752,10 +10781,15 @@
                         </Grid>
                     </Border>
                     <Grid Grid.Row="1">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <ScrollViewer Grid.Row="0"
+                                      VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled"
                                       Padding="14,12,10,16">
-                            <ItemsControl ItemsSource="{Binding FriendLocationsView}">
+                            <ItemsControl ItemsSource="{Binding FriendLocationsPage.Items}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border Background="{StaticResource InputBrush}"
@@ -10842,6 +10876,9 @@
                                    Style="{StaticResource MutedText}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Visibility="{Binding HasFriendLocations, Converter={StaticResource InverseBoolToVis}}" />
+                        <controls:ListPager Grid.Row="1"
+                                            DataContext="{Binding FriendLocationsPage}"
+                                            Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
                     </Grid>
                 </Grid>
             </Border>
@@ -10958,7 +10995,7 @@
 
                     <Grid Grid.Row="2" Margin="16,6,16,8">
                         <ListBox x:Name="RecentPlayersList"
-                                 ItemsSource="{Binding PlayersView}"
+                                 ItemsSource="{Binding PlayersPage.Items}"
                                  Background="Transparent"
                                  BorderThickness="0"
                                  Padding="4,0,4,0"
@@ -11182,6 +11219,9 @@
                                        FontSize="9.5"
                                        Foreground="{StaticResource DimBrush}"
                                        VerticalAlignment="Center" />
+                            <controls:ListPager DataContext="{Binding PlayersPage}"
+                                                Margin="0,-2"
+                                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
                             <Button Style="{StaticResource GhostButton}"
                                     HorizontalAlignment="Right"
                                     Padding="9,5"

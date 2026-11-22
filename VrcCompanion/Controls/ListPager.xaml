@@ -1,0 +1,25 @@
+<UserControl x:Class="VrcCompanion.Controls.ListPager"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root">
+    <StackPanel Orientation="Horizontal"
+                HorizontalAlignment="Center"
+                Margin="0,8,0,2">
+        <Button Style="{StaticResource SecondaryButton}"
+                Content="Previous"
+                Padding="16,6"
+                Margin="0,0,8,0"
+                Command="{Binding PreviousCommand}"
+                IsEnabled="{Binding HasPrevious}" />
+        <TextBlock Text="{Binding PageText}"
+                   Foreground="{StaticResource MutedBrush}"
+                   FontSize="10.5"
+                   VerticalAlignment="Center"
+                   Margin="0,0,8,0" />
+        <Button Style="{StaticResource SecondaryButton}"
+                Content="Next"
+                Padding="20,6"
+                Command="{Binding NextCommand}"
+                IsEnabled="{Binding HasNext}" />
+    </StackPanel>
+</UserControl>

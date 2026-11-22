@@ -222,7 +222,7 @@
                                            VerticalAlignment="Center" />
                             </Grid>
 
-                            <ListBox ItemsSource="{Binding Players}"
+                            <ListBox ItemsSource="{Binding PlayersPage.Items}"
                                      Style="{StaticResource ContextList}"
                                      Margin="0,10,0,0"
                                      Visibility="{Binding HasPlayers, Converter={StaticResource BoolToVis}}">
@@ -297,6 +297,9 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
 
+                            <controls:ListPager DataContext="{Binding PlayersPage}"
+                                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
+
                             <TextBlock Text="No player observations yet. The instance roster fills in from VRChat and your local log."
                                        Style="{StaticResource MutedText}"
                                        FontSize="10.5"
@@ -352,7 +355,7 @@
                                        Style="{StaticResource MutedText}"
                                        FontSize="10"
                                        Margin="0,4,0,8" />
-                            <ListBox ItemsSource="{Binding FriendsHere}"
+                            <ListBox ItemsSource="{Binding FriendsHerePage.Items}"
                                      Style="{StaticResource ContextList}"
                                      Visibility="{Binding HasFriendsHere, Converter={StaticResource BoolToVis}}">
                                 <ListBox.ItemTemplate>
@@ -402,6 +405,8 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
+                            <controls:ListPager DataContext="{Binding FriendsHerePage}"
+                                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
                         </StackPanel>
                     </Border>
 
@@ -412,7 +417,7 @@
                                        Style="{StaticResource MutedText}"
                                        FontSize="10"
                                        Margin="0,4,0,8" />
-                            <ListBox ItemsSource="{Binding RecentPeople}"
+                            <ListBox ItemsSource="{Binding RecentPeoplePage.Items}"
                                      Style="{StaticResource ContextList}"
                                      Visibility="{Binding HasRecentPeople, Converter={StaticResource BoolToVis}}">
                                 <ListBox.ItemTemplate>
@@ -467,6 +472,8 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
+                            <controls:ListPager DataContext="{Binding RecentPeoplePage}"
+                                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
                         </StackPanel>
                     </Border>
                 </StackPanel>

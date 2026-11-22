@@ -131,6 +131,9 @@ public sealed class InstanceViewModel : ViewModelBase
 
     public ICollectionView VisiblePlayers => _playersView;
 
+    /// <summary>The roster one page at a time; an 80-person instance builds 24 rows.</summary>
+    public PagedList<InstancePlayerItem> PlayersPage { get; } = new();
+
     public string PlayerSearch
     {
         get => _playerSearch;
@@ -1299,6 +1302,7 @@ public sealed class InstanceViewModel : ViewModelBase
     private void RefreshPlayersView()
     {
         _playersView.Refresh();
+        PlayersPage.SetSource(_playersView.Cast<InstancePlayerItem>(), resetPage: true);
         OnPropertyChanged(nameof(HasVisiblePlayers));
         OnPropertyChanged(nameof(PlayersSummary));
         OnPropertyChanged(nameof(PlayersEmptyMessage));

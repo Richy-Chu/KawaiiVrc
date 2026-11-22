@@ -81,6 +81,14 @@ public class MainWindowLayoutTests
                 SenderUsername = "Tester",
                 Details = document.RootElement.Clone()
             }));
+
+            // Adding to the collection does not publish a page by itself; the
+            // filter refresh does, exactly as an incoming notification does.
+            shell.SelectedNotificationFilter = shell.NotificationFilters
+                .Single(filter => filter.Key == "unread");
+            shell.SelectedNotificationFilter = shell.NotificationFilters
+                .Single(filter => filter.Key == "all");
+
             var window = new MainWindow(shell, initializeOnLoad: false)
             {
                 Width = 1100,
@@ -100,7 +108,7 @@ public class MainWindowLayoutTests
                 Pump(window);
 
                 var list = FindVisualChildren<ListBox>(window)
-                    .Single(box => ReferenceEquals(box.ItemsSource, shell.NotificationsView));
+                    .Single(box => ReferenceEquals(box.ItemsSource, shell.NotificationsPage.Items));
                 Assert.Equal(2, list.Items.Count);
 
                 shell.SelectedNotificationFilter = shell.NotificationFilters

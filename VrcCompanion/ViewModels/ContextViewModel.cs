@@ -76,6 +76,12 @@ public sealed class ContextViewModel : ViewModelBase
 
     public ObservableCollection<ContinuitySessionItem> TodaySessions { get; } = new();
 
+    public PagedList<InstancePlayerItem> PlayersPage { get; } = new();
+
+    public PagedList<InstancePlayerItem> FriendsHerePage { get; } = new();
+
+    public PagedList<ContinuityPersonItem> RecentPeoplePage { get; } = new();
+
     public AsyncRelayCommand RefreshCommand { get; }
 
     public RelayCommand CopySnapshotCommand { get; }
@@ -289,6 +295,8 @@ public sealed class ContextViewModel : ViewModelBase
             }
         }
 
+        PlayersPage.SetSource(Players, resetPage: false);
+        FriendsHerePage.SetSource(FriendsHere, resetPage: false);
         OnPropertyChanged(nameof(HasFriendsHere));
         OnPropertyChanged(nameof(FriendsHereText));
     }
@@ -472,6 +480,7 @@ public sealed class ContextViewModel : ViewModelBase
         {
             TodaySessions.Clear();
             RecentPeople.Clear();
+            RecentPeoplePage.Clear();
             OnPropertyChanged(nameof(HasTodaySessions));
             OnPropertyChanged(nameof(HasRecentPeople));
             OnPropertyChanged(nameof(TodayText));
@@ -502,6 +511,7 @@ public sealed class ContextViewModel : ViewModelBase
             PersonAvatarRequested?.Invoke(item);
         }
 
+        RecentPeoplePage.SetSource(RecentPeople);
         OnPropertyChanged(nameof(HasTodaySessions));
         OnPropertyChanged(nameof(HasRecentPeople));
         OnPropertyChanged(nameof(TodayText));
@@ -589,6 +599,7 @@ public sealed class ContextViewModel : ViewModelBase
             }));
         }
 
+        RecentPeoplePage.SetSource(RecentPeople);
         OnPropertyChanged(nameof(HasPlayers));
         OnPropertyChanged(nameof(HasFriendsHere));
         OnPropertyChanged(nameof(HasRecentPeople));
