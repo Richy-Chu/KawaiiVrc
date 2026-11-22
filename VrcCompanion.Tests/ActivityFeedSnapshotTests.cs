@@ -42,6 +42,44 @@ public class ActivityFeedSnapshotTests
     }
 
     [Fact]
+    public void ARebuiltSnapshotDoesNotAddTheSameTransitionTwice()
+    {
+        // A friend whose record flaps between online and offline is rebuilt from
+        // the same stored transition, but with a fresh row id. Adding it again
+        // grew the timeline and rewrote the whole feed file every few seconds.
+        var timestamp = new DateTimeOffset(2026, 11, 21, 23, 44, 44, TimeSpan.Zero);
+        var original = new ActivityEntry
+        {
+            Id = "offline-usr_1-aaa",
+            Type = ActivityType.FriendOffline,
+            UserId = "usr_1",
+            Details = "went offline",
+            Timestamp = timestamp
+        };
+        var rebuilt = new ActivityEntry
+        {
+            Id = "offline-usr_1-bbb",
+            Type = ActivityType.FriendOffline,
+            UserId = "usr_1",
+            Details = "went offline",
+            Timestamp = timestamp
+        };
+
+        Assert.Single(ActivityFeedViewModel.MergeEntries(new[] { original }, new[] { rebuilt }));
+
+        // A real second transition carries its own time and is kept.
+        var later = new ActivityEntry
+        {
+            Id = "offline-usr_1-ccc",
+            Type = ActivityType.FriendOffline,
+            UserId = "usr_1",
+            Details = "went offline",
+            Timestamp = timestamp.AddSeconds(45)
+        };
+        Assert.Equal(2, ActivityFeedViewModel.MergeEntries(new[] { original }, new[] { rebuilt, later }).Count);
+    }
+
+    [Fact]
     public void SelfLogSwitchIsRecordedOnceWhenTheApiCatchesUp()
     {
         var directory = Path.Combine(

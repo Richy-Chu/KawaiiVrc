@@ -1548,7 +1548,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     /// refresh only adds newly observed events; it must not erase an avatar or
     /// bio change that was detected on the previous snapshot.
     /// </summary>
-    private static List<ActivityEntry> MergeEntries(
+    internal static List<ActivityEntry> MergeEntries(
         IReadOnlyList<ActivityEntry> existing,
         IReadOnlyList<ActivityEntry> fresh)
     {
@@ -1577,9 +1577,16 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             list.Add(entry);
         }
 
+        // Rebuilt snapshots can hand the same event a new id: a friend whose
+        // record flaps between online and offline keeps producing a row stamped
+        // with the original transition time. Those duplicates grew the timeline
+        // and rewrote the whole feed file every few seconds, so treat a row that
+        // matches an existing row's type, user and event time as the same event.
+        var eventKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entry in byId.Values)
         {
             IndexAvatar(entry);
+            eventKeys.Add(EventKey(entry));
         }
 
         foreach (var entry in fresh)
@@ -1599,8 +1606,14 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 {
                     byId.Remove(duplicate.Id);
                     byId[entry.Id] = entry;
+                    eventKeys.Add(EventKey(entry));
                 }
 
+                continue;
+            }
+
+            if (!eventKeys.Add(EventKey(entry)))
+            {
                 continue;
             }
 
@@ -1615,6 +1628,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             .Take(MaxRetainedEntries)
             .ToList();
     }
+
+    /// <summary>
+    /// Identity of an event independent of its generated row id, so a rebuilt
+    /// snapshot cannot add the same transition twice.
+    /// </summary>
+    private static string EventKey(ActivityEntry entry)
+        => $"{(int)entry.Type}|{entry.UserId}|{entry.Timestamp.UtcTicks}";
 
     /// <summary>
     /// A log-only avatar row and the API row for the same switch can arrive
@@ -1671,6 +1691,11 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     /// </summary>
     private async Task HydrateAvatarNamesAsync(IReadOnlyList<ActivityEntry> entries)
     {
+        // Resolving ids from local history is synchronous work over every avatar
+        // row in the feed. Let the caller (account switch, startup) return first
+        // and let that work interleave with the network waits that follow.
+        await Task.Yield();
+
         var avatarEntries = entries
             .Where(entry => entry.Type == ActivityType.AvatarChanged)
             .ToList();

@@ -10,9 +10,13 @@ namespace VrcCompanion;
 /// </summary>
 public static class Program
 {
+    /// <summary>Clock for the launch timings written to lifecycle.log.</summary>
+    internal static readonly System.Diagnostics.Stopwatch Startup = System.Diagnostics.Stopwatch.StartNew();
+
     [STAThread]
     public static void Main(string[] args)
     {
+        Startup.Restart();
         VelopackApp.Build().Run();
 
         var app = new App();

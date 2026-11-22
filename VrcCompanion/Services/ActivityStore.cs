@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 using System.Text.Json.Serialization;
 using VrcCompanion.Models;
 
@@ -29,10 +30,18 @@ public sealed class ActivityStore
 
     private readonly object _sync = new();
     private readonly string _path;
+    private readonly string _biosPath;
+    private readonly TimeSpan _feedWriteDelay;
 
-    public ActivityStore(string? path = null)
+    public ActivityStore(string? path = null, TimeSpan? feedWriteDelay = null)
     {
         _path = string.IsNullOrWhiteSpace(path) ? DefaultPath() : path;
+        _feedWriteDelay = feedWriteDelay ?? TimeSpan.FromSeconds(20);
+        // Bios change every few seconds while the app runs, so they live in
+        // their own small file instead of forcing a multi-megabyte feed rewrite.
+        _biosPath = Path.Combine(
+            Path.GetDirectoryName(_path) ?? string.Empty,
+            Path.GetFileNameWithoutExtension(_path) + ".bios.json");
         if (!string.IsNullOrWhiteSpace(path) || !File.Exists(_path))
         {
             // A custom (test) path stays lazy so tests see an empty store.
@@ -51,6 +60,8 @@ public sealed class ActivityStore
     }
 
     public string FilePath => _path;
+
+    public string BiosFilePath => _biosPath;
 
     public IReadOnlyList<ActivityEntry> Load(string? accountId)
     {
@@ -103,9 +114,11 @@ public sealed class ActivityStore
                     .Take(MaximumEntries)
                     .ToList();
                 // Memory is updated inline so the next read (another view, a
-                // restart test) sees the rows immediately; the 14 MB disk write
-                // happens on a worker thread instead of the UI thread.
-                QueueWrite(file);
+                // restart test) sees the rows immediately. The file is written
+                // on a trailing timer: an import or a burst of presence events
+                // used to rewrite the whole multi-megabyte feed for every row.
+                _feedDirty = true;
+                ScheduleFeedWrite();
             }
             catch (Exception ex)
             {
@@ -115,50 +128,153 @@ public sealed class ActivityStore
         }
     }
 
-    private string? _pendingJson;
+    private readonly Dictionary<string, StoredFile> _pendingWrites = new(StringComparer.Ordinal);
     private bool _writing;
     private Task _writeTask = Task.CompletedTask;
+    private Timer? _feedTimer;
+    private bool _feedDirty;
+    private Timer? _biosTimer;
+    private bool _biosDirty;
 
-    /// <summary>Serialises the newest snapshot off-thread, coalescing bursts.</summary>
-    private void QueueWrite(StoredFile file)
+    /// <summary>
+    /// Bio baselines are only read when the account loads, so a minute between
+    /// writes is plenty; the timer folds every check in that window into one.
+    /// </summary>
+    private static readonly TimeSpan BiosWriteDelay = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// Arms one write for the newest feed snapshot. Rows that arrive while a
+    /// write is pending are folded into that same write, so a log import or a
+    /// burst of presence events costs one file write instead of one per row.
+    /// </summary>
+    private void ScheduleFeedWrite()
     {
-        _pendingJson = JsonSerializer.Serialize(file, JsonOptions);
-        if (_writing)
+        if (_feedTimer is not null)
         {
             return;
         }
 
-        _writing = true;
-        _writeTask = Task.Run(async () =>
-        {
-            while (true)
-            {
-                string? json;
-                lock (_sync)
-                {
-                    json = _pendingJson;
-                    _pendingJson = null;
-                    if (json is null)
-                    {
-                        _writing = false;
-                        return;
-                    }
-                }
-
-                WriteJson(json);
-            }
-        });
+        _feedTimer = new Timer(_ => FlushPendingFeed(), null, _feedWriteDelay, Timeout.InfiniteTimeSpan);
     }
 
-    /// <summary>Completes once every queued write has reached the file.</summary>
+    /// <summary>Writes the newest feed snapshot now, for shutdown and for tests.</summary>
+    private void FlushPendingFeed()
+    {
+        Timer? timer;
+        StoredFile? snapshot = null;
+        lock (_sync)
+        {
+            timer = _feedTimer;
+            _feedTimer = null;
+            if (_feedDirty)
+            {
+                _feedDirty = false;
+                snapshot = SnapshotFeed();
+            }
+        }
+
+        timer?.Dispose();
+        if (snapshot is not null)
+        {
+            QueueWrite(_path, snapshot);
+        }
+    }
+
+    /// <summary>Writes the newest bio baselines now, for shutdown and for tests.</summary>
+    private void FlushPendingBios()
+    {
+        Timer? timer;
+        StoredFile? snapshot = null;
+        lock (_sync)
+        {
+            timer = _biosTimer;
+            _biosTimer = null;
+            if (_biosDirty)
+            {
+                _biosDirty = false;
+                snapshot = new StoredFile();
+                foreach (var (id, account) in BiosAccounts())
+                {
+                    snapshot.Accounts[id] = account;
+                }
+            }
+        }
+
+        timer?.Dispose();
+        if (snapshot is not null)
+        {
+            QueueWrite(_biosPath, snapshot);
+        }
+    }
+
+    private StoredFile SnapshotFeed()
+    {
+        var file = LoadFile();
+        var snapshot = new StoredFile();
+        foreach (var (id, account) in file.Accounts)
+        {
+            snapshot.Accounts[id] = account;
+        }
+
+        return snapshot;
+    }
+
+    /// <summary>
+    /// Queues the newest snapshot for one file, coalescing bursts. Serialisation
+    /// happens on the writer thread: a feed snapshot is several megabytes and the
+    /// caller is usually the UI thread handling a timer tick or a pipeline event.
+    /// </summary>
+    private void QueueWrite(string path, StoredFile file)
+    {
+        lock (_sync)
+        {
+            _pendingWrites[path] = file;
+            if (_writing)
+            {
+                return;
+            }
+
+            _writing = true;
+            _writeTask = Task.Run(WriteLoop);
+        }
+    }
+
+    private void WriteLoop()
+    {
+        while (true)
+        {
+            KeyValuePair<string, StoredFile>[] batch;
+            lock (_sync)
+            {
+                if (_pendingWrites.Count == 0)
+                {
+                    _writing = false;
+                    return;
+                }
+
+                batch = _pendingWrites.ToArray();
+                _pendingWrites.Clear();
+            }
+
+            foreach (var (path, file) in batch)
+            {
+                WriteJson(path, file);
+            }
+        }
+    }
+
+    /// <summary>Completes once every queued write has reached its file.</summary>
     public async Task FlushAsync()
     {
+        FlushPendingFeed();
+        FlushPendingBios();
+
         while (true)
         {
             Task pending;
             lock (_sync)
             {
-                if (!_writing && _pendingJson is null)
+                if (!_writing && _pendingWrites.Count == 0)
                 {
                     return;
                 }
@@ -170,17 +286,22 @@ public sealed class ActivityStore
         }
     }
 
-    private void WriteJson(string json)
+    private void WriteJson(string path, StoredFile file)
     {
         try
         {
-            var directory = Path.GetDirectoryName(_path);
+            var directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(directory))
             {
                 Directory.CreateDirectory(directory);
             }
 
-            AtomicFile.WriteAllText(_path, json);
+            AtomicFile.WriteAllText(path, JsonSerializer.Serialize(file, JsonOptions));
+
+            if (!string.Equals(path, _path, StringComparison.Ordinal))
+            {
+                return;
+            }
 
             lock (_sync)
             {
@@ -191,7 +312,7 @@ public sealed class ActivityStore
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"activity store write {_path}: {ex.Message}");
+            Debug.WriteLine($"activity store write {path}: {ex.Message}");
         }
     }
 
@@ -209,16 +330,29 @@ public sealed class ActivityStore
 
         lock (_sync)
         {
+            if (BiosAccounts().TryGetValue(accountId, out var stored) &&
+                stored?.Bios is { Count: > 0 } baselines)
+            {
+                // The migrated copy is authoritative; drop the stale one the feed
+                // still carries so the next feed snapshot stops shipping it.
+                if (LoadFile().Accounts.TryGetValue(accountId, out var feedAccount) &&
+                    feedAccount is not null)
+                {
+                    feedAccount.Bios = null;
+                }
+
+                return CopyBaselines(baselines);
+            }
+
+            // Reports from before bios moved into their own file kept them inside
+            // the feed. Read those once; the next bio save migrates them.
             var file = LoadFile();
-            if (!file.Accounts.TryGetValue(accountId, out var stored) || stored?.Bios is null)
+            if (!file.Accounts.TryGetValue(accountId, out var legacy) || legacy?.Bios is null)
             {
                 return new Dictionary<string, BioBaseline>(StringComparer.Ordinal);
             }
 
-            return stored.Bios
-                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value is not null)
-                .GroupBy(pair => pair.Key, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.Ordinal);
+            return CopyBaselines(legacy.Bios);
         }
     }
 
@@ -235,21 +369,14 @@ public sealed class ActivityStore
         {
             try
             {
-                var file = LoadFile();
-                if (!file.Accounts.TryGetValue(accountId, out var stored) || stored is null)
-                {
-                    stored = new StoredAccount();
-                    file.Accounts[accountId] = stored;
-                }
+                var accounts = BiosAccounts();
+                accounts[accountId] = new StoredAccount { Bios = CopyBaselines(baselines) };
 
-                stored.Bios = baselines
-                    .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value is not null)
-                    .GroupBy(pair => pair.Key, StringComparer.Ordinal)
-                    .ToDictionary(
-                        group => group.Key,
-                        group => group.First().Value,
-                        StringComparer.Ordinal);
-                QueueWrite(file);
+                _biosDirty = true;
+                if (_biosTimer is null)
+                {
+                    _biosTimer = new Timer(_ => FlushPendingBios(), null, BiosWriteDelay, Timeout.InfiniteTimeSpan);
+                }
             }
             catch (Exception ex)
             {
@@ -269,6 +396,53 @@ public sealed class ActivityStore
     private StoredFile? _cachedFile;
     private long _cachedLength = -1;
     private DateTime _cachedWritten;
+
+    private Dictionary<string, StoredAccount>? _biosAccounts;
+
+    /// <summary>
+    /// The bio baselines, loaded once from their own file. They are rewritten on
+    /// every bio check while the app runs, which is why they are not part of the
+    /// multi-megabyte feed snapshot.
+    /// </summary>
+    private Dictionary<string, StoredAccount> BiosAccounts()
+    {
+        if (_biosAccounts is not null)
+        {
+            return _biosAccounts;
+        }
+
+        var accounts = new Dictionary<string, StoredAccount>(StringComparer.Ordinal);
+        try
+        {
+            if (File.Exists(_biosPath))
+            {
+                var file = JsonSerializer.Deserialize<StoredFile>(File.ReadAllText(_biosPath), JsonOptions);
+                if (file?.Accounts is not null)
+                {
+                    foreach (var (id, account) in file.Accounts)
+                    {
+                        if (!string.IsNullOrWhiteSpace(id) && account?.Bios is not null)
+                        {
+                            accounts[id] = account;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"activity bio baselines {_biosPath}: {ex.Message}");
+        }
+
+        return _biosAccounts = accounts;
+    }
+
+    private static Dictionary<string, BioBaseline> CopyBaselines(
+        IReadOnlyDictionary<string, BioBaseline> baselines)
+        => baselines
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value is not null)
+            .GroupBy(pair => pair.Key, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.Ordinal);
 
     private StoredFile LoadFile()
     {

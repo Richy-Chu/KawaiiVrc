@@ -2601,8 +2601,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             // Realtime is the primary path. This poll is the safety net for
             // missed pipeline events, so it has to run on every tab and much
-            // faster than the old 30-second Activity-only tick.
-            Interval = TimeSpan.FromSeconds(5)
+            // faster than the old 30-second Activity-only tick. Ten seconds
+            // keeps that job while halving the full friend fetch it costs.
+            Interval = TimeSpan.FromSeconds(10)
         };
         _activityPollTimer.Tick += OnActivityPollTick;
         _activityPollTimer.Start();
@@ -2611,7 +2612,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             // VRCX checks one stale friend bio every few seconds; friend-update
             // events do not carry bio, so a periodic profile read is required.
-            Interval = TimeSpan.FromSeconds(3)
+            // Each tick is an API call and a persisted baseline, so keep it slow
+            // enough that a large friend list is worked through instead of hammered.
+            Interval = TimeSpan.FromSeconds(10)
         };
         _bioPollTimer.Tick += OnBioPollTick;
         _bioPollTimer.Start();
@@ -2627,6 +2630,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         try
         {
             var user = await _api.RestoreSessionAsync();
+            Services.LifecycleLog.Write($"init: session {Program.Startup.ElapsedMilliseconds}ms");
             if (user is null)
             {
                 ShowError("Your saved VRChat session expired. Sign in again.");
@@ -2636,12 +2640,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // Grouping the log events is the most expensive local read; do it
             // before the first screen asks for it, while the UI stays free.
             await WarmLocalCachesAsync(user.Id);
+            Services.LifecycleLog.Write($"init: caches {Program.Startup.ElapsedMilliseconds}ms");
             ApplyCurrentUser(user);
+            Services.LifecycleLog.Write($"init: current-user {Program.Startup.ElapsedMilliseconds}ms");
             IsLoggedIn = true;
             _realtime.Start();
             SelectedSection = _friendsNav;
+            Services.LifecycleLog.Write($"init: section {Program.Startup.ElapsedMilliseconds}ms");
             MultiAccountViewModel?.RememberCurrentAccount(user);
+            Services.LifecycleLog.Write($"init: refresh starting {Program.Startup.ElapsedMilliseconds}ms");
             await RefreshDataAsync(refreshUser: false);
+            Services.LifecycleLog.Write($"init: refresh done {Program.Startup.ElapsedMilliseconds}ms");
         }
         catch (VrcApiException ex)
         {
@@ -2893,9 +2902,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// cost one request per 100 friends, so only the fast-changing data is
     /// fetched here; the full download stays on startup and manual refresh.
     /// </summary>
+    /// <summary>
+    /// The safety-net polls exist so a person watching the app sees fresh rows.
+    /// While the window is minimized nobody is looking, and the realtime
+    /// pipeline still delivers events, so skip the fetch entirely.
+    /// </summary>
+    private static bool IsMainWindowMinimized()
+        => System.Windows.Application.Current?.MainWindow is
+            { WindowState: System.Windows.WindowState.Minimized };
+
     private async void OnActivityPollTick(object? sender, EventArgs e)
     {
-        if (!IsLoggedIn || IsBusy || _activityPollBusy)
+        if (!IsLoggedIn || IsBusy || _activityPollBusy || IsMainWindowMinimized())
         {
             return;
         }
@@ -2988,6 +3006,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         if (!IsLoggedIn ||
             _bioPollBusy ||
+            IsMainWindowMinimized() ||
             DateTimeOffset.UtcNow < _bioPollPausedUntil ||
             ActivityFeedViewModel is null ||
             CurrentUser is null)
@@ -9411,6 +9430,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
         _disposed = true;
+        // The activity feed is written on a short trailing timer, so give the
+        // pending snapshot a moment to reach disk before the process exits.
+        try
+        {
+            ActivityFeedViewModel?.FlushSaveAsync().Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("activity flush on shutdown: " + ex.Message);
+        }
+
         _cosmeticsCancellation.Cancel();
         CosmeticCatalog.Changed -= OnCosmeticCatalogChanged;
         _friendChanges.Dispose();

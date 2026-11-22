@@ -195,7 +195,9 @@ public sealed class ActivityPersistenceTests : IDisposable
             var path = Path.Combine(directory, "activity.json");
             Directory.CreateDirectory(directory);
 
-            var store = new ActivityStore(path);
+            // No write delay: this test needs the snapshot write to start while
+            // the delete runs.
+            var store = new ActivityStore(path, TimeSpan.Zero);
             store.Save(
                 "usr_owner",
                 Enumerable.Range(0, 20_000)

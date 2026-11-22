@@ -75,6 +75,7 @@ public partial class MainWindow : Window
         Deactivated += OnWindowDeactivated;
         Activated += OnWindowActivated;
         StateChanged += OnWindowStateChanged;
+        LifecycleLog.Write($"window-ready {Program.Startup.ElapsedMilliseconds}ms");
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -85,7 +86,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        LifecycleLog.Write($"window-loaded {Program.Startup.ElapsedMilliseconds}ms");
         await _viewModel.InitializeAsync();
+        LifecycleLog.Write($"initialized {Program.Startup.ElapsedMilliseconds}ms");
         _refreshTimer.Start();
 
         if (!_viewModel.IsLoggedIn && !_viewModel.IsTwoFactorRequired)
