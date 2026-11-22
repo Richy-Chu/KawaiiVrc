@@ -649,10 +649,6 @@ public partial class MainWindow : Window
                 : Visibility.Collapsed;
         }
 
-        Services.LifecycleLog.Write(
-            $"section: {key} shown={_shownSectionKey} " +
-            $"visible=[{string.Join(",", _sectionViews.Where(pair => pair.Value.Visibility == Visibility.Visible).Select(pair => pair.Key))}]");
-
         // The leave hook trusts the previous-section key, which can be stale if
         // the selection moved twice before layout settled. Sweep cached avatar
         // sections so their library is handed back regardless.
@@ -718,12 +714,15 @@ public partial class MainWindow : Window
             .Where(candidate => !string.Equals(candidate, key, StringComparison.Ordinal))
             .ToList();
         var released = _viewModel.ReleaseSectionData(key, liveKeys);
-        Services.LifecycleLog.Write(
-            $"avatar-release: {key} released={released} " +
-            $"busy={_viewModel.AvatarViewModel?.IsBusy} " +
-            $"rows={_viewModel.AvatarViewModel?.Avatars.Count} " +
-            $"selected={_viewModel.SelectedSection.Key} live=[{string.Join(",", liveKeys)}] " +
-            $"cached=[{string.Join(",", _sectionViews.Keys)}]");
+        if (LifecycleLog.Verbose)
+        {
+            LifecycleLog.Write(
+                $"avatar-release: {key} released={released} " +
+                $"busy={_viewModel.AvatarViewModel?.IsBusy} " +
+                $"rows={_viewModel.AvatarViewModel?.Avatars.Count} " +
+                $"selected={_viewModel.SelectedSection.Key} live=[{string.Join(",", liveKeys)}] " +
+                $"cached=[{string.Join(",", _sectionViews.Keys)}]");
+        }
         if (!released)
         {
             // The library was still arriving; hand it back once it has landed.

@@ -57,6 +57,35 @@ public sealed class SessionRestoreTests
     }
 
     [Fact]
+    public void ClearingKeepsABackupSoAnUnexpectedLossIsRecoverable()
+    {
+        var store = new SessionStore(Path.Combine(
+            Path.GetTempPath(),
+            "vrc-clear-" + Guid.NewGuid().ToString("N")));
+        store.Save("test-cookie");
+
+        store.Clear("unit test");
+
+        Assert.False(store.Exists);
+        Assert.True(store.HasBackup);
+        Assert.True(File.Exists(store.BackupPath));
+    }
+
+    [Fact]
+    public void AnExplicitSignOutRemovesTheBackupToo()
+    {
+        var store = new SessionStore(Path.Combine(
+            Path.GetTempPath(),
+            "vrc-clear-" + Guid.NewGuid().ToString("N")));
+        store.Save("test-cookie");
+
+        store.Clear("sign out", keepBackup: false);
+
+        Assert.False(store.Exists);
+        Assert.False(store.HasBackup);
+    }
+
+    [Fact]
     public void TheSuiteNeverUsesTheRealSessionFile()
     {
         var realPath = Path.Combine(

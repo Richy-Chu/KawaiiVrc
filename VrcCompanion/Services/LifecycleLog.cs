@@ -17,6 +17,15 @@ internal static class LifecycleLog
     private static string? _path;
 
     /// <summary>
+    /// Extra per-frame diagnostics (section switches, release decisions) are off
+    /// by default; set VRCCOMPANION_VERBOSE=1 to keep them in the log.
+    /// </summary>
+    public static bool Verbose { get; } = string.Equals(
+        Environment.GetEnvironmentVariable("VRCCOMPANION_VERBOSE"),
+        "1",
+        StringComparison.Ordinal);
+
+    /// <summary>
     /// Sends later entries to <paramref name="path"/> instead of the user's log. The
     /// test assembly points this at a temp file so test runs stay out of the real one.
     /// </summary>

@@ -2747,6 +2747,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         if (!_api.HasSavedSession)
         {
             Services.LifecycleLog.Write($"init: no saved session at {_api.SessionFilePath}");
+            if (_api.HasSessionBackup)
+            {
+                Services.LifecycleLog.Write($"init: session backup at {_api.SessionBackupPath}");
+            }
             return;
         }
 
@@ -2920,7 +2924,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (VrcApiException ex) when (ex.StatusCode == 401)
         {
             SignOutLocally("Your VRChat session expired. Sign in again.");
-            _api.ClearSavedSession();
+            _api.ClearSavedSession("instance refresh 401");
         }
         catch (VrcApiException ex)
         {
@@ -3607,7 +3611,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 if (result.User is null)
                 {
                     SignOutLocally("Your VRChat session expired. Sign in again.");
-                    _api.ClearSavedSession();
+                    _api.ClearSavedSession("account response empty");
                     return;
                 }
 
@@ -3649,7 +3653,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (VrcApiException ex) when (ex.StatusCode == 401)
         {
             SignOutLocally("Your VRChat session expired. Sign in again.");
-            _api.ClearSavedSession();
+            _api.ClearSavedSession("refresh 401");
         }
         catch (VrcApiException ex)
         {
@@ -3701,7 +3705,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            _api.ClearSavedSession();
+            _api.ClearSavedSession("session not remembered", keepBackup: false);
         }
 
         SelectedSection = _friendsNav;
@@ -3746,7 +3750,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            _api.ClearSavedSession();
+            _api.ClearSavedSession("session not remembered", keepBackup: false);
         }
 
         RaiseCommandStates();

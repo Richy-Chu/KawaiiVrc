@@ -208,7 +208,7 @@ public sealed class VrcApiClient : IDisposable
         }
         catch (VrcApiException ex) when (ex.StatusCode == 401)
         {
-            _sessionStore.Clear();
+            _sessionStore.Clear("restore rejected 401");
             ClearAuthCookie();
             return null;
         }
@@ -235,7 +235,12 @@ public sealed class VrcApiClient : IDisposable
         }
     }
 
-    public void ClearSavedSession() => _sessionStore.Clear();
+    public void ClearSavedSession(string reason = "unspecified", bool keepBackup = true)
+        => _sessionStore.Clear(reason, keepBackup);
+
+    public bool HasSessionBackup => _sessionStore.HasBackup;
+
+    public string SessionBackupPath => _sessionStore.BackupPath;
 
     /// <summary>The auth cookie for the current session, if one is available.</summary>
     public string? CurrentAuthCookie => GetAuthCookieValue();
@@ -338,7 +343,7 @@ public sealed class VrcApiClient : IDisposable
         {
             CurrentUser = null;
             ClearAuthCookie();
-            _sessionStore.Clear();
+            _sessionStore.Clear("sign out", keepBackup: false);
             ClearCaches();
             SyncImageAuth();
         }

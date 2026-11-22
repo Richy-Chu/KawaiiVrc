@@ -41,6 +41,24 @@ public sealed class SessionStore
 
     public string FilePath => _path;
 
+    /// <summary>Last cleared session, kept so an unexpected clear is recoverable.</summary>
+    public string BackupPath => _path + ".bak";
+
+    public bool HasBackup
+    {
+        get
+        {
+            try
+            {
+                return File.Exists(BackupPath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
     public bool Exists
     {
         get
@@ -111,8 +129,29 @@ public sealed class SessionStore
         }
     }
 
-    public void Clear()
+    public void Clear(string reason = "unspecified", bool keepBackup = true)
     {
+        string? backup = null;
+        try
+        {
+            if (File.Exists(_path) && keepBackup)
+            {
+                File.Copy(_path, BackupPath, overwrite: true);
+                backup = BackupPath;
+            }
+            else if (!keepBackup && File.Exists(BackupPath))
+            {
+                File.Delete(BackupPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            LifecycleLog.Write($"session: backup before clear failed {ex.GetType().Name}");
+        }
+
+        LifecycleLog.Write(
+            $"session: cleared ({reason}) backup={(backup is null ? "none" : backup)}");
+
         try
         {
             if (File.Exists(_path))

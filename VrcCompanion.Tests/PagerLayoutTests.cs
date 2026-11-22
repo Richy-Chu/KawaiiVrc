@@ -47,6 +47,9 @@ public class PagerLayoutTests
 
             shell.ShowOnlineOnly = true;
             shell.ShowOnlineOnly = false;
+            // The signed-in shell has to be visible: a collapsed shell does not
+            // reliably measure its section templates.
+            TestHooks.SetLoggedIn(shell);
 
             var window = Host(new MainWindow(shell, initializeOnLoad: false));
             try
@@ -83,6 +86,7 @@ public class PagerLayoutTests
             using var api = IsolatedApi();
             using var shell = new MainViewModel(api);
             shell.ShowOnlineOnly = true;
+            TestHooks.SetLoggedIn(shell);
             var window = Host(new MainWindow(shell, initializeOnLoad: false));
             try
             {
