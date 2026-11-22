@@ -1,6 +1,10 @@
 using System;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 using VrcCompanion.Models;
@@ -100,6 +104,94 @@ public class AvatarTabSwitchTests
     }
 
     [Fact]
+    public async Task WearingAnAvatarPastTheFirstChunkSelectsThatAvatar()
+    {
+        var handler = new AvatarSelectHandler();
+        using var api = new VrcApiClient(null, handler);
+        var viewModel = new AvatarViewModel(api);
+        var rows = Library(200);
+        viewModel.SeedLibraryForTests(rows);
+
+        // The card is not built, so only the library kept behind the chunk can
+        // still answer for this avatar id.
+        Assert.Equal(48, viewModel.Avatars.Count);
+        Assert.DoesNotContain(viewModel.Avatars, avatar => avatar.Id == "avtr_199");
+
+        var worn = new TaskCompletionSource<Avatar>(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewModel.AvatarWorn += avatar => worn.TrySetResult(avatar);
+
+        ((AsyncRelayCommand<string>)viewModel.WearAvatarCommand).Execute("avtr_199");
+
+        Assert.Equal(
+            "avtr_199",
+            await handler.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(
+            "avtr_199",
+            (await worn.Task.WaitAsync(TimeSpan.FromSeconds(5))).Id);
+
+        // The library row itself carries the worn state, not a copy of the chunk.
+        Assert.True(rows[199].IsWearing);
+    }
+
+    [Fact]
+    public void FavouritingAnAvatarPastTheFirstChunkFindsItInTheLibrary()
+    {
+        using var api = new VrcApiClient();
+        var viewModel = new AvatarViewModel(api);
+        viewModel.SeedLibraryForTests(Library(200));
+
+        Assert.Equal(48, viewModel.Avatars.Count);
+
+        // The star button passes the card's id, so the slot picker has to
+        // resolve an avatar whose card was never built.
+        viewModel.OpenSlotPickerForTests("avtr_199");
+
+        Assert.True(viewModel.IsSlotPickerOpen);
+        Assert.Equal("Avatar 199", viewModel.PendingFavoriteAvatarName);
+    }
+
+    [Fact]
+    public void SearchStillReachesAvatarsWhoseCardsAreNotBuilt()
+    {
+        using var api = new VrcApiClient();
+        var viewModel = new AvatarViewModel(api);
+        viewModel.SeedLibraryForTests(Library(200));
+
+        Assert.Equal(48, viewModel.Avatars.Count);
+
+        // Search filters the library, so a match past the first chunk must
+        // still become a card.
+        viewModel.SearchTerm = "Avatar 199";
+
+        var match = Assert.Single(viewModel.Avatars);
+        Assert.Equal("avtr_199", match.Id);
+    }
+
+    [Fact]
+    public void TheSummaryCountsTheWholeFilteredLibraryNotJustTheBuiltChunk()
+    {
+        using var api = new VrcApiClient();
+        var viewModel = new AvatarViewModel(api);
+        var rows = Library(200);
+        viewModel.SeedLibraryForTests(rows);
+
+        Assert.Equal("200 uploaded avatars", viewModel.SummaryText);
+
+        viewModel.SearchTerm = "Avatar";
+
+        // Every avatar matches, but only the first chunk is a card.
+        Assert.Equal(48, viewModel.Avatars.Count);
+        Assert.Equal("200 of 200 uploaded avatars", viewModel.SummaryText);
+
+        viewModel.SearchTerm = string.Empty;
+        viewModel.SeedFavoritesForTests(rows);
+        viewModel.FavoritesOnly = true;
+
+        Assert.Equal(48, viewModel.Avatars.Count);
+        Assert.Equal("200 favourite avatars", viewModel.SummaryText);
+    }
+
+    [Fact]
     public void SwitchingAccountsKeepsTheSectionThatIsOpen()
     {
         WpfTestHost.Run(() =>
@@ -114,6 +206,34 @@ public class AvatarTabSwitchTests
 
             Assert.Equal("accounts", shell.SelectedSection.Key);
         });
+    }
+
+    private static Avatar[] Library(int count)
+        => Enumerable.Range(0, count)
+            .Select(index => new Avatar { Id = $"avtr_{index}", Name = $"Avatar {index}" })
+            .ToArray();
+
+    /// <summary>Answers every request, and reports the avatar id the app selected.</summary>
+    private sealed class AvatarSelectHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource<string> Selected { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.EndsWith("/select", StringComparison.Ordinal))
+            {
+                Selected.TrySetResult(path.Split('/')[^2]);
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            });
+        }
     }
 
     private static void SeedLibrary(MainViewModel shell)

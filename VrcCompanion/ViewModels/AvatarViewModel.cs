@@ -1438,9 +1438,11 @@ public sealed class AvatarViewModel : ViewModelBase
                 return HasLoaded ? "No uploaded avatars yet" : string.Empty;
             }
 
+            // The grid builds a chunk at a time, so these counts describe the
+            // filtered library, never the cards that happen to be built.
             if (FavoritesOnly)
             {
-                return Avatars.Count == 1 ? "1 favourite avatar" : $"{Avatars.Count} favourite avatars";
+                return _filteredCount == 1 ? "1 favourite avatar" : $"{_filteredCount} favourite avatars";
             }
 
             if (string.IsNullOrWhiteSpace(_searchTerm))
@@ -1448,7 +1450,7 @@ public sealed class AvatarViewModel : ViewModelBase
                 return _library.Count == 1 ? "1 uploaded avatar" : $"{_library.Count} uploaded avatars";
             }
 
-            return $"{Avatars.Count} of {_library.Count} uploaded avatars";
+            return $"{_filteredCount} of {_library.Count} uploaded avatars";
         }
     }
 
@@ -1672,6 +1674,9 @@ public sealed class AvatarViewModel : ViewModelBase
             _library = new List<Avatar>();
             Avatars = new ObservableCollection<Avatar>();
             TotalCount = 0;
+            // A reload (refresh, account switch) starts a new grid, so it must
+            // not inherit however many chunks the previous one had revealed.
+            _visibleLimit = AvatarChunk;
 
             // Publish every page as soon as it lands instead of waiting for the
             // whole library, so large accounts fill in progressively.
