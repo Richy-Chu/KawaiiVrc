@@ -1557,11 +1557,15 @@ public sealed class AvatarViewModel : ViewModelBase
     /// binds its own rows and is not touched. The next visit reloads because
     /// HasLoaded is reset.
     /// </summary>
-    public void ReleaseLibraryData(bool keepFavoriteRows)
+    /// <summary>
+    /// Drops the loaded library rows and the images they hold. Returns false
+    /// when the library is still arriving, so the caller can retry.
+    /// </summary>
+    public bool ReleaseLibraryData(bool keepFavoriteRows)
     {
         if (IsBusy)
         {
-            return;
+            return false;
         }
 
         if (keepFavoriteRows)
@@ -1591,6 +1595,7 @@ public sealed class AvatarViewModel : ViewModelBase
         Avatars = new ObservableCollection<Avatar>();
         TotalCount = 0;
         HasLoaded = false;
+        return true;
     }
 
     /// <summary>Drops browse results, which are the heaviest rows this tab keeps.</summary>

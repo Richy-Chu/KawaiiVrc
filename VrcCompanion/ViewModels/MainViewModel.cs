@@ -959,7 +959,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// visit to a heavy tab raised private memory for the rest of the session.
     /// Every path here is re-entered when the section is selected again.
     /// </summary>
-    public void ReleaseSectionData(string key, IReadOnlyCollection<string> liveKeys)
+    public bool ReleaseSectionData(string key, IReadOnlyCollection<string> liveKeys)
     {
         switch (key)
         {
@@ -983,19 +983,27 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 break;
             case "avatars":
             case "avatarsearch":
+            {
+                var released = true;
                 if (!liveKeys.Contains("avatars") && !liveKeys.Contains("avatarsearch"))
                 {
-                    AvatarViewModel?.ReleaseLibraryData(keepFavoriteRows: liveKeys.Contains("favorites"));
+                    released = AvatarViewModel?.ReleaseLibraryData(
+                        keepFavoriteRows: liveKeys.Contains("favorites")) ?? true;
                 }
+
                 if (!liveKeys.Contains("avatarsearch"))
                 {
                     AvatarViewModel?.ReleaseBrowseData();
                 }
-                break;
+
+                return released;
+            }
             case "favorites":
                 AvatarViewModel?.ReleaseFavoritesData();
                 break;
         }
+
+        return true;
     }
 
     public string SectionTitle => SelectedSection.Title;
@@ -3628,7 +3636,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         IsLoggedIn = true;
         _realtime.Start();
         IsTwoFactorRequired = false;
-        SelectedSection = _friendsNav;
+
+        // Switching from the Accounts page should leave you on that page, not
+        // throw you back to Friends; only fall back when the section is gone.
+        if (SelectedSection is null)
+        {
+            SelectedSection = _friendsNav;
+        }
 
         ResetAccountScopedViewModels();
 

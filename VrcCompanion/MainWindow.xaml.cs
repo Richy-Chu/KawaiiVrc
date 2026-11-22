@@ -33,6 +33,17 @@ public partial class MainWindow : Window
     private readonly UiStallMonitor _stallMonitor;
     private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
     private static readonly TimeSpan SectionDataGrace = TimeSpan.FromSeconds(90);
+
+    /// <summary>
+    /// The avatar library is the heaviest tab by a wide margin: its rows hold
+    /// every decoded avatar image, which measured ~230 MB on a first visit. It
+    /// is handed back as soon as the tab is left instead of waiting out the
+    /// grace period the cheaper tabs get.
+    /// </summary>
+    private static readonly TimeSpan AvatarDataGrace = TimeSpan.Zero;
+
+    private static readonly TimeSpan AvatarReleaseRetry = TimeSpan.FromSeconds(5);
+    private string _shownSectionKey = string.Empty;
     private readonly Dictionary<string, CancellationTokenSource> _pendingReleases = new(StringComparer.Ordinal);
     private bool _settleScheduled;
     private DateTimeOffset _lastSettleAt = DateTimeOffset.MinValue;
@@ -585,6 +596,8 @@ public partial class MainWindow : Window
     private void ShowSelectedSection()
     {
         var key = _viewModel.SelectedSection.Key;
+        ReleaseAvatarDataOnLeave(key);
+        _shownSectionKey = key;
         if (!_sectionViews.TryGetValue(key, out var view))
         {
             var template = FindResource(TemplateKeyFor(key)) as DataTemplate
@@ -640,6 +653,54 @@ public partial class MainWindow : Window
         }
     }
 
+    private static bool IsAvatarSectionKey(string key)
+        => string.Equals(key, "avatars", StringComparison.Ordinal) ||
+           string.Equals(key, "avatarsearch", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Avatar data only counts as live while an avatar tab is actually on
+    /// screen. A cached but hidden avatar view keeps no claim on its rows.
+    /// </summary>
+    private List<string> LiveSectionKeys()
+    {
+        var selectedKey = _viewModel.SelectedSection.Key;
+        return _sectionViews.Keys
+            .Where(candidate => !IsAvatarSectionKey(candidate) ||
+                                string.Equals(candidate, selectedKey, StringComparison.Ordinal))
+            .ToList();
+    }
+
+    private void ReleaseAvatarDataOnLeave(string key)
+    {
+        if (AvatarDataGrace > TimeSpan.Zero ||
+            string.IsNullOrEmpty(_shownSectionKey) ||
+            string.Equals(_shownSectionKey, key, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var left = _shownSectionKey;
+        if (!IsAvatarSectionKey(left) || IsAvatarSectionKey(key))
+        {
+            return;
+        }
+
+        ReleaseAvatarData(left);
+    }
+
+    private void ReleaseAvatarData(string key)
+    {
+        CancelDataRelease(key);
+        if (!_viewModel.ReleaseSectionData(key, LiveSectionKeys()))
+        {
+            // The library was still arriving; hand it back once it has landed.
+            ScheduleDataRelease(key, AvatarReleaseRetry);
+            return;
+        }
+
+        ScheduleSettle();
+    }
+
     private void CancelAllDataReleases()
     {
         foreach (var pending in _pendingReleases.Values)
@@ -676,7 +737,9 @@ public partial class MainWindow : Window
     /// is released once the tab has stayed closed long enough that returning is
     /// a deliberate act, and returning cancels the release.
     /// </summary>
-    private void ScheduleDataRelease(string key)
+    private void ScheduleDataRelease(string key) => ScheduleDataRelease(key, SectionDataGrace);
+
+    private void ScheduleDataRelease(string key, TimeSpan delay)
     {
         CancelDataRelease(key);
         var cts = new CancellationTokenSource();
@@ -687,7 +750,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                await Task.Delay(SectionDataGrace, token).ConfigureAwait(false);
+                await Task.Delay(delay, token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -702,7 +765,7 @@ public partial class MainWindow : Window
                 }
 
                 _pendingReleases.Remove(key);
-                _viewModel.ReleaseSectionData(key, _sectionViews.Keys.ToList());
+                _viewModel.ReleaseSectionData(key, LiveSectionKeys());
                 ScheduleSettle();
             });
         });
