@@ -187,6 +187,34 @@ public class UpdateViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task TheStartupCheckDoesNotRepeatTheActivationCheck()
+    {
+        // The window activates while the view model is still initializing, so the
+        // opening check is the activation one. The delayed startup check then used
+        // to run a second time seconds later, logging two automatic checks.
+        var service = new FakeUpdateService();
+        var viewModel = new UpdateViewModel(service, _settings, startupDelay: TimeSpan.Zero);
+
+        await viewModel.RequestCheckIfStale(UpdateViewModel.FreshCheckAge);
+        Assert.Equal(1, service.CheckCalls);
+
+        await viewModel.RunStartupCheckAsync();
+
+        Assert.Equal(1, service.CheckCalls);
+    }
+
+    [Fact]
+    public async Task TheStartupCheckRunsWhenNothingHasCheckedYet()
+    {
+        var service = new FakeUpdateService();
+        var viewModel = new UpdateViewModel(service, _settings, startupDelay: TimeSpan.Zero);
+
+        await viewModel.RunStartupCheckAsync();
+
+        Assert.Equal(1, service.CheckCalls);
+    }
+
+    [Fact]
     public async Task NonInstalledBuildsDisableChecksAndExplainWhy()
     {
         var service = new FakeUpdateService { IsSupported = false };

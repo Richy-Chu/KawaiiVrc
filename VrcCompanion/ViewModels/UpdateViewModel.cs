@@ -21,12 +21,21 @@ public sealed class UpdateViewModel : ViewModelBase
     // anyone wait: three seconds is enough for the window and its refresh to settle.
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(3);
 
+    /// <summary>
+    /// How recent a result has to be for a second check to be pointless. The
+    /// window activates before initialization reaches <see cref="Start"/>, so the
+    /// opening check is usually the activation one; this is the age the startup
+    /// check respects so it does not repeat it seconds later.
+    /// </summary>
+    internal static readonly TimeSpan FreshCheckAge = TimeSpan.FromMinutes(2);
+
     /// <summary>Shown next to the disabled Settings button so the state is explained.</summary>
     public const string UnsupportedText =
         "Update checks need the installed copy. This build runs from a folder or a dev build, so updates are off.";
 
     private readonly IAppUpdateService _service;
     private readonly SettingsStore _settings;
+    private readonly TimeSpan _startupDelay;
     private DispatcherTimer? _timer;
 
     private CancellationTokenSource? _downloadCancellation;
@@ -55,9 +64,15 @@ public sealed class UpdateViewModel : ViewModelBase
     }
 
     public UpdateViewModel(IAppUpdateService service, SettingsStore settings)
+        : this(service, settings, startupDelay: null)
+    {
+    }
+
+    internal UpdateViewModel(IAppUpdateService service, SettingsStore settings, TimeSpan? startupDelay)
     {
         _service = service;
         _settings = settings;
+        _startupDelay = startupDelay ?? StartupDelay;
 
         CheckCommand = new AsyncRelayCommand(() => CheckNowAsync(manual: true), () => CanCheck);
         DownloadCommand = new AsyncRelayCommand(DownloadNowAsync, () => CanDownload);
@@ -238,10 +253,15 @@ public sealed class UpdateViewModel : ViewModelBase
 
         // Only a running app needs the timer; tests and design-time hosts do not.
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = CheckInterval };
-        _timer.Tick += (_, _) => _ = CheckNowAsync(manual: false);
+        // Same gate as the other automatic paths: an activation that just checked
+        // does not need this tick to check again.
+        _timer.Tick += (_, _) => _ = RequestCheckIfStale(FreshCheckAge);
         _timer.Start();
-        _ = CheckAfterStartupDelayAsync();
+        _ = RunStartupCheckAsync();
     }
+
+    /// <summary>The delayed opening check; a test hook for the startup path.</summary>
+    internal Task RunStartupCheckAsync() => CheckAfterStartupDelayAsync();
 
     /// <summary>
     /// A cheap check for "did anything change while I was away": runs only when
@@ -354,7 +374,7 @@ public sealed class UpdateViewModel : ViewModelBase
     {
         try
         {
-            await Task.Delay(StartupDelay).ConfigureAwait(false);
+            await Task.Delay(_startupDelay).ConfigureAwait(false);
         }
         catch
         {
@@ -363,7 +383,9 @@ public sealed class UpdateViewModel : ViewModelBase
 
         try
         {
-            await CheckNowAsync(manual: false).ConfigureAwait(false);
+            // Not a bare check: the window activates first and may already have
+            // checked, and running both put two checks seconds apart in the log.
+            await RequestCheckIfStale(FreshCheckAge).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
