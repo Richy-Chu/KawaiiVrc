@@ -42,7 +42,6 @@ public partial class MainWindow : Window
     /// </summary>
     private static readonly TimeSpan AvatarDataGrace = TimeSpan.Zero;
 
-    private static readonly TimeSpan AvatarReleaseRetry = TimeSpan.FromSeconds(5);
     private string _shownSectionKey = string.Empty;
     private readonly Dictionary<string, CancellationTokenSource> _pendingReleases = new(StringComparer.Ordinal);
     private bool _settleScheduled;
@@ -653,6 +652,9 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>How long to wait before retrying a release that was refused.</summary>
+    internal TimeSpan AvatarReleaseRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
+
     private static bool IsAvatarSectionKey(string key)
         => string.Equals(key, "avatars", StringComparison.Ordinal) ||
            string.Equals(key, "avatarsearch", StringComparison.Ordinal);
@@ -694,7 +696,7 @@ public partial class MainWindow : Window
         if (!_viewModel.ReleaseSectionData(key, LiveSectionKeys()))
         {
             // The library was still arriving; hand it back once it has landed.
-            ScheduleDataRelease(key, AvatarReleaseRetry);
+            ScheduleDataRelease(key, AvatarReleaseRetryDelay);
             return;
         }
 

@@ -2483,7 +2483,7 @@
                                                 VerticalAlignment="Top">
                                             <Grid>
                                                 <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}"
-                                                                     DecodeWidth="256">
+                                                                     DecodeWidth="160">
                                                     <controls:AsyncImage.Style>
                                                         <Style TargetType="{x:Type controls:AsyncImage}">
                                                             <Setter Property="Opacity" Value="1" />
@@ -2585,6 +2585,18 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <Button Style="{StaticResource SecondaryButton}"
+                            HorizontalAlignment="Center"
+                            Padding="16,8"
+                            Margin="0,4,0,4"
+                            Command="{Binding AvatarViewModel.ShowMoreAvatarsCommand}"
+                            Visibility="{Binding AvatarViewModel.HasMoreAvatars, Converter={StaticResource BoolToVis}}">
+                        <TextBlock FontSize="11">
+                            <Run Text="Show more avatars" />
+                            <Run Text="(" /><Run Text="{Binding AvatarViewModel.HiddenAvatarCount, Mode=OneWay}" /><Run Text=" still to load)" />
+                        </TextBlock>
+                    </Button>
 
                     <!-- Busy / error -->
                     <TextBlock Text="Loading your uploaded avatarsâ€¦"
@@ -2760,7 +2772,7 @@
                                                             Background="{StaticResource InputBrush}"
                                                             HorizontalAlignment="Center">
                                                         <Grid>
-                                                            <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}" DecodeWidth="256">
+                                                            <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}" DecodeWidth="160">
                                                                 <controls:AsyncImage.Style>
                                                                     <Style TargetType="{x:Type controls:AsyncImage}">
                                                                         <Setter Property="Opacity" Value="1" />

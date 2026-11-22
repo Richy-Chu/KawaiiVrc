@@ -3632,6 +3632,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private async void OnAccountSessionSwitched(VrcUser user)
     {
+        ApplySwitchedAccount(user);
+        await RefreshDataAsync(refreshUser: false);
+    }
+
+    /// <summary>
+    /// The part of an account switch that decides what the window shows. It
+    /// deliberately keeps whichever section is open: switching from Accounts
+    /// used to throw the user back to Friends mid-flow.
+    /// </summary>
+    internal void ApplySwitchedAccount(VrcUser user)
+    {
         ApplyCurrentUser(user);
         IsLoggedIn = true;
         _realtime.Start();
@@ -3656,7 +3667,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         RaiseCommandStates();
-        await RefreshDataAsync(refreshUser: false);
     }
 
     private async Task VerifyTwoFactorAsync()

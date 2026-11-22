@@ -134,6 +134,24 @@ internal static class TestHooks
 
     public static bool ShouldSkipStartupRestore => _skipStartupRestore;
 
+    /// <summary>Marks a seeded library as loaded so selecting the tab makes no request.</summary>
+    public static void MarkAvatarsLoaded(AvatarViewModel viewModel)
+    {
+        typeof(AvatarViewModel)
+            .GetProperty(nameof(AvatarViewModel.HasLoaded))
+            ?.GetSetMethod(nonPublic: true)
+            ?.Invoke(viewModel, new object[] { true });
+    }
+
+    /// <summary>Marks the avatar library as still loading, so a release is refused.</summary>
+    public static void SetAvatarBusy(AvatarViewModel viewModel, bool busy)
+    {
+        typeof(AvatarViewModel)
+            .GetProperty(nameof(AvatarViewModel.IsBusy))
+            ?.GetSetMethod(nonPublic: true)
+            ?.Invoke(viewModel, new object[] { busy });
+    }
+
     public static void SetLoggedIn(MainViewModel shell)
     {
         var setter = typeof(MainViewModel)

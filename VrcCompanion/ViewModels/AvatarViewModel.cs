@@ -71,6 +71,7 @@ public sealed class AvatarViewModel : ViewModelBase
         _api = api;
 
         SearchCommand = Track(new RelayCommand(ApplyFilter));
+        ShowMoreAvatarsCommand = Track(new RelayCommand(ShowMoreAvatars, () => HasMoreAvatars));
         RefreshCommand = Track(new AsyncRelayCommand(LoadAsync, () => !IsBusy));
         ToggleFavoriteCommand = Track(new AsyncRelayCommand<string>(ToggleFavoriteAsync, _ => !IsBusy));
         WearAvatarCommand = Track(new AsyncRelayCommand<string>(WearAvatarAsync, _ => !IsWearingAvatar));
@@ -1594,7 +1595,11 @@ public sealed class AvatarViewModel : ViewModelBase
         _library = new List<Avatar>();
         Avatars = new ObservableCollection<Avatar>();
         TotalCount = 0;
+        _filteredCount = 0;
+        _visibleLimit = AvatarChunk;
         HasLoaded = false;
+        OnPropertyChanged(nameof(HasMoreAvatars));
+        OnPropertyChanged(nameof(HiddenAvatarCount));
         return true;
     }
 
@@ -1927,9 +1932,44 @@ public sealed class AvatarViewModel : ViewModelBase
     /// <summary>Rebuilds the visible grid from the library for the current query and sort.</summary>
     private void ApplyFilter()
     {
-        Avatars = new ObservableCollection<Avatar>(
-            SortAvatars(_library.Where(Matches), SelectedAvatarSort));
+        var rows = SortAvatars(_library.Where(Matches), SelectedAvatarSort).ToList();
+        _filteredCount = rows.Count;
+
+        // Every card in this grid is a realised visual with its own decoded
+        // image, and WPF's ItemsControl over a WrapPanel does not recycle them.
+        // Large accounts (500+ avatars) therefore used to build the whole grid
+        // at once and never give it back, so the page only publishes a chunk at
+        // a time and the rest arrive on request.
+        _visibleLimit = Math.Max(AvatarChunk, Math.Min(_visibleLimit, _filteredCount));
+        Avatars = new ObservableCollection<Avatar>(rows.Take(_visibleLimit));
         UpdateSummary();
+        OnPropertyChanged(nameof(HasMoreAvatars));
+        OnPropertyChanged(nameof(HiddenAvatarCount));
+        ShowMoreAvatarsCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>How many more cards to add when the user asks for them.</summary>
+    private const int AvatarChunk = 48;
+
+    private int _visibleLimit = AvatarChunk;
+    private int _filteredCount;
+
+    /// <summary>True while the filtered library still has cards that are not built.</summary>
+    public bool HasMoreAvatars => Avatars.Count < _filteredCount;
+
+    public int HiddenAvatarCount => Math.Max(0, _filteredCount - Avatars.Count);
+
+    public IRelayCommand ShowMoreAvatarsCommand { get; }
+
+    public void ShowMoreAvatars()
+    {
+        if (!HasMoreAvatars)
+        {
+            return;
+        }
+
+        _visibleLimit = Math.Min(_filteredCount, _visibleLimit + (AvatarChunk * 2));
+        ApplyFilter();
     }
 
     private FilterOption ResolveAvatarSort(string? key)
@@ -2017,7 +2057,9 @@ public sealed class AvatarViewModel : ViewModelBase
 
     private void UpdateSummary()
     {
-        TotalCount = Avatars.Count;
+        // The grid publishes a chunk at a time, so the headline count must come
+        // from the filtered library, not from the cards that happen to be built.
+        TotalCount = _filteredCount;
         NotifySummaryChanged();
     }
 
