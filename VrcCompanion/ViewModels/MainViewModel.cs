@@ -2561,6 +2561,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     // ----------------------------------------------------------------- flows
 
+    /// <summary>
+    /// True once startup has run. Exposed so a test can prove the window actually
+    /// starts it: when the call was dropped the app silently never restored.
+    /// </summary>
+    internal bool HasInitialized => _initialized;
+
     public async Task InitializeAsync()
     {
         if (_initialized)
@@ -2568,6 +2574,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
         _initialized = true;
+
+        if (Services.TestHooks.ShouldSkipStartupRestore)
+        {
+            return;
+        }
 
         // A no-op unless this is an installed Velopack build.
         UpdateViewModel.Start();

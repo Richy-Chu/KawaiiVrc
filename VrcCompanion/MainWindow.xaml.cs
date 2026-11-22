@@ -32,6 +32,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _backgroundTrimTimer;
     private readonly UiStallMonitor _stallMonitor;
     private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
+    private static readonly TimeSpan SectionDataGrace = TimeSpan.FromSeconds(90);
+    private readonly Dictionary<string, CancellationTokenSource> _pendingReleases = new(StringComparer.Ordinal);
     private bool _settleScheduled;
     private DateTimeOffset _lastSettleAt = DateTimeOffset.MinValue;
     private readonly List<string> _sectionOrder = new();
@@ -601,6 +603,7 @@ public partial class MainWindow : Window
             SectionHost.Children.Add(view);
         }
 
+        CancelDataRelease(key);
         _sectionOrder.Remove(key);
         _sectionOrder.Add(key);
         LifecycleLog.Write($"section: {key} live={_sectionViews.Count}");
@@ -636,6 +639,17 @@ public partial class MainWindow : Window
         }
     }
 
+    private void CancelAllDataReleases()
+    {
+        foreach (var pending in _pendingReleases.Values)
+        {
+            pending.Cancel();
+            pending.Dispose();
+        }
+
+        _pendingReleases.Clear();
+    }
+
     private void EvictSectionView(string key)
     {
         if (string.Equals(key, _viewModel.SelectedSection.Key, StringComparison.Ordinal) ||
@@ -650,8 +664,56 @@ public partial class MainWindow : Window
         SectionHost.Children.Remove(view);
         view.Content = null;
         view.ContentTemplate = null;
-        _viewModel.ReleaseSectionData(key, _sectionViews.Keys.ToList());
+        ScheduleDataRelease(key);
         ScheduleSettle();
+    }
+
+    /// <summary>
+    /// A section that was just left keeps its loaded data for a while. Dropping
+    /// it immediately made every hop back to a tab refetch from scratch, which
+    /// showed up as memory dropping and then climbing straight back up. The data
+    /// is released once the tab has stayed closed long enough that returning is
+    /// a deliberate act, and returning cancels the release.
+    /// </summary>
+    private void ScheduleDataRelease(string key)
+    {
+        CancelDataRelease(key);
+        var cts = new CancellationTokenSource();
+        _pendingReleases[key] = cts;
+        var token = cts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(SectionDataGrace, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                _pendingReleases.Remove(key);
+                _viewModel.ReleaseSectionData(key, _sectionViews.Keys.ToList());
+                ScheduleSettle();
+            });
+        });
+    }
+
+    private void CancelDataRelease(string key)
+    {
+        if (_pendingReleases.Remove(key, out var pending))
+        {
+            pending.Cancel();
+            pending.Dispose();
+        }
     }
 
     /// <summary>
@@ -926,6 +988,7 @@ public partial class MainWindow : Window
         _isClosed = true;
         _refreshTimer.Stop();
         _backgroundTrimTimer.Stop();
+        CancelAllDataReleases();
         _stallMonitor.Dispose();
     }
 

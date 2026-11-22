@@ -45,6 +45,31 @@ public class MainWindowLifetimeTests
     }
 
     [Fact]
+    public void ShowingTheWindowStartsTheStartupWork()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            TestHooks.SkipStartupRestore();
+            Assert.False(shell.HasInitialized);
+
+            var window = CreateWindow(shell, initializeOnLoad: true);
+            window.Show();
+            Pump(window);
+
+            // Without this call the app never restored the saved session, never
+            // refreshed, and never registered the signed-in account.
+            Assert.True(
+                shell.HasInitialized,
+                "MainWindow.OnLoaded must await MainViewModel.InitializeAsync().");
+
+            window.Close();
+            Pump(window);
+        });
+    }
+
+    [Fact]
     public void AClosedWindowCannotTrimTheSharedImageCache()
     {
         WpfTestHost.Run(() =>
@@ -78,8 +103,8 @@ public class MainWindowLifetimeTests
             expected,
             MainWindow.ShouldTrimBackgroundImages(isClosed, isActive, state));
 
-    private static MainWindow CreateWindow(MainViewModel shell)
-        => new(shell, initializeOnLoad: false)
+    private static MainWindow CreateWindow(MainViewModel shell, bool initializeOnLoad = false)
+        => new(shell, initializeOnLoad)
         {
             Width = 1100,
             Height = 720,

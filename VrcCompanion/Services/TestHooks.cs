@@ -124,6 +124,16 @@ internal static class TestHooks
         => AttachViewModel(shell, nameof(MainViewModel.CurrentUser), user);
 
     /// <summary>Marks the shell as signed in so command guards run in tests.</summary>
+    private static bool _skipStartupRestore;
+
+    /// <summary>
+    /// Lets a window test reach the startup path without calling VRChat: the
+    /// restore is skipped, but the call that starts it still has to happen.
+    /// </summary>
+    public static void SkipStartupRestore(bool skip = true) => _skipStartupRestore = skip;
+
+    public static bool ShouldSkipStartupRestore => _skipStartupRestore;
+
     public static void SetLoggedIn(MainViewModel shell)
     {
         var setter = typeof(MainViewModel)
@@ -217,6 +227,7 @@ internal static class TestHooks
     /// </summary>
     public static void ResetAll()
     {
+        _skipStartupRestore = false;
         UseCommunityHandler(null);
         ClearLoggedAvatars();
         ResetClock();
