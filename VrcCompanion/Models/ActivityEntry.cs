@@ -46,7 +46,19 @@ public sealed class ActivityEntry : INotifyPropertyChanged
     [JsonPropertyName("developerType")]
     public string? DeveloperType { get; set; }
 
+    /// <summary>
+    /// The url as stored. A row without an avatar image keeps the property off
+    /// the file entirely; it used to write an empty string on every row.
+    /// </summary>
     [JsonPropertyName("avatarUrl")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StoredAvatarUrl
+    {
+        get => string.IsNullOrEmpty(_avatarUrl) ? null : _avatarUrl;
+        set => AvatarUrl = value ?? string.Empty;
+    }
+
+    [JsonIgnore]
     public string AvatarUrl
     {
         get => _avatarUrl;
@@ -116,6 +128,12 @@ public sealed class ActivityEntry : INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvatarActionTooltip)));
         }
     }
+
+    /// <summary>
+    /// A copy that shares the tags list and string values. The store writes this
+    /// with the per-user data lifted out, so the live row keeps its badges.
+    /// </summary>
+    internal ActivityEntry ShallowCopy() => (ActivityEntry)MemberwiseClone();
 
     [JsonIgnore]
     public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarId);

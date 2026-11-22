@@ -18,8 +18,8 @@ public sealed class ActivityStore
     public static ActivityStore Shared { get; } = new();
 
     // VRCX keeps its feed cache at 10k live rows and its feed database grows
-    // without a small fixed cap. 20k keeps months of per-filter history for a
-    // large friends list while keeping each atomic rewrite bounded.
+    // without a small fixed cap. 20k keeps several days of per-filter history
+    // for a busy friends list while keeping each atomic rewrite bounded.
     private const int MaximumEntries = 20_000;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -87,19 +87,73 @@ public sealed class ActivityStore
                 .ToList();
 
             var deduped = DedupeEvents(rows);
-            if (deduped.Count == rows.Count)
+            ApplySharedData(stored, deduped);
+
+            var legacyLayout = _fileHadInlineSideData;
+            if (deduped.Count == rows.Count && !legacyLayout)
             {
                 return deduped;
             }
 
-            // Feeds written before the merge dedupe hold repeats: a rebuilt
-            // snapshot stored the same transition again under a new row id.
-            // Drop them from this account's copy and let the trailing write
-            // shrink the file instead of waiting for the next event.
+            // Two older layouts are cleaned up by one rewrite: feeds written
+            // before the merge dedupe hold repeats (a rebuilt snapshot stored
+            // the same transition again under a new row id), and feeds from
+            // before tags and avatar urls were stored once per user/avatar
+            // carry a copy of them on every row.
             stored.Entries = deduped;
             _feedDirty = true;
             ScheduleFeedWrite();
             return deduped;
+        }
+    }
+
+    /// <summary>
+    /// Rows carry the trust tags of the friend and the url of the avatar they
+    /// changed to, and both repeat on every event for the same person. They are
+    /// stored once per account and put back on the rows here; a row that already
+    /// has its own copy (a feed written by an older version) keeps it, which is
+    /// what the next write folds into the maps.
+    /// </summary>
+    private static void ApplySharedData(StoredAccount account, List<ActivityEntry> rows)
+    {
+        if (account.UserTags is null && account.AvatarUrls is null)
+        {
+            return;
+        }
+
+        foreach (var row in rows)
+        {
+            if (row is null)
+            {
+                continue;
+            }
+
+            if (account.UserTags is not null &&
+                row.Tags is not { Count: > 0 } &&
+                !string.IsNullOrWhiteSpace(row.UserId) &&
+                account.UserTags.TryGetValue(row.UserId, out var tags))
+            {
+                // Shared, not copied: a few hundred friends share these lists
+                // and the rows only ever read them.
+                row.Tags = tags;
+            }
+
+            if (account.AvatarUrls is not null && string.IsNullOrWhiteSpace(row.AvatarUrl))
+            {
+                // Keyed by the avatar when the row names one, otherwise by the
+                // friend: most events carry the friend's picture without their
+                // avatar id.
+                if (!string.IsNullOrWhiteSpace(row.AvatarId) &&
+                    account.AvatarUrls.TryGetValue(row.AvatarId, out var avatarUrl))
+                {
+                    row.AvatarUrl = avatarUrl;
+                }
+                else if (!string.IsNullOrWhiteSpace(row.UserId) &&
+                    account.AvatarUrls.TryGetValue(row.UserId, out var userUrl))
+                {
+                    row.AvatarUrl = userUrl;
+                }
+            }
         }
     }
 
@@ -175,13 +229,28 @@ public sealed class ActivityStore
                     file.Accounts[accountId] = stored;
                 }
 
-                stored.Entries = entries
-                    .Where(entry => entry is not null && !string.IsNullOrWhiteSpace(entry.Id))
-                    .GroupBy(entry => entry.Id, StringComparer.Ordinal)
-                    .Select(group => group.First())
-                    .OrderByDescending(entry => entry.Timestamp)
-                    .Take(MaximumEntries)
-                    .ToList();
+                // Callers hand over the feed newest first. Only the id pass and
+                // the cap happen here: sorting and normalising a 20k row feed
+                // used to run on the caller's thread, which is the UI thread on
+                // every presence event. The writer does that work instead.
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var rows = new List<ActivityEntry>();
+                foreach (var entry in entries)
+                {
+                    if (entry is null || string.IsNullOrWhiteSpace(entry.Id) || !seen.Add(entry.Id))
+                    {
+                        continue;
+                    }
+
+                    rows.Add(entry);
+                }
+
+                if (rows.Count > MaximumEntries)
+                {
+                    rows.RemoveRange(MaximumEntries, rows.Count - MaximumEntries);
+                }
+
+                stored.Entries = rows;
                 // Memory is updated inline so the next read (another view, a
                 // restart test) sees the rows immediately. The file is written
                 // on a trailing timer: an import or a burst of presence events
@@ -276,10 +345,99 @@ public sealed class ActivityStore
         var snapshot = new StoredFile();
         foreach (var (id, account) in file.Accounts)
         {
-            snapshot.Accounts[id] = account;
+            if (account is not null)
+            {
+                snapshot.Accounts[id] = Normalize(account);
+            }
         }
 
         return snapshot;
+    }
+
+    /// <summary>
+    /// The account as it is written: tags and avatar urls lifted into one map
+    /// each instead of a copy on every row. Rows without either are written as
+    /// they are, and the rows in memory are left alone, so the feed on screen
+    /// keeps its badges and thumbnails.
+    /// </summary>
+    private static StoredAccount Normalize(StoredAccount account)
+    {
+        if (account.Entries is not { Count: > 0 } raw)
+        {
+            return new StoredAccount { Bios = account.Bios };
+        }
+
+        // Ordered here, on the writer thread, so the caller never pays for it.
+        var entries = raw
+            .Where(entry => entry is not null)
+            .OrderByDescending(entry => entry.Timestamp)
+            .Take(MaximumEntries)
+            .ToList();
+
+        Dictionary<string, List<string>>? userTags = null;
+        Dictionary<string, string>? avatarUrls = null;
+        var rows = new List<ActivityEntry>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (entry is null)
+            {
+                continue;
+            }
+
+            var tags = entry.Tags is { Count: > 0 } && !string.IsNullOrWhiteSpace(entry.UserId)
+                ? entry.Tags
+                : null;
+            // Keyed by the avatar when the row names one, otherwise by the
+            // friend, because most events carry the friend's picture URL without
+            // their avatar id. A row with neither keeps its own copy.
+            var urlKey = string.IsNullOrWhiteSpace(entry.AvatarUrl)
+                ? null
+                : !string.IsNullOrWhiteSpace(entry.AvatarId)
+                    ? entry.AvatarId
+                    : !string.IsNullOrWhiteSpace(entry.UserId)
+                        ? entry.UserId
+                        : null;
+            if (tags is null && urlKey is null)
+            {
+                rows.Add(entry);
+                continue;
+            }
+
+            userTags ??= new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            avatarUrls ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            if (tags is not null)
+            {
+                // Rows are newest first, so the first copy of a person is the
+                // one that still matches their current tags.
+                userTags.TryAdd(entry.UserId, tags);
+            }
+
+            if (urlKey is not null)
+            {
+                avatarUrls.TryAdd(urlKey, entry.AvatarUrl);
+            }
+
+            var copy = entry.ShallowCopy();
+            if (tags is not null)
+            {
+                copy.Tags = null;
+            }
+
+            if (urlKey is not null)
+            {
+                copy.AvatarUrl = string.Empty;
+            }
+
+            rows.Add(copy);
+        }
+
+        return new StoredAccount
+        {
+            Entries = rows,
+            Bios = account.Bios,
+            UserTags = userTags,
+            AvatarUrls = avatarUrls
+        };
     }
 
     /// <summary>
@@ -371,6 +529,8 @@ public sealed class ActivityStore
                 var info = new FileInfo(_path);
                 _cachedLength = info.Exists ? info.Length : -1;
                 _cachedWritten = info.Exists ? info.LastWriteTimeUtc : default;
+                // What was just written has the shared maps, not per-row copies.
+                _fileHadInlineSideData = false;
             }
         }
         catch (Exception ex)
@@ -460,6 +620,13 @@ public sealed class ActivityStore
     private long _cachedLength = -1;
     private DateTime _cachedWritten;
 
+    /// <summary>
+    /// True while the file on disk still carries tags and avatar urls on the
+    /// rows. Loading one rewrites it once into the shared maps; the flag is
+    /// cleared by that write so launches after it stay read-only.
+    /// </summary>
+    private bool _fileHadInlineSideData;
+
     private Dictionary<string, StoredAccount>? _biosAccounts;
 
     /// <summary>
@@ -518,6 +685,7 @@ public sealed class ActivityStore
                 _cachedFile ??= new StoredFile();
                 _cachedLength = -1;
                 _cachedWritten = default;
+                _fileHadInlineSideData = false;
                 return _cachedFile;
             }
 
@@ -535,6 +703,10 @@ public sealed class ActivityStore
             _cachedFile = file;
             _cachedLength = info.Length;
             _cachedWritten = info.LastWriteTimeUtc;
+            _fileHadInlineSideData = file.Accounts.Values.Any(account =>
+                account?.Entries is { } entries && entries.Any(entry =>
+                    entry is not null &&
+                    (entry.Tags is { Count: > 0 } || !string.IsNullOrWhiteSpace(entry.AvatarUrl))));
             return file;
         }
         catch (Exception ex)
@@ -556,6 +728,14 @@ public sealed class ActivityStore
     {
         [JsonPropertyName("entries")]
         public List<ActivityEntry>? Entries { get; set; }
+
+        /// <summary>Trust tags once per friend instead of on every row.</summary>
+        [JsonPropertyName("userTags")]
+        public Dictionary<string, List<string>>? UserTags { get; set; }
+
+        /// <summary>Avatar image url once per avatar instead of on every row.</summary>
+        [JsonPropertyName("avatarUrls")]
+        public Dictionary<string, string>? AvatarUrls { get; set; }
 
         [JsonPropertyName("bios")]
         public Dictionary<string, BioBaseline>? Bios { get; set; }
