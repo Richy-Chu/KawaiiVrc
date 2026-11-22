@@ -48,6 +48,10 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel
     // been measured yet borrow the tallest row seen so far, so the scrollbar
     // only shifts by the small difference between cards with and without tags.
     private readonly Dictionary<int, double> _rowHeights = new();
+    // Which item each realised card draws. The generator stops mapping a
+    // recycled container back to an item, so the panel keeps its own answer:
+    // without it a recycled card would never be arranged.
+    private readonly Dictionary<UIElement, int> _cardItems = new();
     private ScrollViewer? _scrollViewer;
     private int _columns = 1;
     private double _tallestRow;
@@ -122,6 +126,16 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel
         CleanUpItems(firstIndex, lastIndex);
         RealizeItems(firstIndex, lastIndex);
 
+        // A card the generator no longer maps to an item cannot be arranged or
+        // filled, so it must not stay in the panel pretending to be a card.
+        for (var childIndex = InternalChildren.Count - 1; childIndex >= 0; childIndex--)
+        {
+            if (!_cardItems.ContainsKey(InternalChildren[childIndex]))
+            {
+                RemoveInternalChildRange(childIndex, 1);
+            }
+        }
+
         var extent = 0d;
         for (var row = 0; row < rowCount; row++)
         {
@@ -138,8 +152,7 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel
 
         foreach (UIElement child in InternalChildren)
         {
-            var index = ItemIndex(child);
-            if (index < 0)
+            if (!_cardItems.TryGetValue(child, out var index))
             {
                 continue;
             }
@@ -169,6 +182,7 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel
                 // A filter, sort or refresh publishes a whole new collection, so
                 // every card and every measured row belongs to the old list.
                 RemoveInternalChildRange(0, InternalChildren.Count);
+                _cardItems.Clear();
                 _rowHeights.Clear();
                 _tallestRow = 0;
                 break;
@@ -193,7 +207,7 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel
                     break;
                 }
 
-                if (isNew)
+                if (isNew || VisualTreeHelper.GetParent(child) != this)
                 {
                     if (childIndex >= InternalChildren.Count)
                     {
@@ -203,10 +217,12 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel
                     {
                         InsertInternalChild(childIndex, child);
                     }
-
-                    generator.PrepareItemContainer(child);
                 }
 
+                // A recycled card has to be re-prepared as well or it keeps the
+                // item it showed last time.
+                generator.PrepareItemContainer(child);
+                _cardItems[child] = index;
                 child.Measure(new Size(itemWidth, double.PositiveInfinity));
                 RememberRowHeight(index / _columns, child.DesiredSize.Height);
             }
@@ -219,32 +235,40 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel
 
         for (var childIndex = InternalChildren.Count - 1; childIndex >= 0; childIndex--)
         {
-            var itemIndex = ItemIndex(InternalChildren[childIndex]);
-            if (itemIndex >= minIndex && itemIndex <= maxIndex)
+            // A realised container is addressed by its position in the panel's
+            // child list, which is also the generator's realised order. Asking
+            // for a position by item index instead hands back the wrong card.
+            var child = InternalChildren[childIndex];
+            var position = new GeneratorPosition(childIndex, 0);
+            if (_cardItems.TryGetValue(child, out var itemIndex) &&
+                itemIndex >= minIndex &&
+                itemIndex <= maxIndex)
             {
                 continue;
             }
 
-            if (itemIndex >= 0)
+            _cardItems.Remove(child);
+
+            if (generator is IRecyclingItemContainerGenerator recycling)
             {
-                var position = generator.GeneratorPositionFromIndex(itemIndex);
-                if (generator is IRecyclingItemContainerGenerator recycling)
+                // The card is kept for the next row that needs one, which is
+                // what stops a fast scroll from building a new visual for every
+                // avatar it passes. Recycle usually detaches the child itself;
+                // removing it again in that case would take a neighbour with
+                // it and leave the grid blank.
+                recycling.Recycle(position, 1);
+                if (VisualTreeHelper.GetParent(child) == this)
                 {
-                    recycling.Recycle(position, 1);
+                    RemoveInternalChildRange(childIndex, 1);
                 }
-                else
-                {
-                    generator.Remove(position, 1);
-                }
+
+                continue;
             }
 
+            generator.Remove(position, 1);
             RemoveInternalChildRange(childIndex, 1);
         }
     }
-
-    /// <summary>The item a realised card belongs to, or -1 when it no longer has one.</summary>
-    private int ItemIndex(UIElement child)
-        => ItemsControl.GetItemsOwner(this)?.ItemContainerGenerator.IndexFromContainer(child) ?? -1;
 
     private void RememberRowHeight(int row, double height)
     {

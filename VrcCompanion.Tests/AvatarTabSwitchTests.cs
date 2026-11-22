@@ -259,6 +259,158 @@ public class AvatarTabSwitchTests
     }
 
     [Fact]
+    public void ScrollingThroughTheWholeLibraryNeverLeavesTheGridBlank()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            SeedLibrary(shell, 200);
+            var window = CreateWindow(shell);
+            window.Show();
+            Select(shell, window, "avatars");
+
+            var viewModel = shell.AvatarViewModel!;
+            while (viewModel.HasMoreAvatars)
+            {
+                viewModel.ShowMoreAvatars();
+            }
+
+            window.UpdateLayout();
+            var panel = AvatarPanel(window)!;
+            var scroll = FindAncestor<ScrollViewer>(panel)!;
+            var step = Math.Max(120, scroll.ViewportHeight * 0.8);
+
+            var lastTop = -1;
+            for (var y = 0d; y <= scroll.ScrollableHeight; y += step)
+            {
+                scroll.ScrollToVerticalOffset(Math.Min(y, scroll.ScrollableHeight));
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+
+                var cards = AvatarPanel(window)!;
+                Assert.True(cards.Children.Count > 0, $"the grid was blank at scroll offset {y:0}");
+
+                // Every card on screen draws a distinct avatar from the list,
+                // and scrolling down never shows an earlier row than before.
+                var indices = cards.Children
+                    .Cast<FrameworkElement>()
+                    .Select(card => card.DataContext as Avatar)
+                    .Select(avatar => avatar is null ? -1 : viewModel.Avatars.IndexOf(avatar))
+                    .ToList();
+
+                var foreign = cards.Children
+                    .Cast<FrameworkElement>()
+                    .Where(card => card.DataContext is not Avatar avatar || viewModel.Avatars.IndexOf(avatar) < 0)
+                    .Select(card => (card.DataContext as Avatar)?.DisplayName ?? "<null>")
+                    .ToList();
+                Assert.True(
+                    foreign.Count == 0,
+                    $"at {y:0}: {foreign.Count} of {cards.Children.Count} cards drew avatars outside the grid ({string.Join(", ", foreign)})");
+                Assert.Equal(indices.Count, indices.Distinct().Count());
+
+                var top = indices.Min();
+                Assert.True(top >= lastTop, $"the grid went back to row {top} after {lastTop} at {y:0}");
+                lastTop = top;
+            }
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void SearchSortAndFavouritesRebuildTheGridWithNoStaleCards()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            // Names alternate so sorting by name cannot accidentally match the
+            // order the library arrived in.
+            var added = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var rows = Enumerable.Range(0, 60)
+                .Select(index => new Avatar
+                {
+                    Id = $"avtr_{index}",
+                    Name = index % 2 == 0 ? $"Bravo {index}" : $"Alpha {index}",
+                    // Date-added is newest first, so descending CreatedAt is
+                    // the order the rows were seeded in.
+                    CreatedAt = added.AddMinutes(-index)
+                })
+                .ToArray();
+            var viewModel = new AvatarViewModel(new VrcApiClient());
+            TestHooks.AttachAvatarViewModel(shell, viewModel);
+            viewModel.SeedLibraryForTests(rows);
+            // The sort is persisted between runs, so pin the starting order.
+            viewModel.SelectedAvatarSort = viewModel.AvatarSortOptions.Single(
+                option => string.Equals(option.Key, "date-added", StringComparison.Ordinal));
+            TestHooks.MarkAvatarsLoaded(viewModel);
+
+            var window = CreateWindow(shell);
+            window.Show();
+            Select(shell, window, "avatars");
+
+            var grid = AvatarGrid(window)!;
+            var panel = AvatarPanel(window)!;
+
+            Assert.Equal(48, viewModel.Avatars.Count);
+            Assert.Equal("Bravo 0", FirstCard(panel).DisplayName);
+            Assert.True(panel.Children.Count < viewModel.Avatars.Count);
+
+            // A search publishes a brand new collection, which resets the panel.
+            viewModel.SearchTerm = "Alpha 47";
+            window.UpdateLayout();
+
+            Assert.Single(viewModel.Avatars);
+            Assert.Single(panel.Children);
+            Assert.Equal("Alpha 47", FirstCard(panel).DisplayName);
+            Assert.Null(grid.ItemContainerGenerator.ContainerFromIndex(1));
+
+            viewModel.SearchTerm = string.Empty;
+            window.UpdateLayout();
+
+            Assert.Equal(48, viewModel.Avatars.Count);
+            Assert.Equal("Bravo 0", FirstCard(panel).DisplayName);
+
+            // Sorting reorders the same library, so the first card must change
+            // even though the panel was already showing those avatars.
+            viewModel.SelectedAvatarSort = viewModel.AvatarSortOptions.Single(
+                option => string.Equals(option.Key, "name", StringComparison.Ordinal));
+            window.UpdateLayout();
+
+            Assert.Equal("Alpha 1", FirstCard(panel).DisplayName);
+            Assert.True(panel.Children.Count < viewModel.Avatars.Count);
+
+            // Favourites is another filter over the same library.
+            viewModel.SeedFavoritesForTests(rows.Take(3));
+            viewModel.FavoritesOnly = true;
+            window.UpdateLayout();
+
+            Assert.Equal(3, viewModel.Avatars.Count);
+            Assert.Equal(3, panel.Children.Count);
+            foreach (FrameworkElement card in panel.Children)
+            {
+                Assert.True(((Avatar)card.DataContext).IsFavorite);
+            }
+
+            viewModel.FavoritesOnly = false;
+            window.UpdateLayout();
+
+            Assert.Equal(48, viewModel.Avatars.Count);
+            Assert.True(panel.Children.Count < 48);
+            foreach (FrameworkElement card in panel.Children)
+            {
+                var index = grid.ItemContainerGenerator.IndexFromContainer(card);
+                Assert.InRange(index, 0, viewModel.Avatars.Count - 1);
+                Assert.Same(viewModel.Avatars[index], card.DataContext);
+            }
+
+            window.Close();
+        });
+    }
+
+    [Fact]
     public void SwitchingAccountsKeepsTheSectionThatIsOpen()
     {
         WpfTestHost.Run(() =>
@@ -303,12 +455,18 @@ public class AvatarTabSwitchTests
         }
     }
 
+    private static ItemsControl? AvatarGrid(DependencyObject root)
+        => FindDescendant<ItemsControl>(root, control =>
+            string.Equals(control.Name, "AvatarGrid", StringComparison.Ordinal));
+
     private static VirtualizingWrapPanel? AvatarPanel(DependencyObject root)
     {
-        var grid = FindDescendant<ItemsControl>(root, control =>
-            string.Equals(control.Name, "AvatarGrid", StringComparison.Ordinal));
+        var grid = AvatarGrid(root);
         return grid is null ? null : FindDescendant<VirtualizingWrapPanel>(grid);
     }
+
+    private static Avatar FirstCard(VirtualizingWrapPanel panel)
+        => Assert.IsType<Avatar>(((FrameworkElement)panel.Children[0]).DataContext);
 
     private static T? FindAncestor<T>(DependencyObject child) where T : DependencyObject
     {
