@@ -2898,11 +2898,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Refresh used by the background timer. Offline friends change rarely and
-    /// cost one request per 100 friends, so only the fast-changing data is
-    /// fetched here; the full download stays on startup and manual refresh.
-    /// </summary>
-    /// <summary>
     /// The safety-net polls exist so a person watching the app sees fresh rows.
     /// While the window is minimized nobody is looking, and the realtime
     /// pipeline still delivers events, so skip the fetch entirely.
@@ -2911,6 +2906,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         => System.Windows.Application.Current?.MainWindow is
             { WindowState: System.Windows.WindowState.Minimized };
 
+    /// <summary>
+    /// Refresh used by the background timer. Offline friends change rarely and
+    /// cost one request per 100 friends, so only the fast-changing data is
+    /// fetched here; the full download stays on startup and manual refresh.
+    /// </summary>
     private async void OnActivityPollTick(object? sender, EventArgs e)
     {
         if (!IsLoggedIn || IsBusy || _activityPollBusy || IsMainWindowMinimized())

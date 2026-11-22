@@ -161,7 +161,6 @@ public sealed class ActivityStore
     private void FlushPendingFeed()
     {
         Timer? timer;
-        StoredFile? snapshot = null;
         lock (_sync)
         {
             timer = _feedTimer;
@@ -169,22 +168,19 @@ public sealed class ActivityStore
             if (_feedDirty)
             {
                 _feedDirty = false;
-                snapshot = SnapshotFeed();
+                // Queue under the lock so a concurrent FlushAsync cannot see an
+                // empty queue before this snapshot reaches the writer.
+                QueueWrite(_path, SnapshotFeed());
             }
         }
 
         timer?.Dispose();
-        if (snapshot is not null)
-        {
-            QueueWrite(_path, snapshot);
-        }
     }
 
     /// <summary>Writes the newest bio baselines now, for shutdown and for tests.</summary>
     private void FlushPendingBios()
     {
         Timer? timer;
-        StoredFile? snapshot = null;
         lock (_sync)
         {
             timer = _biosTimer;
@@ -192,19 +188,17 @@ public sealed class ActivityStore
             if (_biosDirty)
             {
                 _biosDirty = false;
-                snapshot = new StoredFile();
+                var snapshot = new StoredFile();
                 foreach (var (id, account) in BiosAccounts())
                 {
                     snapshot.Accounts[id] = account;
                 }
+
+                QueueWrite(_biosPath, snapshot);
             }
         }
 
         timer?.Dispose();
-        if (snapshot is not null)
-        {
-            QueueWrite(_biosPath, snapshot);
-        }
     }
 
     private StoredFile SnapshotFeed()

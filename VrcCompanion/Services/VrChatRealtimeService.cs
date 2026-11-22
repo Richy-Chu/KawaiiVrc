@@ -307,6 +307,12 @@ public sealed class VrChatRealtimeService : IDisposable
             catch (OperationCanceledException)
             {
             }
+            catch (Exception ex)
+            {
+                // The replaced session was already reporting through its own
+                // status; its failure must not fail the stop that replaced it.
+                System.Diagnostics.Debug.WriteLine("retired realtime session: " + ex.Message);
+            }
         }
     }
 
