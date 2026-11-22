@@ -86,6 +86,51 @@ internal static class TestHooks
     /// Attaches a group view model to the shell through its private setter so the
     /// shell subscribes to membership changes exactly as it does after sign-in.
     /// </summary>
+    public static void AttachInstanceViewModel(MainViewModel shell, InstanceViewModel instance)
+        => AttachViewModel(shell, nameof(MainViewModel.InstanceViewModel), instance);
+
+    /// <summary>Gives the instance view a world so its content (and roster) renders.</summary>
+    public static void SetInstance(InstanceViewModel viewModel, VrcInstance instance)
+    {
+        var setter = typeof(InstanceViewModel)
+            .GetProperty(nameof(InstanceViewModel.Instance))
+            ?.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException("InstanceViewModel.Instance setter not found.");
+        setter.Invoke(viewModel, new object?[] { instance });
+    }
+
+    /// <summary>Publishes a roster page without going through the instance API.</summary>
+    public static void ReplaceInstancePlayers(
+        InstanceViewModel viewModel,
+        IReadOnlyList<InstancePlayerItem> players)
+    {
+        var method = typeof(InstanceViewModel).GetMethod(
+            "ReplacePlayers",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("InstanceViewModel.ReplacePlayers not found.");
+        method.Invoke(viewModel, new object[] { players });
+    }
+
+    /// <summary>Publishes the continuity pages after a test fills the collections.</summary>
+    public static void RefreshContinuity(ContinuityViewModel viewModel)
+    {
+        var method = typeof(ContinuityViewModel).GetMethod(
+            "RefreshViews",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("ContinuityViewModel.RefreshViews not found.");
+        method.Invoke(viewModel, Array.Empty<object>());
+    }
+
+    /// <summary>Publishes the context player pages after a test fills the collections.</summary>
+    public static void RefreshContext(ContextViewModel viewModel)
+    {
+        var method = typeof(ContextViewModel).GetMethod(
+            "RebuildFriendsHere",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("ContextViewModel.RebuildFriendsHere not found.");
+        method.Invoke(viewModel, Array.Empty<object>());
+    }
+
     public static void AttachGroupViewModel(MainViewModel shell, GroupViewModel groups)
         => AttachViewModel(shell, nameof(MainViewModel.GroupViewModel), groups);
 

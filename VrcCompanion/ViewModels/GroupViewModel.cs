@@ -167,8 +167,17 @@ public sealed class GroupViewModel : ViewModelBase
     public ObservableCollection<Group> VisibleGroups
     {
         get => _visibleGroups;
-        private set => SetProperty(ref _visibleGroups, value);
+        private set
+        {
+            if (SetProperty(ref _visibleGroups, value))
+            {
+                VisibleGroupsPage.SetSource(value, resetPage: true);
+            }
+        }
     }
+
+    /// <summary>One page of joined groups; a large group list stays bounded.</summary>
+    public PagedList<Group> VisibleGroupsPage { get; } = new();
 
     public string GroupFilterText
     {
@@ -207,8 +216,17 @@ public sealed class GroupViewModel : ViewModelBase
     public ObservableCollection<Group> GroupSearchResults
     {
         get => _groupSearchResults;
-        private set => SetProperty(ref _groupSearchResults, value);
+        private set
+        {
+            if (SetProperty(ref _groupSearchResults, value))
+            {
+                GroupSearchResultsPage.SetSource(value, resetPage: true);
+            }
+        }
     }
+
+    /// <summary>One page of discovery results.</summary>
+    public PagedList<Group> GroupSearchResultsPage { get; } = new();
 
     public bool IsSearchingGroups
     {

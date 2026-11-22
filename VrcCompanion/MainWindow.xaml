@@ -3368,7 +3368,7 @@
                                        Style="{StaticResource MutedText}"
                                        TextWrapping="Wrap"
                                        Margin="0,6,0,0" />
-                            <ItemsControl ItemsSource="{Binding GroupViewModel.GroupSearchResults}"
+                            <ItemsControl ItemsSource="{Binding GroupViewModel.GroupSearchResultsPage.Items}"
                                           Margin="0,8,0,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -3414,6 +3414,8 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                            <controls:ListPager DataContext="{Binding GroupViewModel.GroupSearchResultsPage}"
+                                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
                         </StackPanel>
                     </Border>
 
@@ -3426,7 +3428,7 @@
                                Visibility="{Binding GroupViewModel.ErrorMessage, Converter={StaticResource NullToVis}, ConverterParameter=invert}" />
 
                     <!-- Group list -->
-                    <ListBox ItemsSource="{Binding GroupViewModel.VisibleGroups}"
+                    <ListBox ItemsSource="{Binding GroupViewModel.VisibleGroupsPage.Items}"
                              SelectedItem="{Binding GroupViewModel.SelectedGroup, Mode=TwoWay}"
                              Style="{StaticResource BareListBox}"
                              ItemContainerStyle="{StaticResource BareListItem}"
@@ -3481,6 +3483,9 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+
+                    <controls:ListPager DataContext="{Binding GroupViewModel.VisibleGroupsPage}"
+                                        Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
 
                     <!-- Empty state -->
                     <Border Visibility="{Binding GroupViewModel.VisibleGroups.Count, Converter={StaticResource IntToVis}, ConverterParameter=invert}"
