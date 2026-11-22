@@ -1940,11 +1940,10 @@ public sealed class AvatarViewModel : ViewModelBase
         var rows = SortAvatars(_library.Where(Matches), SelectedAvatarSort).ToList();
         _filteredCount = rows.Count;
 
-        // Every card in this grid is a realised visual with its own decoded
-        // image, and WPF's ItemsControl over a WrapPanel does not recycle them.
-        // Large accounts (500+ avatars) therefore used to build the whole grid
-        // at once and never give it back, so the page only publishes a chunk at
-        // a time and the rest arrive on request.
+        // The grid's virtualizing panel keeps only the cards near the viewport
+        // built, but every published avatar is still a row the grid can scroll
+        // to, so the page also publishes a chunk at a time and lets the panel
+        // keep the height of the rest without any visuals.
         _visibleLimit = Math.Max(AvatarChunk, Math.Min(_visibleLimit, _filteredCount));
         Avatars = new ObservableCollection<Avatar>(rows.Take(_visibleLimit));
         UpdateSummary();

@@ -6,7 +6,10 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
+using VrcCompanion.Controls;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -192,6 +195,70 @@ public class AvatarTabSwitchTests
     }
 
     [Fact]
+    public void TheAvatarGridOnlyKeepsTheCardsNearTheViewportResident()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            SeedLibrary(shell, 200);
+            var window = CreateWindow(shell);
+            window.Show();
+
+            Select(shell, window, "avatars");
+
+            var viewModel = shell.AvatarViewModel!;
+            var panel = AvatarPanel(window);
+            Assert.NotNull(panel);
+
+            Assert.Equal(48, viewModel.Avatars.Count);
+            var resident = panel!.Children.Count;
+            Assert.True(
+                resident > 0 && resident < viewModel.Avatars.Count,
+                $"the grid kept {resident} of {viewModel.Avatars.Count} published cards resident");
+
+            // Revealing the rest of the library must add scrollable rows, not
+            // resident cards: that is the whole point of the panel.
+            while (viewModel.HasMoreAvatars)
+            {
+                viewModel.ShowMoreAvatars();
+            }
+
+            window.UpdateLayout();
+            var revealed = AvatarPanel(window)!;
+            var grid = FindDescendant<ItemsControl>(window, control =>
+                string.Equals(control.Name, "AvatarGrid", StringComparison.Ordinal))!;
+
+            Assert.Equal(200, viewModel.Avatars.Count);
+            Assert.True(
+                revealed.Children.Count < 200,
+                $"all {revealed.Children.Count} revealed cards stayed resident");
+
+            // The whole list is scrollable height, but the last card is not
+            // built until a scroll asks for it...
+            Assert.Null(grid.ItemContainerGenerator.ContainerFromIndex(199));
+
+            var scroll = FindAncestor<ScrollViewer>(revealed)!;
+            Assert.True(
+                scroll.ExtentHeight > scroll.ViewportHeight,
+                "the grid reported no scrollable height for the cards it did not build");
+
+            scroll.ScrollToEnd();
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            window.UpdateLayout();
+
+            Assert.NotNull(grid.ItemContainerGenerator.ContainerFromIndex(199));
+
+            // ...and the cards at the top are handed back once they are out of
+            // reach, instead of staying resident for the rest of the visit.
+            Assert.Null(grid.ItemContainerGenerator.ContainerFromIndex(0));
+
+            window.Close();
+        });
+    }
+
+    [Fact]
     public void SwitchingAccountsKeepsTheSectionThatIsOpen()
     {
         WpfTestHost.Run(() =>
@@ -236,9 +303,53 @@ public class AvatarTabSwitchTests
         }
     }
 
-    private static void SeedLibrary(MainViewModel shell)
+    private static VirtualizingWrapPanel? AvatarPanel(DependencyObject root)
     {
-        var avatars = Enumerable.Range(0, 3)
+        var grid = FindDescendant<ItemsControl>(root, control =>
+            string.Equals(control.Name, "AvatarGrid", StringComparison.Ordinal));
+        return grid is null ? null : FindDescendant<VirtualizingWrapPanel>(grid);
+    }
+
+    private static T? FindAncestor<T>(DependencyObject child) where T : DependencyObject
+    {
+        var current = VisualTreeHelper.GetParent(child);
+        while (current is not null)
+        {
+            if (current is T typed)
+            {
+                return typed;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
+    }
+
+    private static T? FindDescendant<T>(DependencyObject root, Func<T, bool>? match = null)
+        where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T typed && (match is null || match(typed)))
+            {
+                return typed;
+            }
+
+            if (FindDescendant(child, match) is { } nested)
+            {
+                return nested;
+            }
+        }
+
+        return null;
+    }
+
+    private static void SeedLibrary(MainViewModel shell, int count = 3)
+    {
+        var avatars = Enumerable.Range(0, count)
             .Select(index => new Avatar
             {
                 Id = $"avtr_{index}",

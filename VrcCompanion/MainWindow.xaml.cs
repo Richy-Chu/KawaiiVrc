@@ -122,8 +122,6 @@ public partial class MainWindow : Window
         {
             UsernameBox.Focus();
         }
-
-
     }
 
     private async void OnRefreshTimerTick(object? sender, EventArgs e)

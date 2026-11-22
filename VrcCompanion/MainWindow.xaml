@@ -2455,10 +2455,17 @@
                     </Border>
 
                     <!-- Avatar grid -->
-                    <ItemsControl ItemsSource="{Binding AvatarViewModel.Avatars}">
+                    <ItemsControl x:Name="AvatarGrid"
+                                  ItemsSource="{Binding AvatarViewModel.Avatars}"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <WrapPanel Orientation="Horizontal" />
+                                <!-- Only the cards near the viewport stay built; the
+                                     rest are rows of scrollable height. -->
+                                <controls:VirtualizingWrapPanel ItemWidth="236"
+                                                                EstimatedItemHeight="320"
+                                                                CacheViewports="0.75" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
