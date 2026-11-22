@@ -648,6 +648,23 @@ public partial class MainWindow : Window
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
+
+        // The leave hook trusts the previous-section key, which can be stale if
+        // the selection moved twice before layout settled. Sweep cached avatar
+        // sections so their library is handed back regardless.
+        if (_viewModel.AvatarViewModel is { } avatarViewModel &&
+            (avatarViewModel.HasLoaded ||
+             avatarViewModel.Avatars.Count > 0 ||
+             avatarViewModel.GlobalResults.Count > 0))
+        {
+            foreach (var cachedKey in _sectionViews.Keys.Where(IsAvatarSectionKey).ToList())
+            {
+                if (!string.Equals(cachedKey, key, StringComparison.Ordinal))
+                {
+                    ReleaseAvatarData(cachedKey);
+                }
+            }
+        }
     }
 
     /// <summary>How long to wait before retrying a release that was refused.</summary>

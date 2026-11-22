@@ -16,12 +16,21 @@ public sealed class SessionStore
     private readonly string _directory;
     private readonly string _path;
 
+    private static string? _defaultDirectoryOverride;
+
     public SessionStore()
-        : this(Path.Combine(
+        : this(_defaultDirectoryOverride ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "VrcCompanion"))
     {
     }
+
+    /// <summary>
+    /// Test seam: points every default store at a scratch folder, so no test can
+    /// read or clear the signed-in session in the real profile.
+    /// </summary>
+    internal static void UseDefaultDirectoryForTests(string directory)
+        => _defaultDirectoryOverride = directory;
 
     /// <summary>Test seam: keeps the suite away from the real profile.</summary>
     internal SessionStore(string directory)

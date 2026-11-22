@@ -2765,7 +2765,19 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // before the first screen asks for it, while the UI stays free.
             await WarmLocalCachesAsync(user.Id);
             Services.LifecycleLog.Write($"init: caches {Program.Startup.ElapsedMilliseconds}ms");
-            ApplyCurrentUser(user);
+            try
+            {
+                ApplyCurrentUser(user);
+            }
+            catch (Exception ex)
+            {
+                // A local store or notification cache must not hide a session
+                // VRChat just accepted: that looked like a failed sign-in and
+                // sent the user back to the login screen.
+                Debug.WriteLine(ex);
+                Services.LifecycleLog.Write($"init: current-user apply failed {ex.GetType().Name}");
+                CurrentUser ??= user;
+            }
             Services.LifecycleLog.Write($"init: current-user {Program.Startup.ElapsedMilliseconds}ms");
             IsLoggedIn = true;
             _realtime.Start();

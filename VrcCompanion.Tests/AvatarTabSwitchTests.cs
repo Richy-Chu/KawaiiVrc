@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -30,7 +31,7 @@ public class AvatarTabSwitchTests
     {
         WpfTestHost.Run(() =>
         {
-            using var shell = new MainViewModel();
+            using var shell = new MainViewModel(IsolatedApi());
             TestHooks.SetLoggedIn(shell);
             SeedLibrary(shell);
             var window = CreateWindow(shell);
@@ -54,7 +55,7 @@ public class AvatarTabSwitchTests
     {
         WpfTestHost.Run(() =>
         {
-            using var shell = new MainViewModel();
+            using var shell = new MainViewModel(IsolatedApi());
             TestHooks.SetLoggedIn(shell);
             SeedLibrary(shell);
             var window = CreateWindow(shell);
@@ -77,6 +78,40 @@ public class AvatarTabSwitchTests
             Assert.True(
                 WaitUntil(() => shell.AvatarViewModel!.Avatars.Count == 0),
                 DescribeRefusedRelease(shell, window));
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void AnAvatarSectionWhoseLeaveWasMissedIsStillReleased()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            SeedLibrary(shell);
+            var window = CreateWindow(shell);
+            window.Show();
+
+            Select(shell, window, "avatars");
+            Assert.NotEmpty(shell.AvatarViewModel!.Avatars);
+
+            // A second selection can land before layout settles, leaving the
+            // window's previous-section key stale so the leave hook misses it.
+            typeof(MainWindow)
+                .GetField(
+                    "_shownSectionKey",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(window, "profile");
+
+            Select(shell, window, "friends");
+
+            Assert.True(
+                WaitUntil(() => shell.AvatarViewModel!.Avatars.Count == 0),
+                "a cached avatar section kept its rows after the leave hook missed it");
+            Assert.False(shell.AvatarViewModel.HasLoaded);
 
             window.Close();
         });
@@ -246,7 +281,7 @@ public class AvatarTabSwitchTests
     {
         WpfTestHost.Run(() =>
         {
-            using var shell = new MainViewModel();
+            using var shell = new MainViewModel(IsolatedApi());
             TestHooks.SetLoggedIn(shell);
             SeedLibrary(shell, 200);
             var window = CreateWindow(shell);
@@ -336,10 +371,10 @@ public class AvatarTabSwitchTests
     {
         WpfTestHost.Run(() =>
         {
-            using var shell = new MainViewModel();
+            using var shell = new MainViewModel(IsolatedApi());
             TestHooks.SetLoggedIn(shell);
             var rows = Library(120);
-            var viewModel = new AvatarViewModel(new VrcApiClient());
+            var viewModel = new AvatarViewModel(IsolatedApi());
             TestHooks.AttachAvatarViewModel(shell, viewModel);
             viewModel.SeedFavoritesForTests(rows);
             viewModel.SeedLibraryForTests(rows);
@@ -365,7 +400,7 @@ public class AvatarTabSwitchTests
     {
         WpfTestHost.Run(() =>
         {
-            using var shell = new MainViewModel();
+            using var shell = new MainViewModel(IsolatedApi());
             TestHooks.SetLoggedIn(shell);
             SeedLibrary(shell, 200);
             var window = CreateWindow(shell);
@@ -422,7 +457,7 @@ public class AvatarTabSwitchTests
     {
         WpfTestHost.Run(() =>
         {
-            using var shell = new MainViewModel();
+            using var shell = new MainViewModel(IsolatedApi());
             TestHooks.SetLoggedIn(shell);
             // Names alternate so sorting by name cannot accidentally match the
             // order the library arrived in.
@@ -437,7 +472,7 @@ public class AvatarTabSwitchTests
                     CreatedAt = added.AddMinutes(-index)
                 })
                 .ToArray();
-            var viewModel = new AvatarViewModel(new VrcApiClient());
+            var viewModel = new AvatarViewModel(IsolatedApi());
             TestHooks.AttachAvatarViewModel(shell, viewModel);
             viewModel.SeedLibraryForTests(rows);
             // The sort is persisted between runs, so pin the starting order.
@@ -513,7 +548,7 @@ public class AvatarTabSwitchTests
     {
         WpfTestHost.Run(() =>
         {
-            using var shell = new MainViewModel();
+            using var shell = new MainViewModel(IsolatedApi());
             var user = new VrcUser { Id = "usr_switched", DisplayName = "Switched" };
             TestHooks.SetLoggedIn(shell);
             TestHooks.SetCurrentUser(shell, user);
@@ -623,6 +658,15 @@ public class AvatarTabSwitchTests
             option => string.Equals(option.Key, "date-added", StringComparison.Ordinal));
         TestHooks.MarkAvatarsLoaded(viewModel);
     }
+
+    /// <summary>
+    /// A session file this test owns: launching a shell must never inspect or
+    /// clear the signed-in session in the real profile.
+    /// </summary>
+    private static VrcApiClient IsolatedApi()
+        => new(new SessionStore(Path.Combine(
+            Path.GetTempPath(),
+            "vrc-avatar-" + Guid.NewGuid().ToString("N"))));
 
     private static NavItem Section(MainViewModel shell, string key)
         => shell.Sections.Single(section => section.Key == key);
