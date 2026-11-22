@@ -131,7 +131,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     // Signature of the last friend poll so an unchanged snapshot can skip the
     // friend list and feed rebuild entirely.
-    private string? _lastFriendPollSignature;
+    private long? _lastFriendPollSignature;
     private bool _activityPollBusy;
     private DispatcherTimer? _bioPollTimer;
     private bool _bioPollBusy;
@@ -2915,21 +2915,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// cost one request per 100 friends, so only the fast-changing data is
     /// fetched here; the full download stays on startup and manual refresh.
     /// </summary>
-    private static string FriendPollSignature(IReadOnlyList<VrcUser> friends)
-    {
-        var builder = new System.Text.StringBuilder(friends.Count * 32);
-        foreach (var friend in friends)
-        {
-            builder.Append(friend.Id).Append('|')
-                   .Append(friend.Location).Append('|')
-                   .Append(friend.Status).Append('|')
-                   .Append(friend.StatusDescription).Append('|')
-                   .Append(friend.CurrentAvatarImageUrl).Append('\n');
-        }
-
-        return builder.ToString();
-    }
-
     private async void OnActivityPollTick(object? sender, EventArgs e)
     {
         if (!IsLoggedIn || IsBusy || _activityPollBusy || IsMainWindowMinimized())
@@ -2998,8 +2983,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // Polls that return the same people in the same places used to
             // rebuild every friend row and the whole activity page, which froze
             // the window about once every ten seconds for no visible change.
-            var signature = FriendPollSignature(friends);
-            if (string.Equals(signature, _lastFriendPollSignature, StringComparison.Ordinal))
+            var signature = FriendSignature.Compute(friends);
+            if (_lastFriendPollSignature == signature)
             {
                 return;
             }
@@ -3214,24 +3199,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private async Task LoadAllFriendsCoreAsync()
     {
-        var friends = await _api.GetFriendsAsync(
-            forceRefresh: true,
-            onPartial: partial =>
-            {
-                if (!IsLoggedIn)
-                {
-                    return;
-                }
-
-                FriendAvatarStore.Shared.ObserveAll(CurrentUser?.Id, partial);
-                UpdateFriends(partial, keepMissing: true);
-            });
+        var account = CurrentUser?.Id;
+        var friends = await Task.Run(() => _api.GetFriendsAsync(forceRefresh: true));
         if (!IsLoggedIn)
         {
             return;
         }
 
-        FriendAvatarStore.Shared.ObserveAll(CurrentUser?.Id, friends);
+        _ = Task.Run(() => FriendAvatarStore.Shared.ObserveAll(account, friends));
         UpdateFriends(friends);
         _friendChanges.Queue(friends);
         ActivityFeedViewModel?.ApplyFriends(friends);
@@ -3423,11 +3398,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // used to pay for them one after another: about three round trips.
             // Starting them together leaves the slowest one as the cost.
             var started = System.Diagnostics.Stopwatch.StartNew();
-            var userTask = refreshUser ? _api.GetCurrentUserAsync() : null;
-            var friendsTask = _api.GetFriendsAsync(
+            // Parsing the friend payload is what costs: 280 records allocated
+            // and collected on the dispatcher stalled the window for most of the
+            // first seconds of launch. The fetch runs on the pool, so the parse
+            // does too, and the finished list is applied in one pass.
+            var userTask = refreshUser ? Task.Run(() => _api.GetCurrentUserAsync()) : null;
+            var friendsTask = Task.Run(() => _api.GetFriendsAsync(
                 forceRefresh: true,
-                onlineOnly: true,
-                onPartial: partial => UpdateFriends(partial, keepMissing: true));
+                onlineOnly: true));
             var notificationsTask = _api.GetNotificationsAsync();
 
             var pending = new List<Task> { friendsTask, notificationsTask };

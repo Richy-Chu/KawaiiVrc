@@ -29,7 +29,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     private ObservableCollection<ActivityEntry> _entries = new();
     private List<ActivityEntry> _allEntries = new();
     private IReadOnlyList<VrcUser>? _previousFriends;
-    private string? _previousFeedSignature;
+    private long? _previousFeedSignature;
     private ActivityType? _selectedFilter;
     private ActivityFilterOption? _selectedFilterOption;
     private string _searchQuery = string.Empty;
@@ -816,21 +816,6 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     /// avatar changes show up from the background refresh instead of waiting
     /// for a full offline download.
     /// </summary>
-    private static string FeedSignature(IReadOnlyList<VrcUser> users)
-    {
-        var builder = new System.Text.StringBuilder(users.Count * 32);
-        foreach (var user in users)
-        {
-            builder.Append(user.Id).Append('|')
-                   .Append(user.Location).Append('|')
-                   .Append(user.Status).Append('|')
-                   .Append(user.StatusDescription).Append('|')
-                   .Append(user.CurrentAvatarImageUrl).Append('\n');
-        }
-
-        return builder.ToString();
-    }
-
     public void ApplyOnlineFriends(
         IReadOnlyList<VrcUser> friends,
         IReadOnlySet<string>? knownOfflineFriendIds = null)
@@ -894,9 +879,8 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         // Most polls see exactly the same people in exactly the same worlds.
         // Rebuilding the page for that produced a visible freeze every poll,
         // so an unchanged snapshot only refreshes the bookkeeping.
-        var signature = FeedSignature(current);
-        if (bioEntries.Count == 0 &&
-            string.Equals(signature, _previousFeedSignature, StringComparison.Ordinal))
+        var signature = FriendSignature.Compute(current);
+        if (bioEntries.Count == 0 && _previousFeedSignature == signature)
         {
             _previousFriends = current;
             return;

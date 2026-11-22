@@ -101,7 +101,6 @@ public partial class MainWindow : Window
         await _viewModel.InitializeAsync();
         LifecycleLog.Write($"initialized {Program.Startup.ElapsedMilliseconds}ms");
         LogMemory("loaded");
-        TrimAfterLoad();
         _refreshTimer.Start();
 
         if (!_viewModel.IsLoggedIn && !_viewModel.IsTwoFactorRequired)
@@ -792,35 +791,6 @@ public partial class MainWindow : Window
         {
             _backgroundTrimTimer.Stop();
         }
-    }
-
-    /// <summary>
-    /// The first load leaves a large transient population behind: feed pages,
-    /// friend snapshots and decoded avatars. One non-blocking collect plus a
-    /// working-set trim after it settles gives that memory back instead of
-    /// letting it stay resident for the rest of the session.
-    /// </summary>
-    private void TrimAfterLoad()
-    {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
-                GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
-                GC.WaitForPendingFinalizers();
-                using (var process = Process.GetCurrentProcess())
-                {
-                    EmptyWorkingSet(process.Handle);
-                }
-
-                LogMemory("after-load trim");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine(ex);
-            }
-        });
     }
 
     private static void LogMemory(string stage)
