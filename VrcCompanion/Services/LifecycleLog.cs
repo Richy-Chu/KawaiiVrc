@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 
 namespace VrcCompanion.Services;
@@ -9,10 +10,7 @@ namespace VrcCompanion.Services;
 internal static class LifecycleLog
 {
     private static readonly object Sync = new();
-    private static readonly string DefaultPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "lifecycle.log");
+    private static string DefaultPath => UserDataPaths.Combine("lifecycle.log");
 
     private static string? _path;
 

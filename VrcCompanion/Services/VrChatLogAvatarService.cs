@@ -201,11 +201,7 @@ public sealed class VrChatLogAvatarService
         }
     }
 
-    private static string LogDirectory()
-    {
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return Path.GetFullPath(Path.Combine(local, "..", "LocalLow", "VRChat", "VRChat"));
-    }
+    private static string LogDirectory() => VrcLogPaths.Directory;
 
     internal static void SetForTests(
         string userId,

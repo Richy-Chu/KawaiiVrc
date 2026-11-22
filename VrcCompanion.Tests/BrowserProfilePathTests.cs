@@ -15,20 +15,20 @@ public class BrowserProfilePathTests
     [Fact]
     public void ProfileLivesInTheAppsDataFolder()
         => Assert.Equal(
-            Path.Combine(@"C:\Users\me\AppData\Local", "VrcCompanion", "Browser"),
-            EmbeddedBrowser.ResolveUserDataFolder(null, @"C:\Users\me\AppData\Local"));
+            Path.Combine(@"C:\Users\me\AppData\Local\VrcCompanion", "Browser"),
+            EmbeddedBrowser.ResolveUserDataFolder(null, @"C:\Users\me\AppData\Local\VrcCompanion"));
 
     [Fact]
     public void OverrideWins()
         => Assert.Equal(
             @"C:\temp\browser-profile",
-            EmbeddedBrowser.ResolveUserDataFolder(@"C:\temp\browser-profile", @"C:\Users\me\AppData\Local"));
+            EmbeddedBrowser.ResolveUserDataFolder(@"C:\temp\browser-profile", @"C:\Users\me\AppData\Local\VrcCompanion"));
 
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
     public void BlankOverrideFallsBackToTheDataFolder(string overridePath)
         => Assert.Equal(
-            Path.Combine("local", "VrcCompanion", "Browser"),
+            Path.Combine("local", "Browser"),
             EmbeddedBrowser.ResolveUserDataFolder(overridePath, "local"));
 }

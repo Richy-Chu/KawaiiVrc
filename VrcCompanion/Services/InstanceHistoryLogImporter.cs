@@ -47,12 +47,7 @@ public sealed class InstanceHistoryLogImporter
         }
 
         var directory = string.IsNullOrWhiteSpace(logDirectory)
-            ? Path.GetFullPath(Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "..",
-                "LocalLow",
-                "VRChat",
-                "VRChat"))
+            ? VrcLogPaths.Directory
             : logDirectory;
 
         if (!Directory.Exists(directory))

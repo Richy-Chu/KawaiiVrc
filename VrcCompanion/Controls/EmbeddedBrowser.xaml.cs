@@ -251,10 +251,10 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     /// tabs asked for a fresh sign-in after each build. Keep one profile in the app's own
     /// data folder so sessions survive rebuilds and updates.
     /// </summary>
-    internal static string ResolveUserDataFolder(string? overridePath, string localAppData)
+    internal static string ResolveUserDataFolder(string? overridePath, string profileRoot)
         => !string.IsNullOrWhiteSpace(overridePath)
             ? overridePath!
-            : Path.Combine(localAppData, "VrcCompanion", "Browser");
+            : Path.Combine(profileRoot, "Browser");
 
     private IEmbeddedBrowserHost? _viewModel;
     private Task? _initialization;
@@ -649,9 +649,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     private static async Task<CoreWebView2Environment> CreateSharedEnvironmentAsync()
     {
         var options = new CoreWebView2EnvironmentOptions(BrowserArguments);
-        var folder = ResolveUserDataFolder(
-            UserDataFolderOverride,
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        var folder = ResolveUserDataFolder(UserDataFolderOverride, UserDataPaths.Directory);
         try
         {
             Directory.CreateDirectory(folder);

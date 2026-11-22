@@ -19,5 +19,9 @@ internal static class TestProfile
             Path.GetTempPath(),
             "vrc-companion-tests-" + Environment.ProcessId);
         UserDataPaths.UseDirectoryForTests(directory);
+
+        var logs = Path.Combine(directory, "vrchat-logs");
+        Directory.CreateDirectory(logs);
+        VrcLogPaths.UseDirectoryForTests(logs);
     }
 }

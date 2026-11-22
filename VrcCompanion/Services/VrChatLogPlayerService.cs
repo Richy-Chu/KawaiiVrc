@@ -398,8 +398,7 @@ public sealed class VrChatLogPlayerService
 
     internal static string? FindLatestLog()
     {
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var directory = Path.GetFullPath(Path.Combine(local, "..", "LocalLow", "VRChat", "VRChat"));
+        var directory = VrcLogPaths.Directory;
         return Directory.Exists(directory)
             ? Directory.GetFiles(directory, "output_log_*.txt")
                 .OrderByDescending(File.GetLastWriteTimeUtc)
