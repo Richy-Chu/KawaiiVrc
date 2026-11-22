@@ -3319,6 +3319,9 @@ public sealed class AvatarViewModel : ViewModelBase
         _originalAvatarId = null;
         _previousAvatarId = null;
         _activeSlotTag = null;
+        // A picker left open across a sign-out would sit on the login screen.
+        _pendingFavoriteAvatarId = null;
+        IsSlotPickerOpen = false;
         FavoritesOnly = false;
         ErrorMessage = null;
         StatusMessage = null;

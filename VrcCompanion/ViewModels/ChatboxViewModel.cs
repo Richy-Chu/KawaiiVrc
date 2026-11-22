@@ -4172,8 +4172,21 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
         _integrationTimer.Stop();
         _liveTypingTimer.Stop();
         _liveTypingFinalizeTimer.Stop();
-        _lyricsCancellation?.Cancel();
-        _lyricsCancellation?.Dispose();
+        var lyricsCancellation = _lyricsCancellation;
+        _lyricsCancellation = null;
+        if (lyricsCancellation is not null)
+        {
+            try
+            {
+                lyricsCancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The lyrics path disposes its own source when a track ends.
+            }
+
+            lyricsCancellation.Dispose();
+        }
         _soundpadService.Dispose();
         _openVrService.Dispose();
         _systemStats.Dispose();
