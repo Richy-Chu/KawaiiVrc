@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http;
 using System.Reflection;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Velopack;
 using Velopack.Exceptions;
@@ -49,8 +51,18 @@ public sealed class AppUpdateService : IAppUpdateService
 {
     private const string FallbackRepositoryUrl = "https://github.com/Richy-Chu/KawaiiVrc";
     private const string RepositoryMetadataKey = "UpdateRepository";
+    private const string FeedFileName = "releases.win.json";
+
+    /// <summary>
+    /// One request for the release feed answers "is there a newer version?" in a
+    /// fraction of a second. Velopack's own check lists every release through the
+    /// GitHub API first, which is what made an update take a minute to show up.
+    /// </summary>
+    private static readonly HttpClient FeedClient = new() { Timeout = TimeSpan.FromSeconds(10) };
 
     private readonly UpdateManager? _manager;
+    private readonly string _repositoryUrl;
+    private readonly HttpClient _feedClient;
     private readonly object _sync = new();
     private UpdateInfo? _pending;
 
@@ -60,7 +72,14 @@ public sealed class AppUpdateService : IAppUpdateService
     }
 
     public AppUpdateService(string repositoryUrl)
+        : this(repositoryUrl, FeedClient)
     {
+    }
+
+    internal AppUpdateService(string repositoryUrl, HttpClient feedClient)
+    {
+        _repositoryUrl = repositoryUrl;
+        _feedClient = feedClient;
         try
         {
             var manager = new UpdateManager(new GithubSource(repositoryUrl, null, false));
@@ -105,6 +124,124 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateCheckResult(AppUpdateCheckState.Unsupported);
         }
 
+        // The feed answers the common "nothing new" case without waking Velopack.
+        var fast = await ReadFeedAsync().ConfigureAwait(false);
+        if (fast is not null)
+        {
+            return fast;
+        }
+
+        return await CheckWithVelopackAsync(manager).ConfigureAwait(false);
+    }
+
+    /// <summary>Reads the feed vpk publishes with each release; null when it cannot.</summary>
+    private async Task<AppUpdateCheckResult?> ReadFeedAsync()
+    {
+        try
+        {
+            var url = $"{_repositoryUrl.TrimEnd('/')}/releases/latest/download/{FeedFileName}";
+            using var response = await _feedClient
+                .GetAsync(url, HttpCompletionOption.ResponseHeadersRead)
+                .ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            return InterpretFeed(json, CurrentVersion);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Update feed read failed: {ex}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The feed lists every asset of the latest release with its version and notes,
+    /// so a newer version and what changed arrive together. Null means the feed
+    /// was not something this build understands.
+    /// </summary>
+    internal static AppUpdateCheckResult? InterpretFeed(string json, string currentVersion)
+    {
+        if (!SemanticVersion.TryParse(currentVersion, out var current))
+        {
+            return null;
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(json);
+        }
+        catch (JsonException)
+        {
+            // A captive portal or an error page answering for the feed.
+            return null;
+        }
+
+        using (document)
+        {
+            return InterpretAssets(document.RootElement, current);
+        }
+    }
+
+    private static AppUpdateCheckResult? InterpretAssets(JsonElement root, SemanticVersion current)
+    {
+        if (!root.TryGetProperty("Assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        SemanticVersion? newest = null;
+        var newestVersion = string.Empty;
+        var notes = string.Empty;
+        foreach (var asset in assets.EnumerateArray())
+        {
+            if (!asset.TryGetProperty("Version", out var versionElement))
+            {
+                continue;
+            }
+
+            var text = versionElement.GetString();
+            if (text is null || !SemanticVersion.TryParse(text, out var version))
+            {
+                continue;
+            }
+
+            if (newest is not null && version.CompareTo(newest) <= 0)
+            {
+                continue;
+            }
+
+            newest = version;
+            newestVersion = text;
+            var markdown = asset.TryGetProperty("NotesMarkdown", out var markdownElement)
+                ? markdownElement.GetString()
+                : null;
+            var html = asset.TryGetProperty("NotesHTML", out var htmlElement)
+                ? htmlElement.GetString()
+                : null;
+            notes = ReleaseNotes.ToPlainText(markdown, html);
+        }
+
+        if (newest is null)
+        {
+            return null;
+        }
+
+        return newest.CompareTo(current) > 0
+            ? new AppUpdateCheckResult(AppUpdateCheckState.Available, newestVersion, notes)
+            : new AppUpdateCheckResult(AppUpdateCheckState.UpToDate);
+    }
+
+    /// <summary>
+    /// The full check, used when the feed could not be read. It is slower and it
+    /// also fills in the update Velopack needs before a download can start.
+    /// </summary>
+    private async Task<AppUpdateCheckResult> CheckWithVelopackAsync(UpdateManager manager)
+    {
         try
         {
             var update = await manager.CheckForUpdatesAsync().ConfigureAwait(false);
@@ -142,19 +279,30 @@ public sealed class AppUpdateService : IAppUpdateService
     public async Task<bool> DownloadAsync(Action<int>? progress, CancellationToken cancellationToken)
     {
         var manager = _manager;
-        UpdateInfo? update;
-        lock (_sync)
-        {
-            update = _pending;
-        }
-
-        if (manager is null || update is null)
+        if (manager is null)
         {
             return false;
         }
 
         try
         {
+            // A check answered from the feed has no Velopack update object yet;
+            // resolve it now, once, instead of doing it on every check.
+            var update = _pending;
+            if (update is null)
+            {
+                update = await manager.CheckForUpdatesAsync().ConfigureAwait(false);
+                lock (_sync)
+                {
+                    _pending = update;
+                }
+            }
+
+            if (update is null)
+            {
+                return false;
+            }
+
             await manager
                 .DownloadUpdatesAsync(update, progress, cancellationToken)
                 .ConfigureAwait(false);

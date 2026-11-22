@@ -16,7 +16,10 @@ public sealed class UpdateViewModel : ViewModelBase
     // opened by hand. Ten minutes plus a check on window activation keeps it
     // honest without hammering GitHub.
     private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(10);
+
+    // The check reads a single small release feed, so there is no reason to make
+    // anyone wait: three seconds is enough for the window and its refresh to settle.
+    private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(3);
 
     /// <summary>Shown next to the disabled Settings button so the state is explained.</summary>
     public const string UnsupportedText =
@@ -289,8 +292,9 @@ public sealed class UpdateViewModel : ViewModelBase
         ErrorText = string.Empty;
         StatusText = "Checking for updates…";
 
+        var started = System.Diagnostics.Stopwatch.StartNew();
         var result = await _service.CheckAsync();
-        ApplyCheckResult(result, manual);
+        ApplyCheckResult(result, manual, started.ElapsedMilliseconds);
     }
 
     internal async Task DownloadNowAsync()
@@ -367,11 +371,13 @@ public sealed class UpdateViewModel : ViewModelBase
         }
     }
 
-    private void ApplyCheckResult(AppUpdateCheckResult result, bool manual)
+    private void ApplyCheckResult(AppUpdateCheckResult result, bool manual, long elapsedMs = 0)
     {
         IsChecking = false;
         _lastCheckAt = DateTimeOffset.UtcNow;
-        LifecycleLog.Write($"updater: check {(manual ? "manual" : "automatic")} -> {result.State} {result.Version}".TrimEnd());
+        LifecycleLog.Write(
+            $"updater: check {(manual ? "manual" : "automatic")} -> {result.State} {result.Version} ({elapsedMs} ms)"
+                .TrimEnd());
 
         switch (result.State)
         {
