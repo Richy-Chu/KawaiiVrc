@@ -26,10 +26,30 @@ public static class ScrollViewerBehavior
 
     private static void OnPageTokenChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is ScrollViewer viewer)
+        // A page may bind the token on its own ScrollViewer or on the list that
+        // owns the ScrollViewer inside its template.
+        var viewer = d as ScrollViewer ?? FindScrollViewer(d);
+        viewer?.ScrollToTop();
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
         {
-            viewer.ScrollToTop();
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is ScrollViewer viewer)
+            {
+                return viewer;
+            }
+
+            if (FindScrollViewer(child) is { } nested)
+            {
+                return nested;
+            }
         }
+
+        return null;
     }
 
     /// <summary>

@@ -1333,9 +1333,16 @@ public sealed class VrcApiClient : IDisposable
 
     // -------------------------------------------------------------- worlds
 
-    public async Task<IReadOnlyList<VrcWorld>> SearchWorldsAsync(string? query, CancellationToken cancellationToken = default)
+    /// <summary>Worlds on one page of the public catalog.</summary>
+    public const int WorldsPageSize = 24;
+
+    public async Task<IReadOnlyList<VrcWorld>> SearchWorldsAsync(
+        string? query,
+        int page = 1,
+        CancellationToken cancellationToken = default)
     {
-        var path = "worlds?n=24&sort=popularity&releaseStatus=public";
+        var offset = Math.Max(0, page - 1) * WorldsPageSize;
+        var path = $"worlds?n={WorldsPageSize}&offset={offset}&sort=popularity&releaseStatus=public";
         if (!string.IsNullOrWhiteSpace(query))
         {
             path += $"&search={Uri.EscapeDataString(query.Trim())}";

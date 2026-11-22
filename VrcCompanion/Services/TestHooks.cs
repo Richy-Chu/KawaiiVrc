@@ -134,6 +134,10 @@ internal static class TestHooks
 
     public static bool ShouldSkipStartupRestore => _skipStartupRestore;
 
+    /// <summary>Publishes a page of worlds so the Worlds tab makes no request.</summary>
+    public static void SeedWorlds(MainViewModel shell, IEnumerable<VrcWorld> worlds)
+        => shell.SeedWorldsForTests(worlds);
+
     /// <summary>Marks a seeded library as loaded so selecting the tab makes no request.</summary>
     public static void MarkAvatarsLoaded(AvatarViewModel viewModel)
     {

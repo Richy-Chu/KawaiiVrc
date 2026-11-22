@@ -54,6 +54,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _suppressStatusDirty;
     private bool _initialized;
     private bool _worldsLoaded;
+    private readonly Dictionary<int, WorldsPage> _worldsPages = new();
+    private string _worldsQuery = string.Empty;
+    private int _worldsPage = 1;
+    private bool _worldsHasNext;
+    private int _worldsPageToken;
     private bool _disposed;
     private int _busyDepth;
     private string? _avatarUrl;
@@ -525,6 +530,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SearchWorldsCommand = Track(new AsyncRelayCommand(
             () => SearchWorldsAsync(WorldQuery),
             () => IsLoggedIn && !IsBusy));
+        PreviousWorldsPageCommand = Track(new AsyncRelayCommand(
+            () => GoToWorldsPageAsync(_worldsPage - 1),
+            () => HasPreviousWorldsPage && !IsBusy));
+        NextWorldsPageCommand = Track(new AsyncRelayCommand(
+            () => GoToWorldsPageAsync(_worldsPage + 1),
+            () => HasNextWorldsPage && !IsBusy));
         SearchSuggestionCommand = Track(new AsyncRelayCommand<string>(
             SearchSuggestionAsync,
             _ => IsLoggedIn && !IsBusy));
@@ -978,6 +989,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 }
 
                 Worlds.Clear();
+                _worldsPages.Clear();
+                _worldsPage = 1;
+                _worldsHasNext = false;
+                NotifyWorldsPagingChanged();
                 _worldsLoaded = false;
                 OnPropertyChanged(nameof(HasNoWorlds));
                 break;
@@ -2244,6 +2259,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public bool HasNoWorlds => Worlds.Count == 0;
 
+    /// <summary>1-based number of the world page on screen.</summary>
+    public int WorldsPageNumber => _worldsPage;
+
+    public bool HasPreviousWorldsPage => _worldsPage > 1;
+
+    /// <summary>VRChat sends a full page while more worlds exist behind it.</summary>
+    public bool HasNextWorldsPage => _worldsHasNext;
+
+    public string WorldsPageText => _worldsPage == 1 && !_worldsHasNext
+        ? string.Empty
+        : $"Page {_worldsPage}";
+
+    /// <summary>Bumped on every page change so the list scrolls back to the top.</summary>
+    public int WorldsPageToken => _worldsPageToken;
+
     public WorldDialogViewModel? WorldDialog
     {
         get => _worldDialog;
@@ -2485,6 +2515,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public AsyncRelayCommand<NotificationItem> DeclineGroupInviteCommand { get; }
     public RelayCommand CloseBoopPreviewCommand { get; }
     public AsyncRelayCommand SearchWorldsCommand { get; }
+    public AsyncRelayCommand PreviousWorldsPageCommand { get; }
+    public AsyncRelayCommand NextWorldsPageCommand { get; }
     public AsyncRelayCommand<string> SearchSuggestionCommand { get; }
     public RelayCommand<WorldItem> OpenWorldCommand { get; }
 
@@ -3929,31 +3961,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         PushBusy(effectiveQuery.Length == 0 ? "Loading popular worlds…" : "Searching VRChat worlds…");
         try
         {
-            var worlds = await _api.SearchWorldsAsync(effectiveQuery);
+            var data = await FetchWorldsPageAsync(effectiveQuery, 1);
 
-            Worlds.Clear();
-            foreach (var world in worlds
-                         .Select(world => new WorldItem(world)
-                         {
-                             IsFavorite = _favoriteWorlds.Contains(world.Id)
-                         })
-                         .OrderByDescending(world => world.IsFavorite))
-            {
-                Worlds.Add(world);
-            }
-
+            _worldsQuery = effectiveQuery;
+            _worldsPages.Clear();
+            _worldsPages[1] = data;
+            PublishWorldsPage(1, data);
             _worldsLoaded = true;
-            WorldsSummary = effectiveQuery.Length == 0
-                ? $"Popular public worlds · {Worlds.Count}"
-                : $"{Worlds.Count} result{(Worlds.Count == 1 ? string.Empty : "s")} for \u201c{effectiveQuery}\u201d";
-            WorldsEmptyMessage = Worlds.Count == 0
-                ? effectiveQuery.Length == 0
-                    ? "No popular worlds came back. Try a search."
-                    : $"No worlds found for \u201c{effectiveQuery}\u201d."
-                : string.Empty;
-            OnPropertyChanged(nameof(HasNoWorlds));
-
-            _ = LoadWorldImagesAsync(Worlds.ToList());
             ClearError();
         }
         catch (VrcApiException ex)
@@ -3977,6 +3991,120 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             PopBusy();
         }
+    }
+
+    /// <summary>One fetched page of the catalog, kept without its decoded artwork.</summary>
+    private sealed record WorldsPage(IReadOnlyList<VrcWorld> Worlds, bool HasNext);
+
+    private async Task<WorldsPage> FetchWorldsPageAsync(string query, int page)
+    {
+        var worlds = await _api.SearchWorldsAsync(query, page);
+        return new WorldsPage(worlds, worlds.Count >= VrcApiClient.WorldsPageSize);
+    }
+
+    /// <summary>
+    /// Shows one page of worlds. Only this page is published, so the previous
+    /// page's cards and decoded thumbnails leave the grid instead of piling up
+    /// behind the scroll.
+    /// </summary>
+    private void PublishWorldsPage(int page, WorldsPage data)
+    {
+        var rows = data.Worlds
+            .Select(world => new WorldItem(world)
+            {
+                IsFavorite = _favoriteWorlds.Contains(world.Id)
+            })
+            .OrderByDescending(world => world.IsFavorite)
+            .ToList();
+
+        Worlds.Clear();
+        foreach (var world in rows)
+        {
+            Worlds.Add(world);
+        }
+
+        _worldsPage = page;
+        _worldsHasNext = data.HasNext;
+        WorldsSummary = _worldsQuery.Length == 0
+            ? $"Popular public worlds · page {page}"
+            : $"{rows.Count} result{(rows.Count == 1 ? string.Empty : "s")} for \u201c{_worldsQuery}\u201d · page {page}";
+        WorldsEmptyMessage = rows.Count > 0
+            ? string.Empty
+            : _worldsQuery.Length == 0
+                ? "No popular worlds came back. Try a search."
+                : $"No worlds found for \u201c{_worldsQuery}\u201d.";
+        OnPropertyChanged(nameof(HasNoWorlds));
+
+        NotifyWorldsPagingChanged();
+        _ = LoadWorldImagesAsync(rows);
+    }
+
+    /// <summary>Steps to another page, reusing pages already fetched in this search.</summary>
+    internal async Task GoToWorldsPageAsync(int page)
+    {
+        if (!IsLoggedIn || IsBusy || page < 1)
+        {
+            return;
+        }
+
+        if (_worldsPages.TryGetValue(page, out var cached))
+        {
+            PublishWorldsPage(page, cached);
+            return;
+        }
+
+        PushBusy($"Loading page {page} of worlds…");
+        try
+        {
+            var data = await FetchWorldsPageAsync(_worldsQuery, page);
+            _worldsPages[page] = data;
+            PublishWorldsPage(page, data);
+            ClearError();
+        }
+        catch (VrcApiException ex)
+        {
+            ShowError(ex.Message);
+        }
+        catch (HttpRequestException)
+        {
+            ShowError("Could not reach VRChat. Check your internet connection.");
+        }
+        catch (TaskCanceledException)
+        {
+            ShowError("The world search timed out. Try again.");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            ShowError("Something went wrong while loading that page of worlds.");
+        }
+        finally
+        {
+            PopBusy();
+        }
+    }
+
+    /// <summary>Test seam: publishes a page of worlds without making an API request.</summary>
+    internal void SeedWorldsForTests(IEnumerable<VrcWorld> worlds)
+    {
+        var rows = worlds.ToList();
+        _worldsQuery = string.Empty;
+        _worldsPages.Clear();
+        _worldsPages[1] = new WorldsPage(rows, HasNext: false);
+        PublishWorldsPage(1, _worldsPages[1]);
+        _worldsLoaded = true;
+    }
+
+    private void NotifyWorldsPagingChanged()
+    {
+        _worldsPageToken++;
+        OnPropertyChanged(nameof(WorldsPageToken));
+        OnPropertyChanged(nameof(WorldsPageText));
+        OnPropertyChanged(nameof(WorldsPageNumber));
+        OnPropertyChanged(nameof(HasPreviousWorldsPage));
+        OnPropertyChanged(nameof(HasNextWorldsPage));
+        PreviousWorldsPageCommand.RaiseCanExecuteChanged();
+        NextWorldsPageCommand.RaiseCanExecuteChanged();
     }
 
     private async Task SearchSuggestionAsync(string? query)

@@ -79,7 +79,7 @@ public class AvatarTabSwitchTests
     }
 
     [Fact]
-    public void ALargeLibraryOnlyBuildsItsFirstChunk()
+    public void ALargeLibraryOnlyPublishesItsFirstPage()
     {
         using var api = new VrcApiClient();
         var viewModel = new AvatarViewModel(api);
@@ -88,22 +88,65 @@ public class AvatarTabSwitchTests
             .ToArray();
 
         viewModel.SeedLibraryForTests(rows);
+        // The sort is persisted between runs, so pin the order the pages show.
+        viewModel.SelectedAvatarSort = viewModel.AvatarSortOptions.Single(
+            option => string.Equals(option.Key, "date-added", StringComparison.Ordinal));
 
         // A 200-avatar account used to realise 200 cards (and 200 decoded
-        // images) the moment the tab opened.
-        Assert.Equal(48, viewModel.Avatars.Count);
-        Assert.True(viewModel.HasMoreAvatars);
-        Assert.Equal(152, viewModel.HiddenAvatarCount);
+        // images) the moment the tab opened; one page is published instead.
+        Assert.Equal(24, viewModel.Avatars.Count);
+        Assert.True(viewModel.HasNextAvatarPage);
+        Assert.False(viewModel.HasPreviousAvatarPage);
+        Assert.Equal("Page 1 of 9", viewModel.AvatarPageText);
 
-        viewModel.ShowMoreAvatars();
+        var pageOne = viewModel.Avatars.Select(avatar => avatar.Id).ToArray();
 
-        Assert.Equal(144, viewModel.Avatars.Count);
-        Assert.Equal(56, viewModel.HiddenAvatarCount);
+        viewModel.NextAvatarPage();
+
+        Assert.Equal(24, viewModel.Avatars.Count);
+        Assert.True(viewModel.HasPreviousAvatarPage);
+        // Page two continues where page one stopped instead of repeating it.
+        Assert.Empty(pageOne.Intersect(viewModel.Avatars.Select(avatar => avatar.Id)));
+
+        viewModel.PreviousAvatarPage();
+
+        Assert.Equal(pageOne, viewModel.Avatars.Select(avatar => avatar.Id));
 
         viewModel.ReleaseLibraryData(keepFavoriteRows: false);
 
-        Assert.False(viewModel.HasMoreAvatars);
-        Assert.Equal(0, viewModel.HiddenAvatarCount);
+        Assert.False(viewModel.HasNextAvatarPage);
+        Assert.Empty(viewModel.Avatars);
+        Assert.Equal(string.Empty, viewModel.AvatarPageText);
+    }
+
+    [Fact]
+    public void ANewSearchOpensOnItsOwnFirstPage()
+    {
+        using var api = new VrcApiClient();
+        var viewModel = new AvatarViewModel(api);
+        viewModel.SeedLibraryForTests(Library(60));
+        // The sort is persisted between runs, so pin the order the pages show.
+        viewModel.SelectedAvatarSort = viewModel.AvatarSortOptions.Single(
+            option => string.Equals(option.Key, "date-added", StringComparison.Ordinal));
+
+        Assert.Equal("Page 1 of 3", viewModel.AvatarPageText);
+
+        viewModel.NextAvatarPage();
+        viewModel.NextAvatarPage();
+
+        Assert.Equal("Page 3 of 3", viewModel.AvatarPageText);
+        Assert.Equal(12, viewModel.Avatars.Count);
+        Assert.False(viewModel.HasNextAvatarPage);
+
+        // A search filters the library into a different list, so it opens on
+        // its first page instead of page 3 of the old one.
+        viewModel.SearchTerm = "Avatar 1";
+
+        Assert.Equal(1, viewModel.AvatarPageNumber);
+        Assert.False(viewModel.HasPreviousAvatarPage);
+        Assert.Equal(string.Empty, viewModel.AvatarPageText);
+        Assert.Equal(11, viewModel.Avatars.Count);
+        Assert.Equal("Avatar 1", viewModel.Avatars[0].Name);
     }
 
     [Fact]
@@ -115,9 +158,9 @@ public class AvatarTabSwitchTests
         var rows = Library(200);
         viewModel.SeedLibraryForTests(rows);
 
-        // The card is not built, so only the library kept behind the chunk can
+        // The card is not built, so only the library kept behind the page can
         // still answer for this avatar id.
-        Assert.Equal(48, viewModel.Avatars.Count);
+        Assert.Equal(24, viewModel.Avatars.Count);
         Assert.DoesNotContain(viewModel.Avatars, avatar => avatar.Id == "avtr_199");
 
         var worn = new TaskCompletionSource<Avatar>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -143,7 +186,7 @@ public class AvatarTabSwitchTests
         var viewModel = new AvatarViewModel(api);
         viewModel.SeedLibraryForTests(Library(200));
 
-        Assert.Equal(48, viewModel.Avatars.Count);
+        Assert.Equal(24, viewModel.Avatars.Count);
 
         // The star button passes the card's id, so the slot picker has to
         // resolve an avatar whose card was never built.
@@ -160,9 +203,9 @@ public class AvatarTabSwitchTests
         var viewModel = new AvatarViewModel(api);
         viewModel.SeedLibraryForTests(Library(200));
 
-        Assert.Equal(48, viewModel.Avatars.Count);
+        Assert.Equal(24, viewModel.Avatars.Count);
 
-        // Search filters the library, so a match past the first chunk must
+        // Search filters the library, so a match past the first page must
         // still become a card.
         viewModel.SearchTerm = "Avatar 199";
 
@@ -182,15 +225,15 @@ public class AvatarTabSwitchTests
 
         viewModel.SearchTerm = "Avatar";
 
-        // Every avatar matches, but only the first chunk is a card.
-        Assert.Equal(48, viewModel.Avatars.Count);
+        // Every avatar matches, but only the first page is a card.
+        Assert.Equal(24, viewModel.Avatars.Count);
         Assert.Equal("200 of 200 uploaded avatars", viewModel.SummaryText);
 
         viewModel.SearchTerm = string.Empty;
         viewModel.SeedFavoritesForTests(rows);
         viewModel.FavoritesOnly = true;
 
-        Assert.Equal(48, viewModel.Avatars.Count);
+        Assert.Equal(24, viewModel.Avatars.Count);
         Assert.Equal("200 favourite avatars", viewModel.SummaryText);
     }
 
@@ -211,34 +254,60 @@ public class AvatarTabSwitchTests
             var panel = AvatarPanel(window);
             Assert.NotNull(panel);
 
-            Assert.Equal(48, viewModel.Avatars.Count);
+            Assert.Equal(24, viewModel.Avatars.Count);
+            var pageOne = viewModel.Avatars.Select(avatar => avatar.Id).ToArray();
             var resident = panel!.Children.Count;
             Assert.True(
                 resident > 0 && resident < viewModel.Avatars.Count,
                 $"the grid kept {resident} of {viewModel.Avatars.Count} published cards resident");
 
-            // Revealing the rest of the library must add scrollable rows, not
-            // resident cards: that is the whole point of the panel.
-            while (viewModel.HasMoreAvatars)
-            {
-                viewModel.ShowMoreAvatars();
-            }
-
-            window.UpdateLayout();
-            var revealed = AvatarPanel(window)!;
             var grid = FindDescendant<ItemsControl>(window, control =>
                 string.Equals(control.Name, "AvatarGrid", StringComparison.Ordinal))!;
 
-            Assert.Equal(200, viewModel.Avatars.Count);
-            Assert.True(
-                revealed.Children.Count < 200,
-                $"all {revealed.Children.Count} revealed cards stayed resident");
+            // Paging publishes one page at a time, so stepping through the whole
+            // library never grows the grid past a page's worth of cards.
+            while (viewModel.HasNextAvatarPage)
+            {
+                viewModel.NextAvatarPage();
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
 
-            // The whole list is scrollable height, but the last card is not
+                var page = AvatarPanel(window)!;
+                Assert.InRange(viewModel.Avatars.Count, 1, 24);
+                Assert.True(
+                    page.Children.Count < 24,
+                    $"page {viewModel.AvatarPageNumber} kept {page.Children.Count} cards resident");
+            }
+
+            Assert.Equal("Page 9 of 9", viewModel.AvatarPageText);
+
+            while (viewModel.HasPreviousAvatarPage)
+            {
+                viewModel.PreviousAvatarPage();
+            }
+
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            window.UpdateLayout();
+
+            var first = AvatarPanel(window)!;
+            Assert.Equal(pageOne[0], FirstCard(first).Id);
+
+            // The page's own pager is what drives the view model, so the buttons
+            // must be wired to it and not just present.
+            var nextButton = FindDescendant<Button>(window, button =>
+                ReferenceEquals(button.Command, viewModel.NextAvatarPageCommand));
+            Assert.NotNull(nextButton);
+            Assert.True(nextButton!.IsEnabled);
+            Assert.NotNull(FindDescendant<TextBlock>(window, text =>
+                string.Equals(text.Text, viewModel.AvatarPageText, StringComparison.Ordinal)));
+
+            // The page is taller than the viewport, but its last card is not
             // built until a scroll asks for it...
-            Assert.Null(grid.ItemContainerGenerator.ContainerFromIndex(199));
+            Assert.Null(grid.ItemContainerGenerator.ContainerFromIndex(23));
 
-            var scroll = FindAncestor<ScrollViewer>(revealed)!;
+            var scroll = FindAncestor<ScrollViewer>(first)!;
             Assert.True(
                 scroll.ExtentHeight > scroll.ViewportHeight,
                 "the grid reported no scrollable height for the cards it did not build");
@@ -248,7 +317,7 @@ public class AvatarTabSwitchTests
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
             window.UpdateLayout();
 
-            Assert.NotNull(grid.ItemContainerGenerator.ContainerFromIndex(199));
+            Assert.NotNull(grid.ItemContainerGenerator.ContainerFromIndex(23));
 
             // ...and the cards at the top are handed back once they are out of
             // reach, instead of staying resident for the rest of the visit.
@@ -271,10 +340,6 @@ public class AvatarTabSwitchTests
             Select(shell, window, "avatars");
 
             var viewModel = shell.AvatarViewModel!;
-            while (viewModel.HasMoreAvatars)
-            {
-                viewModel.ShowMoreAvatars();
-            }
 
             window.UpdateLayout();
             var panel = AvatarPanel(window)!;
@@ -354,7 +419,7 @@ public class AvatarTabSwitchTests
             var grid = AvatarGrid(window)!;
             var panel = AvatarPanel(window)!;
 
-            Assert.Equal(48, viewModel.Avatars.Count);
+            Assert.Equal(24, viewModel.Avatars.Count);
             Assert.Equal("Bravo 0", FirstCard(panel).DisplayName);
             Assert.True(panel.Children.Count < viewModel.Avatars.Count);
 
@@ -370,7 +435,7 @@ public class AvatarTabSwitchTests
             viewModel.SearchTerm = string.Empty;
             window.UpdateLayout();
 
-            Assert.Equal(48, viewModel.Avatars.Count);
+            Assert.Equal(24, viewModel.Avatars.Count);
             Assert.Equal("Bravo 0", FirstCard(panel).DisplayName);
 
             // Sorting reorders the same library, so the first card must change
@@ -397,8 +462,8 @@ public class AvatarTabSwitchTests
             viewModel.FavoritesOnly = false;
             window.UpdateLayout();
 
-            Assert.Equal(48, viewModel.Avatars.Count);
-            Assert.True(panel.Children.Count < 48);
+            Assert.Equal(24, viewModel.Avatars.Count);
+            Assert.True(panel.Children.Count < 24);
             foreach (FrameworkElement card in panel.Children)
             {
                 var index = grid.ItemContainerGenerator.IndexFromContainer(card);
@@ -520,6 +585,9 @@ public class AvatarTabSwitchTests
         var viewModel = new AvatarViewModel(new VrcApiClient());
         TestHooks.AttachAvatarViewModel(shell, viewModel);
         viewModel.SeedLibraryForTests(avatars);
+        // The sort is persisted between runs, so pin the order the pages show.
+        viewModel.SelectedAvatarSort = viewModel.AvatarSortOptions.Single(
+            option => string.Equals(option.Key, "date-added", StringComparison.Ordinal));
         TestHooks.MarkAvatarsLoaded(viewModel);
     }
 

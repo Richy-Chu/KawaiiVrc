@@ -71,7 +71,8 @@ public sealed class AvatarViewModel : ViewModelBase
         _api = api;
 
         SearchCommand = Track(new RelayCommand(ApplyFilter));
-        ShowMoreAvatarsCommand = Track(new RelayCommand(ShowMoreAvatars, () => HasMoreAvatars));
+        PreviousAvatarPageCommand = Track(new RelayCommand(PreviousAvatarPage, () => HasPreviousAvatarPage));
+        NextAvatarPageCommand = Track(new RelayCommand(NextAvatarPage, () => HasNextAvatarPage));
         RefreshCommand = Track(new AsyncRelayCommand(LoadAsync, () => !IsBusy));
         ToggleFavoriteCommand = Track(new AsyncRelayCommand<string>(ToggleFavoriteAsync, _ => !IsBusy));
         WearAvatarCommand = Track(new AsyncRelayCommand<string>(WearAvatarAsync, _ => !IsWearingAvatar));
@@ -1598,10 +1599,10 @@ public sealed class AvatarViewModel : ViewModelBase
         Avatars = new ObservableCollection<Avatar>();
         TotalCount = 0;
         _filteredCount = 0;
-        _visibleLimit = AvatarChunk;
+        _pageRows = Array.Empty<Avatar>();
+        _pageIndex = 0;
         HasLoaded = false;
-        OnPropertyChanged(nameof(HasMoreAvatars));
-        OnPropertyChanged(nameof(HiddenAvatarCount));
+        NotifyAvatarPagingChanged();
         return true;
     }
 
@@ -1675,8 +1676,9 @@ public sealed class AvatarViewModel : ViewModelBase
             Avatars = new ObservableCollection<Avatar>();
             TotalCount = 0;
             // A reload (refresh, account switch) starts a new grid, so it must
-            // not inherit however many chunks the previous one had revealed.
-            _visibleLimit = AvatarChunk;
+            // not inherit the page the previous one was left on.
+            _pageRows = Array.Empty<Avatar>();
+            _pageIndex = 0;
 
             // Publish every page as soon as it lands instead of waiting for the
             // whole library, so large accounts fill in progressively.
@@ -1934,46 +1936,102 @@ public sealed class AvatarViewModel : ViewModelBase
         BuildFavorites();
     }
 
-    /// <summary>Rebuilds the visible grid from the library for the current query and sort.</summary>
-    private void ApplyFilter()
+    /// <summary>Rebuilds the visible page from the library for the current query and sort.</summary>
+    private void ApplyFilter() => ApplyFilter(resetPage: true);
+
+    private void ApplyFilter(bool resetPage)
     {
         var rows = SortAvatars(_library.Where(Matches), SelectedAvatarSort).ToList();
         _filteredCount = rows.Count;
+        _pageRows = rows;
+
+        // A new query, sort or favourite filter is a different list, so it opens
+        // on its first page instead of a page number left over from the old one.
+        if (resetPage)
+        {
+            _pageIndex = 0;
+        }
+
+        _pageIndex = Math.Max(0, Math.Min(_pageIndex, AvatarPageCount - 1));
 
         // The grid's virtualizing panel keeps only the cards near the viewport
-        // built, but every published avatar is still a row the grid can scroll
-        // to, so the page also publishes a chunk at a time and lets the panel
-        // keep the height of the rest without any visuals.
-        _visibleLimit = Math.Max(AvatarChunk, Math.Min(_visibleLimit, _filteredCount));
-        Avatars = new ObservableCollection<Avatar>(rows.Take(_visibleLimit));
+        // built, and the page publishes one page of rows at a time, so a
+        // 500-avatar library costs the same as a 24-card page until Next is
+        // pressed.
+        Avatars = new ObservableCollection<Avatar>(_pageRows
+            .Skip(_pageIndex * AvatarPageSize)
+            .Take(AvatarPageSize));
         UpdateSummary();
-        OnPropertyChanged(nameof(HasMoreAvatars));
-        OnPropertyChanged(nameof(HiddenAvatarCount));
-        ShowMoreAvatarsCommand.RaiseCanExecuteChanged();
+        NotifyAvatarPagingChanged();
     }
 
-    /// <summary>How many more cards to add when the user asks for them.</summary>
-    private const int AvatarChunk = 48;
+    /// <summary>Cards on one page of the uploaded-avatar grid.</summary>
+    private const int AvatarPageSize = 24;
 
-    private int _visibleLimit = AvatarChunk;
+    private IReadOnlyList<Avatar> _pageRows = Array.Empty<Avatar>();
+    private int _pageIndex;
     private int _filteredCount;
+    private int _avatarPageToken;
 
-    /// <summary>True while the filtered library still has cards that are not built.</summary>
-    public bool HasMoreAvatars => Avatars.Count < _filteredCount;
+    /// <summary>Pages in the filtered library; 0 while nothing matches.</summary>
+    public int AvatarPageCount => _filteredCount == 0
+        ? 0
+        : ((_filteredCount - 1) / AvatarPageSize) + 1;
 
-    public int HiddenAvatarCount => Math.Max(0, _filteredCount - Avatars.Count);
+    /// <summary>1-based number of the page on screen.</summary>
+    public int AvatarPageNumber => AvatarPageCount == 0 ? 0 : _pageIndex + 1;
 
-    public IRelayCommand ShowMoreAvatarsCommand { get; }
+    public string AvatarPageText => AvatarPageCount <= 1
+        ? string.Empty
+        : $"Page {AvatarPageNumber} of {AvatarPageCount}";
 
-    public void ShowMoreAvatars()
+    public bool HasPreviousAvatarPage => _pageIndex > 0;
+
+    public bool HasNextAvatarPage => _pageIndex + 1 < AvatarPageCount;
+
+    /// <summary>
+    /// Bumped on every page change; the page scrolls to the top when it changes,
+    /// so a new page never opens at the previous page's scroll offset.
+    /// </summary>
+    public int AvatarPageToken => _avatarPageToken;
+
+    public IRelayCommand PreviousAvatarPageCommand { get; }
+
+    public IRelayCommand NextAvatarPageCommand { get; }
+
+    public void PreviousAvatarPage()
     {
-        if (!HasMoreAvatars)
+        if (!HasPreviousAvatarPage)
         {
             return;
         }
 
-        _visibleLimit = Math.Min(_filteredCount, _visibleLimit + (AvatarChunk * 2));
-        ApplyFilter();
+        _pageIndex--;
+        ApplyFilter(resetPage: false);
+    }
+
+    public void NextAvatarPage()
+    {
+        if (!HasNextAvatarPage)
+        {
+            return;
+        }
+
+        _pageIndex++;
+        ApplyFilter(resetPage: false);
+    }
+
+    private void NotifyAvatarPagingChanged()
+    {
+        _avatarPageToken++;
+        OnPropertyChanged(nameof(AvatarPageToken));
+        OnPropertyChanged(nameof(AvatarPageCount));
+        OnPropertyChanged(nameof(AvatarPageNumber));
+        OnPropertyChanged(nameof(AvatarPageText));
+        OnPropertyChanged(nameof(HasPreviousAvatarPage));
+        OnPropertyChanged(nameof(HasNextAvatarPage));
+        PreviousAvatarPageCommand.RaiseCanExecuteChanged();
+        NextAvatarPageCommand.RaiseCanExecuteChanged();
     }
 
     private FilterOption ResolveAvatarSort(string? key)
@@ -2061,8 +2119,8 @@ public sealed class AvatarViewModel : ViewModelBase
 
     private void UpdateSummary()
     {
-        // The grid publishes a chunk at a time, so the headline count must come
-        // from the filtered library, not from the cards that happen to be built.
+        // The grid publishes one page at a time, so the headline count must come
+        // from the filtered library, not from the cards on the current page.
         TotalCount = _filteredCount;
         NotifySummaryChanged();
     }

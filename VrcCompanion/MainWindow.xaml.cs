@@ -1065,6 +1065,7 @@ public partial class MainWindow : Window
         _viewModel.Dispose();
     }
 
+
     private static int ToColorRef(byte red, byte green, byte blue)
         => red | (green << 8) | (blue << 16);
 
