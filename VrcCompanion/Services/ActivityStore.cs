@@ -78,14 +78,83 @@ public sealed class ActivityStore
                 return Array.Empty<ActivityEntry>();
             }
 
-            return stored.Entries
+            var rows = stored.Entries
                 .Where(entry => entry is not null && !string.IsNullOrWhiteSpace(entry.Id))
                 .GroupBy(entry => entry.Id, StringComparer.Ordinal)
                 .Select(group => group.First())
                 .OrderByDescending(entry => entry.Timestamp)
                 .Take(MaximumEntries)
                 .ToList();
+
+            var deduped = DedupeEvents(rows);
+            if (deduped.Count == rows.Count)
+            {
+                return deduped;
+            }
+
+            // Feeds written before the merge dedupe hold repeats: a rebuilt
+            // snapshot stored the same transition again under a new row id.
+            // Drop them from this account's copy and let the trailing write
+            // shrink the file instead of waiting for the next event.
+            stored.Entries = deduped;
+            _feedDirty = true;
+            ScheduleFeedWrite();
+            return deduped;
         }
+    }
+
+    /// <summary>
+    /// Event identity independent of the row id, matching the merge rule in the
+    /// feed view model: one type, one user, one event time.
+    /// </summary>
+    private static string EventKey(ActivityEntry entry)
+        => $"{(int)entry.Type}|{entry.UserId}|{entry.Timestamp.UtcTicks}";
+
+    /// <summary>
+    /// Keeps one row per event. The copy carrying the avatar id or the most
+    /// detail wins, because repeats were not always written with the same fields.
+    /// </summary>
+    private static List<ActivityEntry> DedupeEvents(List<ActivityEntry> rows)
+    {
+        var indexByKey = new Dictionary<string, int>(StringComparer.Ordinal);
+        var kept = new List<ActivityEntry>(rows.Count);
+        foreach (var entry in rows)
+        {
+            // Only a row that names a person and an event time can be matched.
+            if (string.IsNullOrWhiteSpace(entry.UserId) || entry.Timestamp == default)
+            {
+                kept.Add(entry);
+                continue;
+            }
+
+            var key = EventKey(entry);
+            if (indexByKey.TryGetValue(key, out var index))
+            {
+                if (IsRicher(entry, kept[index]))
+                {
+                    kept[index] = entry;
+                }
+
+                continue;
+            }
+
+            indexByKey[key] = kept.Count;
+            kept.Add(entry);
+        }
+
+        return kept;
+    }
+
+    private static bool IsRicher(ActivityEntry candidate, ActivityEntry current)
+    {
+        var candidateHasAvatar = !string.IsNullOrWhiteSpace(candidate.AvatarId);
+        var currentHasAvatar = !string.IsNullOrWhiteSpace(current.AvatarId);
+        if (candidateHasAvatar != currentHasAvatar)
+        {
+            return candidateHasAvatar;
+        }
+
+        return (candidate.Details?.Length ?? 0) > (current.Details?.Length ?? 0);
     }
 
     public void Save(string? accountId, IEnumerable<ActivityEntry> entries)
