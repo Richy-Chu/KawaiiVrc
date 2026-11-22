@@ -1996,8 +1996,15 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
     private void PublishPage()
     {
-        Entries = new ObservableCollection<ActivityEntry>(
-            _filteredEntries.Skip(_pageIndex * PageSize).Take(PageSize));
+        var page = _filteredEntries.Skip(_pageIndex * PageSize).Take(PageSize).ToList();
+        // An event that lands off this page, or an avatar name resolving, leaves
+        // the visible rows identical. Replacing the collection anyway throws away
+        // every realised row and rebuilds the list for nothing.
+        if (!IsSamePage(page))
+        {
+            Entries = new ObservableCollection<ActivityEntry>(page);
+        }
+
         OnPropertyChanged(nameof(PageCount));
         OnPropertyChanged(nameof(CurrentPage));
         OnPropertyChanged(nameof(PageText));
@@ -2007,6 +2014,25 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasPages));
         PreviousPageCommand.RaiseCanExecuteChanged();
         NextPageCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool IsSamePage(IReadOnlyList<ActivityEntry> page)
+    {
+        var current = _entries;
+        if (current.Count != page.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < page.Count; i++)
+        {
+            if (!ReferenceEquals(current[i], page[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void PreviousPage()
