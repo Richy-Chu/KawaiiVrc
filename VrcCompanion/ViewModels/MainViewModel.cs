@@ -132,6 +132,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     // Signature of the last friend poll so an unchanged snapshot can skip the
     // friend list and feed rebuild entirely.
     private long? _lastFriendPollSignature;
+
+    // Bumped whenever a complete friend list is applied, so a partial page that
+    // was queued before it cannot land afterwards and resurrect stale rows.
+    private int _friendApplyGeneration;
     private bool _activityPollBusy;
     private DispatcherTimer? _bioPollTimer;
     private bool _bioPollBusy;
@@ -356,7 +360,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             new("accounts", "Accounts", "\uE716"),
             new("settings", "Settings", "\uE713")
         };
-        _selectedSection = Sections[0];
+        // A returning, signed-in user always lands on Friends a moment later.
+        // Building the profile page first only to throw it away costs a whole
+        // section view (its banner decode, cards and bindings), so start on the
+        // tab the restore is about to select.
+        _selectedSection = _api.HasSavedSession ? _friendsNav : Sections[0];
         MediaViewModel = mediaViewModel;
         // Pictures are matched to the sessions recorded for the signed-in
         // account, so the Media viewer can show the real world and players.
@@ -3383,6 +3391,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(HasNoFriendChanges));
     }
 
+    private static void RunOnUiThread(Action action)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        dispatcher.BeginInvoke(action, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
     private async Task RefreshDataAsync(bool refreshUser, bool includeOfflineFriends = true)
     {
         if (!IsLoggedIn)
@@ -3403,9 +3423,25 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // first seconds of launch. The fetch runs on the pool, so the parse
             // does too, and the finished list is applied in one pass.
             var userTask = refreshUser ? Task.Run(() => _api.GetCurrentUserAsync()) : null;
+            // The first page arrives about a second before the last, so the list
+            // is filled as pages land instead of staying empty until the whole
+            // fetch finishes. The parse stays on the pool; only the collection
+            // update is marshalled back.
+            var generation = ++_friendApplyGeneration;
             var friendsTask = Task.Run(() => _api.GetFriendsAsync(
                 forceRefresh: true,
-                onlineOnly: true));
+                onlineOnly: true,
+                onPartial: partial =>
+                {
+                    var snapshot = partial;
+                    RunOnUiThread(() =>
+                    {
+                        if (generation == _friendApplyGeneration && IsLoggedIn)
+                        {
+                            UpdateFriends(snapshot, keepMissing: true);
+                        }
+                    });
+                }));
             var notificationsTask = _api.GetNotificationsAsync();
 
             var pending = new List<Task> { friendsTask, notificationsTask };
@@ -3447,6 +3483,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             var notifications = await notificationsTask;
 
+            // Supersede any partial page still queued, then apply the full set.
+            _friendApplyGeneration++;
             UpdateFriends(friends, keepMissing: true);
             ActivityFeedViewModel?.ApplyOnlineFriends(friends);
             UpdateNotifications(notifications);

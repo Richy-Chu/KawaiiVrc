@@ -33,7 +33,10 @@ public partial class MainWindow : Window
     private readonly UiStallMonitor _stallMonitor;
     private readonly Dictionary<string, ContentControl> _sectionViews = new(StringComparer.Ordinal);
     private readonly List<string> _sectionOrder = new();
-    private const int MaxCachedSectionViews = 4;
+    // Every cached section view keeps its whole visual tree, item containers
+    // and decoded images alive. Two is enough to keep back-and-forth snappy
+    // without paying for tabs visited long ago.
+    private const int MaxCachedSectionViews = 2;
     private bool _isClosed;
 
     public MainWindow()
@@ -599,6 +602,7 @@ public partial class MainWindow : Window
 
         _sectionOrder.Remove(key);
         _sectionOrder.Add(key);
+        LifecycleLog.Write($"section: {key} live={_sectionViews.Count}");
 
         // Brave and Creator Resources normally have no background work, so drop
         // their WebView when leaving. Keep them when audio or a download is active.
