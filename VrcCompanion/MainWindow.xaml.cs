@@ -103,7 +103,6 @@ public partial class MainWindow : Window
         }
 
         LifecycleLog.Write($"window-loaded {Program.Startup.ElapsedMilliseconds}ms");
-
         _refreshTimer.Start();
 
         if (!_viewModel.IsLoggedIn && !_viewModel.IsTwoFactorRequired)
@@ -649,6 +648,7 @@ public partial class MainWindow : Window
         SectionHost.Children.Remove(view);
         view.Content = null;
         view.ContentTemplate = null;
+        _viewModel.ReleaseSectionData(key, _sectionViews.Keys.ToList());
         ScheduleSettle();
     }
 

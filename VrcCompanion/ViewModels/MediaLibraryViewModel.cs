@@ -1347,6 +1347,30 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     private DateTimeOffset _lastScanAt;
 
+    /// <summary>
+    /// Drops the scanned library once its page is gone. The rows and their
+    /// group objects would otherwise live for the whole session, so a look at
+    /// the pictures tab raised memory for good. EnsureLoadedAsync re-scans on
+    /// the next visit because <see cref="_loaded"/> goes back to false.
+    /// </summary>
+    public void ReleaseData()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        Groups.Clear();
+        WorldFilters.Clear();
+        PeopleFilters.Clear();
+        WorldFilterOptions.Clear();
+        PeopleFilterOptions.Clear();
+        FoundCount = 0;
+        _loaded = false;
+        _lastScanAt = default;
+        PhotoContextsTask = Task.CompletedTask;
+    }
+
     public async Task EnsureLoadedAsync()
     {
         // Reopening the tab within a few minutes must not walk the picture

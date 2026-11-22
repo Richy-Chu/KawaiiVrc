@@ -1534,6 +1534,52 @@ public sealed class AvatarViewModel : ViewModelBase
     public ICommand ToggleFavoriteSortCommand { get; }
     public ICommand WearOriginalAvatarCommand { get; }
 
+    /// <summary>
+    /// Drops the owned-avatar library once its page is gone; the Favourites page
+    /// binds its own rows and is not touched. The next visit reloads because
+    /// HasLoaded is reset.
+    /// </summary>
+    public void ReleaseLibraryData()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        SelectedAvatar = null;
+        _library = new List<Avatar>();
+        Avatars = new ObservableCollection<Avatar>();
+        TotalCount = 0;
+        HasLoaded = false;
+    }
+
+    /// <summary>Drops browse results, which are the heaviest rows this tab keeps.</summary>
+    public void ReleaseBrowseData()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        GlobalResults.ReplaceAll(Array.Empty<Avatar>());
+    }
+
+    /// <summary>Drops the favourite rows and their slot state.</summary>
+    public void ReleaseFavoritesData()
+    {
+        if (_favoritesLoading)
+        {
+            return;
+        }
+
+        FavoriteAvatars.Clear();
+        FavoriteSlots.Clear();
+        _favoriteRecords.Clear();
+        _localFavoriteIds.Clear();
+        UnresolvedFavoriteIds.Clear();
+        _favoritesLoaded = false;
+    }
+
     /// <summary>Starts the library load unless it is already running or done.</summary>
     public Task EnsureLoadedAsync()
     {

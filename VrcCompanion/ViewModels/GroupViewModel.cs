@@ -842,6 +842,28 @@ public sealed class GroupViewModel : ViewModelBase
 
     public Task LoadAsync() => LoadGroupsAsync();
 
+    /// <summary>
+    /// Drops the loaded groups, members, and instances with the page. The
+    /// section reloads through LoadAsync on the next visit because HasLoaded
+    /// is reset.
+    /// </summary>
+    public void ReleaseData()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        SelectedGroup = null;
+        Groups = new ObservableCollection<Group>();
+        VisibleGroups = new ObservableCollection<Group>();
+        GroupSearchResults = new ObservableCollection<Group>();
+        Members = new ObservableCollection<GroupMemberItem>();
+        Instances = new ObservableCollection<GroupInstance>();
+        GroupInfoInstances = new ObservableCollection<GroupInstance>();
+        HasLoaded = false;
+    }
+
     private T Track<T>(T command) where T : IRelayCommand
     {
         _commands.Add(command);

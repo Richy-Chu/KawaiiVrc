@@ -953,6 +953,51 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// Releases the data a section loaded once its page has been thrown away.
+    /// Collections kept by the view models are live objects, so without this a
+    /// visit to a heavy tab raised private memory for the rest of the session.
+    /// Every path here is re-entered when the section is selected again.
+    /// </summary>
+    public void ReleaseSectionData(string key, IReadOnlyCollection<string> liveKeys)
+    {
+        switch (key)
+        {
+            case "media":
+                MediaViewModel.ReleaseData();
+                break;
+            case "groups":
+                GroupViewModel?.ReleaseData();
+                break;
+            case "worlds":
+                // A typed query keeps its own results; EnsureWorldsLoadedAsync
+                // does not refill them, so those rows stay put.
+                if (!Worlds.Any() || !string.IsNullOrWhiteSpace(WorldQuery))
+                {
+                    break;
+                }
+
+                Worlds.Clear();
+                _worldsLoaded = false;
+                OnPropertyChanged(nameof(HasNoWorlds));
+                break;
+            case "avatars":
+            case "avatarsearch":
+                if (!liveKeys.Contains("avatars") && !liveKeys.Contains("avatarsearch"))
+                {
+                    AvatarViewModel?.ReleaseLibraryData();
+                }
+                if (!liveKeys.Contains("avatarsearch"))
+                {
+                    AvatarViewModel?.ReleaseBrowseData();
+                }
+                break;
+            case "favorites":
+                AvatarViewModel?.ReleaseFavoritesData();
+                break;
+        }
+    }
+
     public string SectionTitle => SelectedSection.Title;
 
     public string SectionSubtitle => SelectedSection.Key switch
