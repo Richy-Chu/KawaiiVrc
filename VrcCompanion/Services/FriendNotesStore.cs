@@ -78,10 +78,7 @@ public sealed class FriendNotesStore
         return saved;
     }
 
-    private static string DefaultPath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "friend-notes.json");
+    private static string DefaultPath() => UserDataPaths.Combine("friend-notes.json");
 
     private Dictionary<string, FriendNote> Load()
     {

@@ -18,6 +18,6 @@ internal static class TestProfile
         var directory = Path.Combine(
             Path.GetTempPath(),
             "vrc-companion-tests-" + Environment.ProcessId);
-        SessionStore.UseDefaultDirectoryForTests(directory);
+        UserDataPaths.UseDirectoryForTests(directory);
     }
 }

@@ -1533,10 +1533,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ? "Developer tools: ON"
         : "Developer tools: OFF";
 
-    private static string DevToolsPath => System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "creator.json");
+    private static string DevToolsPath => VrcCompanion.Services.UserDataPaths.Combine("creator.json");
 
     private void LoadDevToolsSetting()
     {
@@ -7657,9 +7654,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
 
             var fileName = $"backdrop_{DateTimeOffset.UtcNow:yyyyMMdd_HHmmss}{ext}";
-            var directory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VrcCompanion", "backdrops");
+            var directory = VrcCompanion.Services.UserDataPaths.Combine("backdrops");
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, fileName);
 

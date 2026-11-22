@@ -378,8 +378,7 @@ public sealed class SettingsStore
         if (path is null)
         {
             var directory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VrcCompanion");
+                UserDataPaths.Directory);
             _path = Path.Combine(directory, "settings.json");
         }
         else

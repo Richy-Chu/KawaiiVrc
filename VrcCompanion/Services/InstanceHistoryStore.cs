@@ -51,15 +51,9 @@ public sealed class InstanceHistoryStore
     /// VRCX-0 style SQLite database. It lives beside the old JSON file so the
     /// first launch can migrate that file without deleting it.
     /// </summary>
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "instance-history.db");
+    public static string DefaultPath => UserDataPaths.Combine("instance-history.db");
 
-    private static string LegacyJsonPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "instance-history.json");
+    private static string LegacyJsonPath => UserDataPaths.Combine("instance-history.json");
 
     public void Load()
     {

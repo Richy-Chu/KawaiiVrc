@@ -25,10 +25,7 @@ public sealed class ImageLoader : IDisposable
     public static ImageLoader Shared { get; } = new();
 
     private static readonly Uri ImageBaseUri = new("https://api.vrchat.cloud/");
-    private static readonly string CacheDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "imagecache");
+    private static readonly string CacheDirectory = UserDataPaths.Combine("imagecache");
 
     private readonly CookieContainer _cookies = new();
     private readonly HttpClient _http;

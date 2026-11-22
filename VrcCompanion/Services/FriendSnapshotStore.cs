@@ -212,10 +212,7 @@ public sealed class FriendSnapshotStore
     private static bool SequenceEqual(IReadOnlyList<string>? left, IReadOnlyList<string>? right)
         => (left ?? Array.Empty<string>()).SequenceEqual(right ?? Array.Empty<string>(), StringComparer.Ordinal);
 
-    private static string DefaultPath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "friend-snapshots.json");
+    private static string DefaultPath() => UserDataPaths.Combine("friend-snapshots.json");
 
     // Parsed once and reused until the file changes; both Save and the launch
     // read otherwise re-parse the whole snapshot on the UI thread.

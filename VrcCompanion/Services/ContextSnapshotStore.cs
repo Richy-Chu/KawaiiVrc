@@ -30,10 +30,7 @@ public sealed class ContextSnapshotStore
 
     public string FilePath { get; }
 
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "context-snapshot.json");
+    public static string DefaultPath => UserDataPaths.Combine("context-snapshot.json");
 
     public void Save(ContextSnapshot snapshot)
     {

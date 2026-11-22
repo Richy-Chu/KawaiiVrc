@@ -32,10 +32,7 @@ public sealed class ContinuityStore
 
     public string FilePath => _path;
 
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "continuity.db");
+    public static string DefaultPath => UserDataPaths.Combine("continuity.db");
 
     /// <summary>Reads all rows from a source and merges them without duplicates.</summary>
     public int MergeSessions(IEnumerable<ContinuitySession> sessions)

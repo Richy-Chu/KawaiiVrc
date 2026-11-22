@@ -9,10 +9,7 @@ public partial class App : Application
 {
     private bool _errorDialogShown;
 
-    private static readonly string CrashLogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "crash.log");
+    private static readonly string CrashLogPath = UserDataPaths.Combine("crash.log");
 
     protected override void OnStartup(StartupEventArgs e)
     {

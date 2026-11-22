@@ -608,10 +608,7 @@ public sealed class ActivityStore
         }
     }
 
-    private static string DefaultPath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "activity.json");
+    private static string DefaultPath() => UserDataPaths.Combine("activity.json");
 
     // The feed file is ~14 MB once it holds months of rows; parsing it for every
     // read made opening Activity and every bio poll cost hundreds of ms on the

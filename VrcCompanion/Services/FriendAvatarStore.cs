@@ -476,10 +476,7 @@ public sealed class FriendAvatarStore
         };
     }
 
-    private static string DefaultPath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "friend-avatars.json");
+    private static string DefaultPath() => UserDataPaths.Combine("friend-avatars.json");
 
     private StoredFile LoadFile()
     {

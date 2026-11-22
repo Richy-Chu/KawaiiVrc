@@ -121,10 +121,7 @@ public sealed class NotificationPersistenceStore
     private static StoredNotificationState Empty()
         => new(Array.Empty<VrcNotification>(), new HashSet<string>(StringComparer.Ordinal));
 
-    private static string DefaultPath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "notifications.json");
+    private static string DefaultPath() => UserDataPaths.Combine("notifications.json");
 
     private StoredFile LoadFile()
     {

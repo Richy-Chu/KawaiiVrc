@@ -2597,10 +2597,7 @@ public sealed class AvatarViewModel : ViewModelBase
     }
 
     // --- Local favourites: an unlimited, app-side slot VRChat does not cap ---
-    private static string LocalFavoritesPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "local-favorites.json");
+    private static string LocalFavoritesPath => VrcCompanion.Services.UserDataPaths.Combine("local-favorites.json");
 
     private void LoadLocalFavorites()
     {

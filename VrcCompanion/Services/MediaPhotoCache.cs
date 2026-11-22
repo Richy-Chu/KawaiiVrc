@@ -22,10 +22,7 @@ public static class MediaPhotoCache
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "media-photo-cache.json");
+    public static string DefaultPath => UserDataPaths.Combine("media-photo-cache.json");
 
     public static Dictionary<string, MediaPhotoCacheEntry> Load(string? cachePath = null)
     {

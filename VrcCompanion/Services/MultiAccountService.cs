@@ -33,9 +33,7 @@ public sealed class MultiAccountService : IDisposable
 
     public MultiAccountService()
     {
-        var baseDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "VrcCompanion");
+        var baseDir = UserDataPaths.Directory;
         _accountsDirectory = Path.Combine(baseDir, AccountsDirectoryName);
         try
         {

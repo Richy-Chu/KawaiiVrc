@@ -83,10 +83,7 @@ public sealed class InviteMessageMemoryStore
         }
     }
 
-    private static string DefaultPath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "invite-messages.json");
+    private static string DefaultPath() => UserDataPaths.Combine("invite-messages.json");
 
     private StoredFile LoadFile()
     {

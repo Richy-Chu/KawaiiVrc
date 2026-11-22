@@ -18,10 +18,7 @@ public static class MediaIndexCache
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VrcCompanion",
-        "media-index.json");
+    public static string DefaultPath => UserDataPaths.Combine("media-index.json");
 
     public static IReadOnlyList<MediaGroup> Load(string root, string? cachePath = null)
     {
