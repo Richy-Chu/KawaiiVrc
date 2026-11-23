@@ -11,7 +11,9 @@ if ($app.Count -gt 0) {
 }
 
 $project = Join-Path (Split-Path -Parent $PSScriptRoot) "VrcCompanion.Tests\VrcCompanion.Tests.csproj"
-dotnet build $project -c Release --nologo -v quiet | Out-Null
+# Build output stays visible: on a cold runner a failed restore is the likeliest failure, and
+# the exit code alone would not say which project or package broke.
+dotnet build $project -c Release --nologo
 if ($LASTEXITCODE -ne 0) { throw "The test project did not build (exit $LASTEXITCODE)." }
 
 $baseline = Join-Path ([System.IO.Path]::GetTempPath()) "VrcCompanionTests\logs\profile-baseline.txt"
@@ -32,14 +34,24 @@ $stdout = $process.StandardOutput.ReadToEndAsync()
 $stderr = $process.StandardError.ReadToEndAsync()
 
 # The run records the baseline when its test host starts and reads it back after the tests, so
-# one entry appended once the file has settled is seen by the guard-only pass.
+# one entry appended once the file has settled is seen by the guard-only pass. A machine with
+# no installed profile records an empty baseline, so this waits for the file to exist and stop
+# changing, never for it to have content.
 $deadline = (Get-Date).AddMinutes(3)
+$recorded = $false
 while ((Get-Date) -lt $deadline) {
     if (Test-Path -LiteralPath $baseline) {
         $written = (Get-Item -LiteralPath $baseline).LastWriteTimeUtc
-        if ($written -lt (Get-Date).ToUniversalTime().AddSeconds(-1)) { break }
+        if ($written -lt (Get-Date).ToUniversalTime().AddSeconds(-1)) {
+            $recorded = $true
+            break
+        }
     }
     Start-Sleep -Milliseconds 100
+}
+if (-not $recorded) {
+    $process.Kill()
+    throw "The run never recorded a baseline at $baseline, so the guard-only pass cannot be proven."
 }
 Add-Content -LiteralPath $baseline -Value ("f|0|0|" + $probeEntry)
 
