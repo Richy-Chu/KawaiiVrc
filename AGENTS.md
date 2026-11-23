@@ -38,28 +38,37 @@ exempt, since it never starts the guard.
 
 ## The scratch sweep
 
-`TestProfile` (`VrcCompanion.Tests/TestProfile.cs`) deletes what runs leave in `%TEMP%`: at
-startup for runs that crashed, and at the end of the run for its own. That end is the last
-collection (`ScratchCleanup`), not process exit: a test host that has reported every result is
-not obliged to run its exit handlers, and one CI run left its whole scratch behind that way.
-The exit handler stays only as a backstop for runs that never reach the last collection. It
-clears the roots (`VrcCompanionTests`
-except `logs`, `shared` and `browser`; `VrcMediaMeta`; `VrcCompanion.Tests`; `VrcMediaTests`),
-single files named with a test prefix **and** a GUID (a name without one belongs to another
-tool, so its `vrc-*.log` stays), and per-run folders `vrc-companion-tests-<pid>` only once that
-pid is gone, including a one-hour rule for pids Windows has reused.
+`TestProfile` (`VrcCompanion.Tests/TestProfile.cs`) gives each run a folder of its own and
+points the process's temp at it: `TMP` and `TEMP` are set to `%TEMP%\vrc-companion-tests-<pid>`
+in the type's static constructor. `Path.GetTempPath()` reads those variables on every call, so
+that one assignment is the seam for the whole suite - store folders, media caches, loose files
+named after a GUID, the WebView2 profile, and any path a test builds itself all land inside the
+run's folder, with no call site changed. Never build a test path from the system temp: read
+`TestProfile.RealTemp`, which was captured before the redirect.
 
-With two suites running at once, one run's files look exactly like a crashed run's, so the
-sweep stands down to what its pid decides: another live run keeps its folder, and the roots
-and loose GUID-named files are left for a run that sweeps alone. Deleting them mid-run is what
-used to break the other suite's tests.
+Because everything is in one folder, the sweep has nothing to weigh: it deletes folders whose
+process is gone (including a one-hour rule for pids Windows has since reused) and leaves
+everything else alone. Two suites at once write in different folders and never touch each
+other. The run deletes its own folder at the end of its last collection (`ScratchCleanup`),
+not at process exit: a test host that has reported every result is not obliged to run its exit
+handlers, and one CI run left its whole scratch behind that way. The exit handler stays only as
+a backstop for runs that never reach the last collection.
 
-`TestScratchTests` sweeps a sandbox to keep those rules honest. Set
-`VRCC_KEEP_TEST_SCRATCH=1` to skip the exit sweep and keep a failing run's files: the run's own
-folder stays at `%TEMP%\vrc-companion-tests-<pid>` (the test host's pid, and the newest such
-folder after a run), along with the cache folders under `%TEMP%\VrcMediaMeta`,
-`%TEMP%\VrcCompanion.Tests` and `%TEMP%\VrcMediaTests` and any loose `%TEMP%` files the tests
-wrote. The next run sweeps them at startup.
+A file still held by a child process cannot be deleted from inside the host at all, so when the
+delete fails the run starts a small reaper that waits for the host to exit and removes what is
+left. The WebView2 profile is the one thing that never lives in the run's folder: its browser
+holds it open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the
+next run's sweep reclaims it once that pid is gone. A run therefore leaves a browser profile
+behind when it used the browser, and nothing else.
+
+The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
+temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
+process.
+
+`TestScratchTests` keeps both rules honest: that `Path.GetTempPath()` resolves inside the run's
+folder, and that the sweep takes a finished run's folder while leaving a live one alone. Set
+`VRCC_KEEP_TEST_SCRATCH=1` to keep a failing run's files: the whole folder stays at
+`%TEMP%\vrc-companion-tests-<pid>`, and the next run sweeps it at startup.
 
 ## CI
 
@@ -71,10 +80,10 @@ lints the workflows, the pre-push hook and `build/*.ps1` with PSScriptAnalyzer, 
 one filtered run to exit 1 on a fabricated baseline.
 
 `test-suite.yml` runs on every push and is the only job that runs all 860 tests. It finishes
-with `build/assert-temp-clean.ps1`, which fails the job when the run left a per-run folder, a
-loose file named with a test prefix and a GUID, or anything under the cache roots other than
-`logs`, `shared` and `browser`. The step runs even when the tests fail, so a red run still
-reports what it left. Run the script by hand after a local run to get the same verdict.
+with `build/assert-temp-clean.ps1`, which fails the job when a `vrc-companion-tests-*` folder
+is still in `%TEMP%` - the only litter a run can now leave. The step runs even when the tests
+fail, so a red run still reports what it left. Run the script by hand after a local run to get
+the same verdict.
 
 ## Commits
 

@@ -1,77 +1,42 @@
-# Fails when a suite run left its scratch in %TEMP%: the per-run folder the module initializer
-# makes, the loose files a test names after its GUID, or anything in the cache roots. The
-# retained entries - the log folder the guard reads, the WebView2 profile and the shared
-# settings folder - are infrastructure and are skipped.
-# The naming rules mirror TestProfile.ClearScratch; if one side changes, this check fails and
-# says which entry the sweep missed.
+# Fails when a suite run left its folder in %TEMP%. The suite points the process's temp at
+# vrc-companion-tests-<pid> when it starts, so everything a run writes - store files, media
+# caches, loose GUID-named files - lands inside that one folder and goes with it.
+# The WebView2 profile is the exception: the browser process holds it open until the host
+# exits, so a run cannot delete it. It lives in vrc-companion-browser-<pid> and the next run's
+# sweep reclaims it once this process is gone, which is why it is reported here, not failed.
 $ErrorActionPreference = "Stop"
 
 $temp = [System.IO.Path]::GetTempPath()
-$guid = '[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
-$prefixes = @("vrccompanion-", "vrc-")
 $runFolder = "vrc-companion-tests-"
-$kept = @("logs", "shared", "browser")
+$browserFolder = "vrc-companion-browser-"
 
-function Test-TestPrefix([string] $name) {
-    foreach ($prefix in $prefixes) {
-        if ($name.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $true
-        }
-    }
-    return $false
+function Get-ScratchLeftover([string] $prefix) {
+    return @(Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) })
 }
 
-function Get-ScratchLeftover {
-    $problems = New-Object System.Collections.Generic.List[string]
-
-    # The per-run folder goes when its process exits, so after the run none may remain.
-    Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name.StartsWith($runFolder, [System.StringComparison]::OrdinalIgnoreCase) } |
-        ForEach-Object { $problems.Add("per-run folder " + $_.Name) }
-
-    # Loose entries a test dropped straight into %TEMP%, named with a prefix and its GUID.
-    Get-ChildItem -LiteralPath $temp -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notlike "$runFolder*" } |
-        Where-Object { (Test-TestPrefix $_.Name) -and ($_.Name -match $guid) } |
-        ForEach-Object { $problems.Add("temp entry " + $_.Name) }
-
-    # The cache roots stay as folders but hold nothing once the sweep has run.
-    $tests = Join-Path $temp "VrcCompanionTests"
-    $roots = @(
-        $tests,
-        (Join-Path $tests "shared"),
-        (Join-Path $temp "VrcMediaMeta"),
-        (Join-Path $temp "VrcCompanion.Tests"),
-        (Join-Path $temp "VrcMediaTests")
-    )
-    foreach ($root in $roots) {
-        if (-not (Test-Path -LiteralPath $root)) {
-            continue
-        }
-
-        Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue |
-            Where-Object { $kept -notcontains $_.Name } |
-            ForEach-Object { $problems.Add("under " + (Split-Path -Leaf $root) + ": " + $_.Name) }
-    }
-
-    return $problems
-}
-
-# The run deletes its scratch as its test host exits, which a slower disk can still be doing
-# when this step starts: a red check has to mean the sweep left something, not that it was
-# still working. A run on a GitHub runner did fail this way once and passed on the rerun.
+# The run deletes its folder as its last collection ends, so a leftover is a real one: the
+# wait only covers a run whose host fell back to its exit handler.
 $deadline = (Get-Date).AddSeconds(20)
-$problems = Get-ScratchLeftover
-while ($problems.Count -gt 0 -and (Get-Date) -lt $deadline) {
+$leftovers = Get-ScratchLeftover $runFolder
+while ($leftovers.Count -gt 0 -and (Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 2
-    $problems = Get-ScratchLeftover
+    $leftovers = Get-ScratchLeftover $runFolder
 }
 
-if ($problems.Count -gt 0) {
-    Write-Host "The suite left scratch behind in $temp :"
-    $problems | Sort-Object -Unique | ForEach-Object { Write-Host ("  " + $_) }
+if ($leftovers.Count -gt 0) {
+    Write-Host "The suite left its run folder behind in $temp :"
+    $leftovers | ForEach-Object {
+        $size = (Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue |
+            Measure-Object -Property Length -Sum).Sum
+        Write-Host ("  " + $_.Name + " (" + [math]::Round($size / 1MB, 1) + " MB)")
+    }
     Write-Host "Set VRCC_KEEP_TEST_SCRATCH=1 deliberately to keep a run's files; a normal run must sweep them."
     exit 1
 }
 
-Write-Host "No test scratch left in $temp."
+Get-ScratchLeftover $browserFolder | ForEach-Object {
+    Write-Host ("Browser profile " + $_.Name + " stays until the next run sweeps it: its browser holds it open.")
+}
+
+Write-Host "No run folder left in $temp."

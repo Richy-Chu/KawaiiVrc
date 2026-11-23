@@ -5,81 +5,79 @@ using Xunit;
 namespace VrcCompanion.Tests;
 
 /// <summary>
-/// The sweep runs from the module initializer and nowhere else, so nothing in the suite would
-/// notice it widening: a change that drops the GUID rule would only show up as another tool's
-/// file disappearing from %TEMP%, and one that ignores a second run deletes files that run's
-/// tests are still using. The run's own folder needs no plant here - losing that skip deletes
-/// the folder the run just made, which the store and log tests fail on at once.
+/// The seam and the sweep both run from module initialization, so nothing in the suite would
+/// notice either changing: a temp write that escaped the run's folder would only show up as
+/// litter on the machine, and a sweep that widened would delete another run's files. The run's
+/// own folder needs no plant here - losing that skip deletes the folder the run just made,
+/// which the store and log tests fail on at once.
 /// </summary>
 public sealed class TestScratchTests
 {
     /// <summary>No process can own this id, so a folder named for it is litter.</summary>
     private const int DeadPid = 2147483000;
 
+    /// <summary>
+    /// The whole isolation rests on this: every test and every store resolves its temp path
+    /// through <see cref="Path.GetTempPath"/>, so once that points inside the run's folder
+    /// nothing can write beside another run's files however the path is built.
+    /// </summary>
     [Fact]
-    public void TheSweepTakesTheRunsLitterAndLeavesTheRest()
+    public void EveryTempWriteLandsInTheRunsOwnFolder()
     {
-        var temp = Path.Combine(Path.GetTempPath(), "vrc-sweep-" + Guid.NewGuid().ToString("N"));
-        var guidFile = Path.Combine(temp, "vrc-cosmetic-" + Guid.NewGuid().ToString("N") + ".gif");
-        var decoy = Path.Combine(temp, "vrc-other-tool.log");
-        var finished = Path.Combine(temp, "vrc-companion-tests-" + DeadPid);
+        var temp = Path.GetTempPath();
+        Assert.StartsWith(TestProfile.Scratch, temp, StringComparison.OrdinalIgnoreCase);
 
-        Directory.CreateDirectory(finished);
-        File.WriteAllText(guidFile, "gif");
-        File.WriteAllText(decoy, "log");
+        var file = Path.Combine(temp, "vrc-cosmetic-" + Guid.NewGuid().ToString("N") + ".gif");
+        File.WriteAllText(file, "gif");
 
         try
         {
-            // No other run folder here, so this run is alone and sweeps everything.
-            TestProfile.ClearScratch(temp, temp, attempts: 1);
-
-            Assert.False(File.Exists(guidFile), "A file the test named after its GUID is the run's litter.");
-            Assert.True(File.Exists(decoy), "A name without a GUID belongs to whatever else wrote it.");
-            Assert.False(Directory.Exists(finished), "A per-run folder whose process is gone is litter.");
+            Assert.StartsWith(
+                TestProfile.Scratch,
+                Path.GetFullPath(file),
+                StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
-            Directory.Delete(temp, recursive: true);
+            File.Delete(file);
         }
     }
 
     /// <summary>
-    /// Two suites running at once write the same kinds of names, so a sweep cannot tell the
-    /// other run's files from a crashed one's. Deleting them breaks that run's tests; the
-    /// folder it owns stays by pid, and its loose files and cache entries wait for a run that
-    /// sweeps alone.
+    /// Everything a run writes is inside its own folder, and the one thing it cannot delete is
+    /// its browser profile, which WebView2 holds open until the host exits. Both are named for
+    /// the pid that owns them, so the sweep judges folders by that pid alone - no prefixes, no
+    /// GUIDs, nothing that could belong to a run still going.
     /// </summary>
     [Fact]
-    public void TheSweepLeavesALiveRunsScratchAlone()
+    public void TheSweepTakesFinishedRunsAndLeavesTheRest()
     {
-        var temp = Path.Combine(Path.GetTempPath(), "vrc-sweep-" + Guid.NewGuid().ToString("N"));
-        var live = Path.Combine(temp, "vrc-companion-tests-" + Environment.ProcessId);
-        var finished = Path.Combine(temp, "vrc-companion-tests-" + DeadPid);
-        var guidFile = Path.Combine(temp, "vrc-cosmetic-" + Guid.NewGuid().ToString("N") + ".gif");
-        var cacheRoot = Path.Combine(temp, "VrcMediaMeta");
-        var cacheEntry = Path.Combine(cacheRoot, Guid.NewGuid().ToString("N"));
+        var sandbox = Path.Combine(TestProfile.Scratch, "vrc-sweep-" + Guid.NewGuid().ToString("N"));
+        var deadRun = Path.Combine(sandbox, "vrc-companion-tests-" + DeadPid);
+        var deadBrowser = Path.Combine(sandbox, "vrc-companion-browser-" + DeadPid);
+        var ownRun = Path.Combine(sandbox, "vrc-companion-tests-" + Environment.ProcessId);
+        var ownBrowser = Path.Combine(sandbox, "vrc-companion-browser-" + Environment.ProcessId);
+        var unrelated = Path.Combine(sandbox, "some-other-folder");
 
-        Directory.CreateDirectory(live);
-        Directory.CreateDirectory(finished);
-        Directory.CreateDirectory(cacheEntry);
-        File.WriteAllText(guidFile, "gif");
+        Directory.CreateDirectory(deadRun);
+        Directory.CreateDirectory(deadBrowser);
+        Directory.CreateDirectory(ownRun);
+        Directory.CreateDirectory(ownBrowser);
+        Directory.CreateDirectory(unrelated);
 
         try
         {
-            TestProfile.ClearScratch(temp, temp, attempts: 1);
+            TestProfile.SweepFinishedRuns(sandbox);
 
-            Assert.True(Directory.Exists(live), "A per-run folder whose process is alive belongs to that run.");
-            Assert.True(
-                File.Exists(guidFile),
-                "While another run is live, a GUID-named file may be the file its test is using.");
-            Assert.True(
-                Directory.Exists(cacheEntry),
-                "The same goes for the cache folders the other run's tests write into.");
-            Assert.False(Directory.Exists(finished), "A folder whose process is gone is litter whatever else runs.");
+            Assert.False(Directory.Exists(deadRun), "A run folder whose process is gone is litter.");
+            Assert.False(Directory.Exists(deadBrowser), "A browser profile whose process is gone is litter too.");
+            Assert.True(Directory.Exists(ownRun), "This run's own folder stays until it exits.");
+            Assert.True(Directory.Exists(ownBrowser), "This run's browser profile is locked by its own browser.");
+            Assert.True(Directory.Exists(unrelated), "The sweep only knows run folders; anything else is left alone.");
         }
         finally
         {
-            Directory.Delete(temp, recursive: true);
+            Directory.Delete(sandbox, recursive: true);
         }
     }
 }

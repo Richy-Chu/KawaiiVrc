@@ -21,13 +21,13 @@ public sealed class ProfileIsolationTests
             "VrcCompanion");
 
         Assert.NotEqual(realRoot, UserDataPaths.Directory);
-        Assert.StartsWith(Path.GetTempPath(), UserDataPaths.Directory, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(TestProfile.Scratch, UserDataPaths.Directory, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void VrChatLogsAreReadFromTheTestDirectory()
     {
-        Assert.StartsWith(Path.GetTempPath(), VrcLogPaths.Directory, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(TestProfile.Scratch, VrcLogPaths.Directory, StringComparison.OrdinalIgnoreCase);
 
         var log = Path.Combine(VrcLogPaths.Directory, "output_log_" + Guid.NewGuid().ToString("N") + ".txt");
         File.WriteAllText(log, "test");

@@ -15,7 +15,7 @@ internal static class TestLog
     [ModuleInitializer]
     internal static void RedirectLifecycleLog()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "logs");
+        var directory = Path.Combine(TestProfile.Scratch, "logs");
         LifecycleLog.RedirectTo(Path.Combine(directory, "lifecycle.log"));
     }
 
@@ -27,7 +27,7 @@ internal static class TestLog
     [ModuleInitializer]
     internal static void IsolateSharedSettings()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "shared");
+        var directory = Path.Combine(TestProfile.Scratch, "shared");
         Directory.CreateDirectory(directory);
         SettingsStore.RedirectSharedForTests(
             Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json"));
@@ -35,13 +35,17 @@ internal static class TestLog
 
     /// <summary>
     /// Keeps the WebView2 profile the tests create out of the user's %LocalAppData%, so a
-    /// test run cannot touch real logins and cannot collide with a running copy of the app.
+    /// test run cannot touch real logins and cannot collide with a running copy of the app,
+    /// and gives each run its own: a profile shared between runs is exactly the folder one
+    /// suite would be locking while the other deletes it.
+    /// It cannot sit inside the run's folder - the browser process holds it open until the
+    /// host exits - so <see cref="TestProfile.BrowserScratch"/> names it for the same pid and
+    /// the next run's sweep reclaims it.
     /// </summary>
     [ModuleInitializer]
     internal static void IsolateBrowserProfile()
     {
-        var folder = Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "browser");
-        Directory.CreateDirectory(folder);
-        EmbeddedBrowser.UserDataFolderOverride = folder;
+        Directory.CreateDirectory(TestProfile.BrowserScratch);
+        EmbeddedBrowser.UserDataFolderOverride = TestProfile.BrowserScratch;
     }
 }

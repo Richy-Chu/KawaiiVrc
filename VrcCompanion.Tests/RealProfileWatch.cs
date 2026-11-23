@@ -25,8 +25,13 @@ internal static class RealProfileWatch
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "VrcCompanion");
 
+    /// <summary>
+    /// Under the system's temp, not the run's: these files are read by MSBuild after VSTest
+    /// and by this process' guard, and the run's own folder is deleted when the run ends.
+    /// <see cref="TestProfile.RealTemp"/> was read before the run's temp redirect.
+    /// </summary>
     private static string LogsDirectory => Path.Combine(
-        Path.GetTempPath(),
+        TestProfile.RealTemp,
         "VrcCompanionTests",
         "logs");
 
