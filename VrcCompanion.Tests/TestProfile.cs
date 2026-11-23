@@ -223,14 +223,14 @@ internal static class TestProfile
         }
     }
 
-    private static void RecordDeferral(
+    internal static void RecordDeferral(
         string folder, List<(string Name, long Size)> held, string? unlisted)
     {
         try
         {
             var lines = new List<string>
             {
-                "host pid: " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
+                "host pid: " + OwnerOf(folder),
                 "utc: " + DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)
             };
             if (unlisted is not null)
@@ -294,6 +294,27 @@ internal static class TestProfile
 
     private static string TrimSeparators(string path)
         => path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    /// <summary>
+    /// The pid the folder is named for. The note describes that folder, so it names the folder's
+    /// own process even when it is written for another run's folder - a test sandbox has to reach
+    /// the same self-consistency the post-run check asks for.
+    /// </summary>
+    private static string OwnerOf(string folder)
+    {
+        var name = Path.GetFileName(TrimSeparators(folder));
+        if (name.StartsWith(ScratchPrefix, StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(
+                name.AsSpan(ScratchPrefix.Length),
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var owner))
+        {
+            return owner.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+    }
 
     private static string[] Entries(string folder)
     {
