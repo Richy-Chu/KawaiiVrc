@@ -84,6 +84,28 @@ try {
         $failures++
     }
 
+    # A theory's rows are separate failures: six failing rows of one method is a broken theory, not
+    # one flake, however few method names it produces - and five of them still retry.
+    $rows = Join-Path $root "theory.trx"
+    Write-Trx $rows @(1..6 | ForEach-Object {
+            '<UnitTestResult testName="VrcCompanion.Tests.FooTests.Theory(x: ' + $_ + ')" outcome="Failed" />'
+        })
+    $wide = Invoke-Plan $rows
+    if ($wide.ExitCode -ne 1 -or $wide.Text -notlike "*looks systemic*" -or $wide.Text -notlike "*6 test case(s) across 1 method(s)*") {
+        Write-Host ("six failing rows of one theory should be refused as systemic (exit $($wide.ExitCode)):")
+        Write-Host $wide.Text
+        $failures++
+    }
+
+    $fewRows = Join-Path $root "theory-few.trx"
+    Write-Trx $fewRows @(1..5 | ForEach-Object {
+            '<UnitTestResult testName="VrcCompanion.Tests.FooTests.Theory(x: ' + $_ + ')" outcome="Failed" />'
+        })
+    if ((Invoke-Plan $fewRows).ExitCode -ne 0) {
+        Write-Host "five failing rows of one theory should still be retried"
+        $failures++
+    }
+
     # A results file that records no failure means the run failed for some other reason.
     $green = Join-Path $root "green.trx"
     Write-Trx $green @('<UnitTestResult testName="VrcCompanion.Tests.FooTests.First" outcome="Passed" />')
@@ -111,7 +133,7 @@ try {
         exit 1
     }
 
-    Write-Host "7 retry-plan check(s) passed."
+    Write-Host "9 retry-plan check(s) passed."
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

@@ -98,7 +98,9 @@ fails, `build/retry-failed-tests.ps1` re-runs only the failed tests once: it pla
 from the run's `trx`, reports what passed on retry as a warning and in the step summary, and the
 job stays green - a flaky test must not redden an otherwise good commit, but it must not be
 hidden either. A test that fails twice fails the job, and a first run that fails more than five
-tests is not retried at all: a broad failure is the commit's, not the runner's. The job finishes with
+test cases is not retried at all: a broad failure is the commit's, not the runner's. Cases, not
+method names, are counted, so a theory that fails most of its rows reads as broken rather than as
+one flake. The job finishes with
 `build/assert-temp-clean.ps1`, which fails it when a `vrc-companion-tests-*` folder is still in
 `%TEMP%` without a `cleanup-deferred.txt` naming that folder's own pid - the only litter a run
 can leave, and the only folder allowed to wait for the next run's sweep. The step runs even when

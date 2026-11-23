@@ -26,6 +26,7 @@ function Read-Result([string] $path) {
         ForEach-Object {
             [pscustomobject]@{
                 Name = ([string] $_.testName -split "\(")[0]
+                Full = [string] $_.testName
                 Passed = $_.outcome -eq "Passed"
                 Ran = $_.outcome -ne "NotExecuted"
             }
@@ -37,21 +38,25 @@ if (-not (Test-Path -LiteralPath $Results -PathType Leaf)) {
     throw ("No test results at " + $Results + ". The first run did not get far enough to fail a test, so there is nothing to retry: look at the step that ran it.")
 }
 
-    $failed = @(Read-Result $Results | Where-Object { $_.Ran -and -not $_.Passed } | ForEach-Object { $_.Name } | Sort-Object -Unique)
-if ($failed.Count -eq 0) {
+    $cases = @(Read-Result $Results | Where-Object { $_.Ran -and -not $_.Passed })
+$failed = @($cases | ForEach-Object { $_.Name } | Sort-Object -Unique)
+if ($cases.Count -eq 0) {
     throw ("The first run failed but " + $Results + " names no failed test, so the failure was not a test failure.")
 }
 
-# A handful of tests can flake; a broad one cannot. Re-running a break that hits many tests would
-# turn it green and ship it, so above the limit the run is the commit's, not the runner's.
+# A handful of test cases can flake; a broad one cannot. Cases, not method names: a data-driven
+# test that fails most of its rows is a broken theory, not one flake, however few names it makes.
+# Re-running a break that broad would turn it green and ship it, so above the limit the run is
+# the commit's, not the runner's.
 $maxFlakes = 5
-if ($failed.Count -gt $maxFlakes) {
-    $listed = ($failed | Select-Object -First $maxFlakes) -join ", "
-    if ($failed.Count -gt $maxFlakes) {
+if ($cases.Count -gt $maxFlakes) {
+    $listed = (($cases | Select-Object -First $maxFlakes | ForEach-Object { $_.Full }) -join ", ")
+    if ($cases.Count -gt $maxFlakes) {
         $listed += ", ..."
     }
 
-    Write-Host ("The first run failed " + $failed.Count + " test(s): " + $listed)
+    Write-Host ("The first run failed " + $cases.Count + " test case(s) across " + $failed.Count +
+        " method(s): " + $listed)
     Write-Host ("At most " + $maxFlakes + " can pass for a flake, so this looks systemic, not flaky. Nothing was re-run.")
     exit 1
 }
