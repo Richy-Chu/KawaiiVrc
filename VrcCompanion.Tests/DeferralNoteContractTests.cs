@@ -75,6 +75,84 @@ public sealed class DeferralNoteContractTests
     }
 
     /// <summary>
+    /// The note explains what blocked the delete; it is not an inventory of the folder. A store
+    /// file that no line mentions is a run that could not delete it and did not say so, which is
+    /// exactly the leak the check exists to catch.
+    /// </summary>
+    [Fact]
+    public void ADeferredFolderHoldingAFileTheNoteDoesNotNameIsRejected()
+    {
+        var sandbox = NewSandbox(out var folder);
+        var held = Path.Combine(folder, "0b0b0b0b-1111-2222-3333-444444444444.tmp");
+        var store = Path.Combine(folder, "settings.json");
+        File.WriteAllBytes(held, Array.Empty<byte>());
+        File.WriteAllBytes(store, new byte[412]);
+
+        try
+        {
+            using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                WriteNote(folder);
+
+                var result = RunCheck(sandbox);
+
+                Assert.True(
+                    result.ExitCode == 1,
+                    "The check accepted a deferred folder holding a file its note never names: " + result.Output);
+                Assert.Contains("the note does not", result.Output, StringComparison.Ordinal);
+                Assert.Contains("settings.json", result.Output, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The other half of that rule: cleanup takes what it can before it writes the note, so the
+    /// folder it defers holds only what held it and the check's stricter reading still accepts a
+    /// note this project wrote. A read-only file goes too - the attribute is not a lock.
+    /// </summary>
+    [Fact]
+    public void ATrimmedFolderHoldsOnlyWhatHeldItAndIsStillAccepted()
+    {
+        var sandbox = NewSandbox(out var folder);
+        var held = Path.Combine(folder, "0b0b0b0b-1111-2222-3333-444444444444.tmp");
+        var store = Path.Combine(folder, "settings.json");
+        var readOnly = Path.Combine(folder, "readonly.json");
+        File.WriteAllBytes(held, Array.Empty<byte>());
+        File.WriteAllBytes(store, new byte[412]);
+        File.WriteAllBytes(readOnly, new byte[8]);
+        File.SetAttributes(readOnly, FileAttributes.ReadOnly);
+
+        try
+        {
+            using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                TestProfile.DeleteDeletableFiles(folder);
+
+                Assert.False(File.Exists(store), "A file the delete could take must not be left for the note to omit.");
+                Assert.False(File.Exists(readOnly), "A read-only file is not held, so it goes as well.");
+                Assert.True(File.Exists(held), "The held file is the reason the folder stays.");
+
+                WriteNote(folder);
+
+                var result = RunCheck(sandbox);
+
+                Assert.True(
+                    result.ExitCode == 0,
+                    "The check refused a trimmed folder with a note for its held file: " + result.Output);
+                Assert.Contains("waits for the next run's sweep", result.Output, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// A sandbox laid out the way the check expects: one run folder named for a dead pid, directly
     /// under the temp path the check is pointed at.
     /// </summary>

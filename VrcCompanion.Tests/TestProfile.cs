@@ -115,9 +115,6 @@ internal static class TestProfile
         CleanupDeferred = false;
         DeferredReason = null;
 
-        // What another process still holds open is what keeps the folder after the delete, so
-        // read it first: the note has to say exactly what was in the way.
-        var held = HeldFiles(Scratch, out var unlisted);
         DeletePath(Scratch, attempts: 10);
         SweepFinishedRuns(RealTemp);
 
@@ -125,6 +122,19 @@ internal static class TestProfile
         {
             return;
         }
+
+        // A recursive delete stops at the first file it cannot take and leaves the rest of the
+        // folder where it was, so the folder is not only what was held. Take every file that
+        // will go now: what remains is what actually kept it, which is what the note has to
+        // describe and what the post-run check holds it to.
+        DeleteDeletableFiles(Scratch);
+        if (!Directory.Exists(Scratch))
+        {
+            return;
+        }
+
+        // Read the folder after the trim, not before the delete: the note names what is here.
+        var held = HeldFiles(Scratch, out var unlisted);
 
         // Chromium's own temp files stay open in the browser process, which lives as long as
         // this host, so no retry here can close them. The folder stays with a note saying what
@@ -352,6 +362,64 @@ internal static class TestProfile
         {
             // No such process, or one this run may not inspect: either way not ours to wait on.
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Deletes every file in <paramref name="folder"/> that will go, then the directories that
+    /// end up empty, so what is left is what actually kept it. The note and the post-run check
+    /// both judge the folder by what remains, so the two have to be the same thing: a delete that
+    /// stopped at one held file would otherwise leave a store file the note never names.
+    /// </summary>
+    internal static void DeleteDeletableFiles(string folder)
+    {
+        foreach (var file in Entries(folder, Directory.GetFiles))
+        {
+            try
+            {
+                // A read-only attribute is not a lock - the probe reads straight through it - so
+                // it is no reason to keep a file, and keeping one would leave the note short.
+                File.SetAttributes(file, FileAttributes.Normal);
+                File.Delete(file);
+            }
+            catch (Exception)
+            {
+                // Locked, or not this run's to delete: it stays, and the note has to name it.
+            }
+        }
+
+        foreach (var directory in Entries(folder, Directory.GetDirectories)
+                     .OrderByDescending(path => path.Length))
+        {
+            try
+            {
+                Directory.Delete(directory);
+            }
+            catch (Exception)
+            {
+                // Still holds something: it goes when that file does.
+            }
+        }
+
+        try
+        {
+            Directory.Delete(folder);
+        }
+        catch (Exception)
+        {
+            // Still holds a file that would not go, which is why the folder is deferred.
+        }
+    }
+
+    private static string[] Entries(string folder, Func<string, string, SearchOption, string[]> list)
+    {
+        try
+        {
+            return list(folder, "*", SearchOption.AllDirectories);
+        }
+        catch (Exception)
+        {
+            return Array.Empty<string>();
         }
     }
 

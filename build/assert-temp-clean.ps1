@@ -7,8 +7,9 @@
 # which WebView2's browser process keeps open for as long as the host lives. A run that hits them
 # leaves its folder in place with a note naming its own pid and every file that was still held,
 # and the next run's sweep takes the folder. That is the only folder allowed to stay, and only
-# when the note says nothing but empty .tmp files were in the way: a note naming a locked store
-# file is a leak the suite must not paper over, and it fails the job.
+# when the note says nothing but empty .tmp files were in the way, and the folder holds nothing
+# the note does not name: a note naming a locked store file is a leak the suite must not paper
+# over, and so is a store file left beside the temp files with no line about it.
 #
 # The WebView2 profile is the separate exception: its browser holds it open until the host
 # exits, so it lives in vrc-companion-browser-<pid> and the next run's sweep reclaims it, which
@@ -89,6 +90,29 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
         if ((Test-Path -LiteralPath $file -PathType Leaf) -and (Get-Item -LiteralPath $file -Force).Length -ne 0) {
             $problem = "the note names a .tmp file that is not empty now: " + $name
             break
+        }
+    }
+
+    # The note says what blocked the delete, not what is in the folder, and the run deletes every
+    # file it can before writing it: anything else still here is something the run could not take
+    # with it. A store file beside the browser's temp files is a leak however short the note is, so
+    # a file the note does not name fails the deferral. Directories may stand - the browser makes
+    # its own - and their files are judged by this same walk.
+    if ($null -eq $problem) {
+        $note = Join-Path $folder.FullName $deferralNote
+        try {
+            $unnamed = @(Get-ChildItem -LiteralPath $folder.FullName -File -Recurse -Force -ErrorAction Stop |
+                Where-Object { $_.FullName -ne $note -and ($_.Name -notmatch '\.tmp$' -or $_.Length -ne 0) })
+        }
+        catch {
+            $problem = "the folder could not be listed now (" + $_.Exception.GetType().Name + ": " + $_.Exception.Message + ")"
+        }
+
+        if ($null -eq $problem -and $unnamed.Count -gt 0) {
+            $problem = "the folder holds " + $unnamed.Count + " file(s) the note does not: " +
+                (($unnamed | ForEach-Object {
+                    $_.FullName.Substring($folder.FullName.Length).TrimStart('\', '/') + " (" + $_.Length + " bytes)"
+                }) -join ', ')
         }
     }
 

@@ -94,6 +94,22 @@ $checks = @(
         }
     },
     @{
+        # The note is not an inventory of the folder: a file it leaves out is a file the run
+        # could not delete and did not explain, which is what "locked" was supposed to mean.
+        Name = "a folder holding a file the note does not name fails"
+        Expected = 1
+        Marker = "the folder holds 1 file(s) the note does not: settings.json (412 bytes)"
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunFile $sandbox "settings.json" 412
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: 2026-11-23T00:00:00Z",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
         # A run that could not read its folder must not read as one that found nothing in it.
         Name = "a note saying the folder could not be listed fails with that reason"
         Expected = 1

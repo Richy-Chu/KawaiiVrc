@@ -65,9 +65,11 @@ leaves the folder where it is and writes `cleanup-deferred.txt` inside it, namin
 the moment it gave up and every file an exclusive open found still held - a read, so a
 read-only file is not mistaken for a lock. The next run's sweep takes the folder once that pid
 is gone. The post-run check accepts a leftover folder only when that note names the folder's
-own dead pid and every file it names was a zero-byte `.tmp`, so a folder with no note - a run
-whose cleanup never ran - still fails the job, and so does one whose note names a locked store
-file. The WebView2 profile is the one thing that never lives in the run's folder: its browser
+own dead pid, every file it names was a zero-byte `.tmp`, and the folder holds nothing else it
+does not name: cleanup deletes every file it can before writing the note, so a file left out of
+it is one the run could not delete and did not explain. A folder with no note - a run whose
+cleanup never ran - fails the job, and so does one whose note names a locked store file or whose
+folder still holds a store file the note never mentions. The WebView2 profile is the one thing that never lives in the run's folder: its browser
 holds it open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and
 the next run's sweep reclaims it once that pid is gone. A run therefore leaves nothing but a
 browser profile, and a deferred folder that says why.
