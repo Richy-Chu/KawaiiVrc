@@ -302,11 +302,12 @@ public sealed class DiscordBrowserViewModel : ViewModelBase, IEmbeddedBrowserHos
             return;
         }
 
-        await RunAsync(async () =>
+        await RunAsync(() =>
         {
             SetExpectedLocation(FriendsUrl, "Friends");
             BrowserNavigationRequested?.Invoke(FriendsUrl);
             SetActionStatus("Friends opened.");
+            return Task.CompletedTask;
         }, "Opening Friends...");
     }
 
