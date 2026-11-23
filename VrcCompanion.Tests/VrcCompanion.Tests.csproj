@@ -23,4 +23,20 @@
     <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!--
+    A passing test cannot speak: the test runner keeps its output in per-test buffers and
+    drops them, so a green run that could not judge the profile looks exactly like a clean
+    one. The guard leaves its verdict in this file and MSBuild prints it after the run.
+  -->
+  <PropertyGroup>
+    <ProfileGuardNoteFile>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'VrcCompanionTests', 'logs', 'profile-guard-note.txt'))</ProfileGuardNoteFile>
+  </PropertyGroup>
+
+  <Target Name="ReportProfileGuardNote" AfterTargets="VSTest">
+    <ReadLinesFromFile File="$(ProfileGuardNoteFile)" Condition="Exists('$(ProfileGuardNoteFile)')">
+      <Output TaskParameter="Lines" ItemName="ProfileGuardNoteLines" />
+    </ReadLinesFromFile>
+    <Message Importance="high" Text="%(ProfileGuardNoteLines.Identity)" Condition="'@(ProfileGuardNoteLines)' != ''" />
+  </Target>
+
 </Project>

@@ -15,6 +15,9 @@ internal static class TestProfile
     [ModuleInitializer]
     internal static void Initialize()
     {
+        // First, before any seam moves: the real profile in the state the run found it.
+        RealProfileWatch.EnsureBaseline();
+
         var directory = Path.Combine(
             Path.GetTempPath(),
             "vrc-companion-tests-" + Environment.ProcessId);

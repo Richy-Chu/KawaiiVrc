@@ -127,6 +127,66 @@ public sealed class ProfileIsolationTests
     private static string RelativeSourcePath(string path)
         => Path.GetRelativePath(FindProductionSourceRoot(), path);
 
+    /// <summary>
+    /// The scans above read source. This one reads the folder itself: the run records
+    /// the real profile before the first test and the framework compares it after the
+    /// last, so a test that reaches real data past every scan still fails the suite.
+    /// </summary>
+    [Fact]
+    public void TheRealProfileWasRecordedBeforeTheTestsRan()
+    {
+        Assert.True(RealProfileWatch.HasBaseline, "The real profile was never recorded.");
+
+        Assert.Equal(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VrcCompanion"),
+            RealProfileWatch.RealRoot);
+
+        // The guard watches the installed app's folder, not the scratch root the
+        // seams point at, so redirecting the seams can never hide a real write.
+        Assert.NotEqual(
+            Path.GetFullPath(UserDataPaths.Directory),
+            Path.GetFullPath(RealProfileWatch.RealRoot), StringComparer.OrdinalIgnoreCase);
+
+        if (Directory.Exists(RealProfileWatch.RealRoot))
+        {
+            Assert.True(
+                RealProfileWatch.BaselineFileCount > 0,
+                "The real profile exists but the guard recorded no files from it.");
+        }
+    }
+
+    [Fact]
+    public void TheRealProfileGuardReportsAddedModifiedAndRemovedFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vrc-profile-guard-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        File.WriteAllText(Path.Combine(root, "stays.dat"), "a");
+        File.WriteAllText(Path.Combine(root, "grows.dat"), "a");
+        File.WriteAllText(Path.Combine(root, "goes.dat"), "a");
+
+        try
+        {
+            var before = RealProfileWatch.Capture(root);
+            Assert.Empty(RealProfileWatch.DescribeChanges(before, RealProfileWatch.Capture(root)));
+
+            File.WriteAllText(Path.Combine(root, "grows.dat"), "much longer now");
+            File.WriteAllText(Path.Combine(root, "nested", "added.dat"), "z");
+            File.Delete(Path.Combine(root, "goes.dat"));
+
+            var changes = RealProfileWatch.DescribeChanges(before, RealProfileWatch.Capture(root));
+
+            Assert.Contains(changes, change => change == "modified file grows.dat");
+            Assert.Contains(changes, change => change == "added file " + Path.Combine("nested", "added.dat"));
+            Assert.Contains(changes, change => change == "removed file goes.dat");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public void StoresResolveInsideTheTestRoot()
     {
