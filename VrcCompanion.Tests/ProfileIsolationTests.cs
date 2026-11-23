@@ -190,10 +190,11 @@ public sealed class ProfileIsolationTests
     /// <summary>
     /// A filtered pass hands the guard to a second process, which only has the file. If the
     /// record does not survive that round trip, the guard compares the profile against itself
-    /// and calls every run clean.
+    /// and calls every run clean. A build machine has nothing to record at all, so the empty
+    /// record has to work too: the probe's one entry must still be the only change reported.
     /// </summary>
     [Fact]
-    public void ARecordedProfileSurvivesIntoASecondProcess()
+    public void TheRecordedProfileSurvivesTheHandOffAndStillNamesTheProbeEntry()
     {
         var root = Path.Combine(Path.GetTempPath(), "vrc-profile-baseline-" + Guid.NewGuid().ToString("N"));
         var file = root + ".txt";
@@ -225,46 +226,24 @@ public sealed class ProfileIsolationTests
             Assert.Contains(
                 RealProfileWatch.DescribeChanges(loaded, RealProfileWatch.Capture(root)),
                 change => change == "modified file " + Path.Combine("nested", "deep.dat"));
+
+            // The build machine's case: no installed profile, so nothing is recorded at all.
+            var absent = root + "-absent";
+            RealProfileWatch.WriteBaselineFile(file, RealProfileWatch.Capture(absent), Array.Empty<string>());
+            var (empty, noApps) = RealProfileWatch.LoadBaselineFile(file);
+
+            Assert.Empty(noApps);
+            Assert.Empty(empty.Files);
+            Assert.Empty(empty.Directories);
+
+            empty.Files["profile-guard-probe.json"] = new ProfileEntry(0, 0);
+            Assert.Equal(
+                new[] { "removed file profile-guard-probe.json" },
+                RealProfileWatch.DescribeChanges(empty, RealProfileWatch.Capture(absent)));
         }
         finally
         {
             Directory.Delete(root, recursive: true);
-            File.Delete(file);
-        }
-    }
-
-    /// <summary>
-    /// A build machine has no installed profile, so the guard records an empty baseline - an
-    /// empty file, since there is nothing to list. The filtered-run probe adds one entry to
-    /// that record, and it has to come back as the single change the guard reports.
-    /// </summary>
-    [Fact]
-    public void AnAbsentProfileRecordsNothingAndStillReportsTheProbeEntry()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "vrc-absent-profile-" + Guid.NewGuid().ToString("N"));
-        var file = root + ".txt";
-
-        try
-        {
-            var captured = RealProfileWatch.Capture(root);
-            Assert.Empty(captured.Files);
-            Assert.Empty(captured.Directories);
-
-            RealProfileWatch.WriteBaselineFile(file, captured, Array.Empty<string>());
-            var (loaded, running) = RealProfileWatch.LoadBaselineFile(file);
-
-            Assert.Empty(running);
-            Assert.Empty(loaded.Files);
-            Assert.Empty(loaded.Directories);
-
-            loaded.Files["profile-guard-probe.json"] = new ProfileEntry(0, 0);
-
-            Assert.Equal(
-                new[] { "removed file profile-guard-probe.json" },
-                RealProfileWatch.DescribeChanges(loaded, RealProfileWatch.Capture(root)));
-        }
-        finally
-        {
             File.Delete(file);
         }
     }

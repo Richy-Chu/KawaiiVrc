@@ -30,22 +30,19 @@ internal static class RealProfileWatch
     /// Written only for an inconclusive run and deleted at the start of every run, so a
     /// clean run prints nothing and a stale note can never appear.
     /// </summary>
-    internal static string NotePath => Path.Combine(
+    private static string LogsDirectory => Path.Combine(
         Path.GetTempPath(),
         "VrcCompanionTests",
-        "logs",
-        "profile-guard-note.txt");
+        "logs");
+
+    internal static string NotePath => Path.Combine(LogsDirectory, "profile-guard-note.txt");
 
     /// <summary>
     /// The same record, on disk. A filtered test pass leaves the guard out of its filter, so
     /// the project runs the guard afterwards in a second process, which cannot see the first
     /// one's memory and has to read the profile as the run found it.
     /// </summary>
-    internal static string BaselinePath => Path.Combine(
-        Path.GetTempPath(),
-        "VrcCompanionTests",
-        "logs",
-        "profile-baseline.txt");
+    internal static string BaselinePath => Path.Combine(LogsDirectory, "profile-baseline.txt");
 
     /// <summary>
     /// Set for the guard-only pass that follows a filtered run: take the recorded baseline
@@ -189,17 +186,17 @@ internal static class RealProfileWatch
     }
 
     /// <summary>
-    /// Compares the real profile against the baseline. Returns null when it is unchanged.
+    /// Compares the real profile against the baseline and says nothing when it is unchanged.
     /// When it changed while the installed app was running, the change cannot be pinned on
     /// a test, so the verdict is written for the project to print and the run stays green.
     /// Otherwise it throws: no app process was writing, so the change came from the tests.
     /// </summary>
-    internal static string? Evaluate()
+    internal static void Evaluate()
     {
         var changes = DescribeChanges(Baseline(), Capture(RealRoot));
         if (changes.Count == 0)
         {
-            return null;
+            return;
         }
 
         var running = _appAtBaseline
@@ -213,7 +210,6 @@ internal static class RealProfileWatch
         }
 
         WriteNote(message);
-        return message;
     }
 
     internal static ProfileSnapshot Capture(string root)
