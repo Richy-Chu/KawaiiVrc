@@ -147,9 +147,7 @@ internal static class TestProfile
     {
         try
         {
-            return Directory.Exists(folder)
-                ? Directory.GetFileSystemEntries(folder)
-                : Array.Empty<string>();
+            return Directory.GetFileSystemEntries(folder);
         }
         catch (Exception)
         {
