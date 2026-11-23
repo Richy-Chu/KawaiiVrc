@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using VrcCompanion.Services;
 
@@ -44,6 +45,14 @@ internal static class TestProfile
         "vrccompanion-",
         "vrc-"
     };
+
+    /// <summary>
+    /// Every test names its file after the GUID it made for it, so a name without one only
+    /// starts like a test's and belongs to something else: another tool's vrc-*.log stays.
+    /// </summary>
+    private static readonly Regex GuidInName = new(
+        "[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        RegexOptions.Compiled);
 
     [ModuleInitializer]
     internal static void Initialize()
@@ -157,7 +166,8 @@ internal static class TestProfile
                 continue;
             }
 
-            if (ScratchPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            if (GuidInName.IsMatch(name) &&
+                ScratchPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
             {
                 DeletePath(entry, attempts);
             }
