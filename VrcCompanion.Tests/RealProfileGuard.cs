@@ -15,31 +15,16 @@ namespace VrcCompanion.Tests;
 /// too early - which leaves ordering this collection after every other one as the one
 /// point after the last test.
 /// A leak fails the test. A run the installed app was writing through is reported as
-/// inconclusive instead: it passes, and the note names what changed and why it cannot
-/// be attributed.
+/// inconclusive instead: it passes, and the note the project prints after VSTest names
+/// what changed and why it cannot be attributed.
 /// </summary>
 [Collection(RealProfileGuard.Collection)]
 public sealed class RealProfileGuard
 {
     internal const string Collection = "real-profile-guard";
 
-    private readonly ITestOutputHelper _output;
-
-    public RealProfileGuard(ITestOutputHelper output) => _output = output;
-
     [Fact]
-    public void TheRealProfileIsUnchangedByTheRun()
-    {
-        var inconclusive = RealProfileWatch.Evaluate();
-        if (inconclusive is null)
-        {
-            return;
-        }
-
-        // The plain run prints this from the note file the test project echoes after
-        // VSTest; this copy is what detailed verbosity shows next to the test itself.
-        _output.WriteLine(inconclusive);
-    }
+    public void TheRealProfileIsUnchangedByTheRun() => RealProfileWatch.Evaluate();
 }
 
 /// <summary>

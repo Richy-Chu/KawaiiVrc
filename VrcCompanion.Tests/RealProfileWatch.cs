@@ -11,8 +11,7 @@ namespace VrcCompanion.Tests;
 /// they say nothing about a run that already reached it through reflection, a
 /// cached path, or a store added later. This records the real profile - every file
 /// with its size and write time - before the first test runs and compares it again
-/// when the last one finishes, so a run that touches real data fails at the end
-/// instead of quietly editing it.
+/// when the last one finishes.
 /// </summary>
 internal static class RealProfileWatch
 {
@@ -24,17 +23,11 @@ internal static class RealProfileWatch
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "VrcCompanion");
 
-    internal static string LogPath => Path.Combine(
-        Path.GetTempPath(),
-        "VrcCompanionTests",
-        "logs",
-        "profile-guard.log");
-
     /// <summary>
-    /// Where an inconclusive verdict is left for the test project to print. The test
-    /// runner keeps a passing test's output in its own buffers and drops it, so MSBuild
-    /// echoes this file after the VSTest target instead, where a plain `dotnet test` run
-    /// shows it. Cleared at the start of every run so a stale note cannot print.
+    /// The one place a verdict is reported. The test runner keeps a passing test's output
+    /// in its own buffers and drops it, so the project prints this file after VSTest.
+    /// Written only for an inconclusive run and deleted at the start of every run, so a
+    /// clean run prints nothing and a stale note can never appear.
     /// </summary>
     internal static string NotePath => Path.Combine(
         Path.GetTempPath(),
@@ -42,107 +35,62 @@ internal static class RealProfileWatch
         "logs",
         "profile-guard-note.txt");
 
-    private static readonly object Gate = new();
     private static ProfileSnapshot? _baseline;
     private static IReadOnlyList<string> _appAtBaseline = Array.Empty<string>();
 
-    internal static bool HasBaseline
-    {
-        get
-        {
-            lock (Gate)
-            {
-                return _baseline is not null;
-            }
-        }
-    }
+    internal static bool HasBaseline => _baseline is not null;
 
-    internal static int BaselineFileCount
-    {
-        get
-        {
-            lock (Gate)
-            {
-                return _baseline?.Files.Count ?? 0;
-            }
-        }
-    }
+    internal static int BaselineFileCount => _baseline?.Files.Count ?? 0;
 
     /// <summary>
-    /// Captures the real profile once. Later calls keep the first snapshot, so the
-    /// module initializer and the guard test can both ask for it safely.
+    /// Captures the real profile once, from the module initializer before any seam moves.
     /// </summary>
     internal static void EnsureBaseline()
     {
-        lock (Gate)
+        if (_baseline is not null)
         {
-            if (_baseline is not null)
-            {
-                return;
-            }
-
-            _appAtBaseline = RunningAppProcesses();
-            _baseline = Capture(RealRoot);
-
-            try
-            {
-                File.Delete(NotePath);
-            }
-            catch (Exception)
-            {
-                // A stale note only prints an extra line; never fail the baseline for it.
-            }
-        }
-    }
-
-    internal static IReadOnlyList<string> ChangesSinceBaseline()
-    {
-        ProfileSnapshot baseline;
-        lock (Gate)
-        {
-            baseline = _baseline ?? throw new InvalidOperationException(
-                "The real profile was never recorded before the tests started.");
+            return;
         }
 
-        return DescribeChanges(baseline, Capture(RealRoot));
+        _appAtBaseline = RunningAppProcesses();
+        _baseline = Capture(RealRoot);
+
+        try
+        {
+            File.Delete(NotePath);
+        }
+        catch (Exception)
+        {
+            // A stale note only prints an extra line; never fail the baseline for it.
+        }
     }
 
     /// <summary>
-    /// Compares the real profile against the baseline taken before the first test.
-    /// Returns null when it is unchanged. When it changed while the installed app was
-    /// running, the caller gets a note instead: the change cannot be attributed to a
-    /// test, so the run reports inconclusive rather than failing on the app's own writes.
-    /// Otherwise it throws, which fails the run - no app process was writing, so the
-    /// change came from the tests.
+    /// Compares the real profile against the baseline. Returns null when it is unchanged.
+    /// When it changed while the installed app was running, the change cannot be pinned on
+    /// a test, so the verdict is written for the project to print and the run stays green.
+    /// Otherwise it throws: no app process was writing, so the change came from the tests.
     /// </summary>
     internal static string? Evaluate()
     {
-        var changes = ChangesSinceBaseline();
+        var changes = DescribeChanges(Baseline(), Capture(RealRoot));
         if (changes.Count == 0)
         {
             return null;
         }
 
-        var running = new List<string>(_appAtBaseline);
-        foreach (var process in RunningAppProcesses())
-        {
-            if (!running.Contains(process))
-            {
-                running.Add(process);
-            }
-        }
-
-        var inconclusive = running.Count > 0;
+        var running = _appAtBaseline
+            .Union(RunningAppProcesses(), StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var message = Describe(changes, running);
-        Record((inconclusive ? "INCONCLUSIVE " : "FAILED ") + message);
 
-        if (inconclusive)
+        if (running.Count == 0)
         {
-            WriteNote(message);
-            return message;
+            throw new InvalidOperationException(message);
         }
 
-        throw new InvalidOperationException(message);
+        WriteNote(message);
+        return message;
     }
 
     internal static ProfileSnapshot Capture(string root)
@@ -204,7 +152,7 @@ internal static class RealProfileWatch
             {
                 RecordFileChange(path, "added");
             }
-            else if (old.Length != entry.Length || old.LastWriteUtcTicks != entry.LastWriteUtcTicks)
+            else if (old != entry)
             {
                 changes.Add("modified file " + path);
             }
@@ -235,7 +183,7 @@ internal static class RealProfileWatch
             {
                 changes.Add("added directory " + path);
             }
-            else if (old.LastWriteUtcTicks != entry.LastWriteUtcTicks && !churnedParents.Contains(path))
+            else if (old != entry && !churnedParents.Contains(path))
             {
                 changes.Add("modified directory " + path);
             }
@@ -244,6 +192,10 @@ internal static class RealProfileWatch
         changes.Sort(StringComparer.Ordinal);
         return changes;
     }
+
+    private static ProfileSnapshot Baseline()
+        => _baseline ?? throw new InvalidOperationException(
+            "The real profile was never recorded before the tests started.");
 
     private static string Describe(IReadOnlyList<string> changes, IReadOnlyList<string> running)
     {
@@ -318,23 +270,7 @@ internal static class RealProfileWatch
         }
         catch (Exception)
         {
-            // The verdict itself already passed; the log still has the details.
-        }
-    }
-
-    private static void Record(string message)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-            File.AppendAllText(
-                LogPath,
-                Environment.NewLine + "[" + DateTime.UtcNow.ToString("O") + "] " + message + Environment.NewLine);
-        }
-        catch (Exception)
-        {
-            // The failure the caller raises is what matters; a log we cannot write must
-            // not replace it.
+            // The verdict already passed; nothing here may turn it red.
         }
     }
 }
