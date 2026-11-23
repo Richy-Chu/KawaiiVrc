@@ -33,6 +33,18 @@ internal static class TestProfile
         (Path.Combine(Path.GetTempPath(), "VrcMediaTests"), Array.Empty<string>())
     };
 
+    /// <summary>
+    /// Tests also drop single files straight into %TEMP%, named for what they test: store
+    /// databases, chatbox settings, cosmetic gifs. They are the run's scratch as much as the
+    /// folders are. The per-run folder is skipped here and left to the sweep that knows its
+    /// owner by pid, so a run in progress keeps its own.
+    /// </summary>
+    private static readonly string[] ScratchPrefixes =
+    {
+        "vrccompanion-",
+        "vrc-"
+    };
+
     [ModuleInitializer]
     internal static void Initialize()
     {
@@ -53,11 +65,11 @@ internal static class TestProfile
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             DeletePath(directory);
-            ClearScratchRoots(attempts: 5);
+            ClearScratch(attempts: 5);
         };
 
         // Runs that were killed or crashed never reached their own cleanup.
-        ClearScratchRoots(attempts: 2);
+        ClearScratch(attempts: 2);
         DeleteScratchOfFinishedRuns(directory);
     }
 
@@ -96,7 +108,7 @@ internal static class TestProfile
         }
     }
 
-    private static void ClearScratchRoots(int attempts)
+    private static void ClearScratch(int attempts)
     {
         foreach (var (root, kept) in ScratchRoots)
         {
@@ -119,6 +131,35 @@ internal static class TestProfile
                 {
                     DeletePath(entry, attempts);
                 }
+            }
+        }
+
+        ClearScratchFiles(attempts);
+    }
+
+    private static void ClearScratchFiles(int attempts)
+    {
+        string[] entries;
+        try
+        {
+            entries = Directory.GetFileSystemEntries(Path.GetTempPath());
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            var name = Path.GetFileName(entry);
+            if (name.StartsWith(ScratchPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (ScratchPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            {
+                DeletePath(entry, attempts);
             }
         }
     }
