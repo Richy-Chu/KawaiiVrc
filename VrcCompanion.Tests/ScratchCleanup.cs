@@ -30,11 +30,16 @@ public sealed class ScratchCleanup
             return;
         }
 
+        if (!Directory.Exists(scratch))
+        {
+            return;
+        }
+
         // A folder that survives is only acceptable when the cleanup handed it to the reaper,
         // which deletes it as soon as this process ends; the check that runs after the suite
         // is what proves the end state.
         Assert.True(
-            !Directory.Exists(scratch) || TestProfile.CleanupDeferred,
+            TestProfile.CleanupDeferred,
             "The run's own folder is still there and nothing is scheduled to remove it: " +
             string.Join(", ", Directory.GetFileSystemEntries(scratch)));
     }
