@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using VrcCompanion.Services;
@@ -15,6 +16,19 @@ namespace VrcCompanion.Tests;
 internal static class TestProfile
 {
     private const string ScratchPrefix = "vrc-companion-tests-";
+
+    /// <summary>
+    /// Tests write their own scratch under these roots and nothing claimed it back: folders
+    /// named for a GUID, media caches named for a GUID and then suffixed. Each root is cleared
+    /// before the tests start (a run that crashed never cleaned up) and again when this one
+    /// exits. The log folder, the shared settings file and the browser profile are shared
+    /// infrastructure under the first root, not scratch, and stay.
+    /// </summary>
+    private static readonly (string Root, string[] Kept)[] PerTestRoots =
+    {
+        (Path.Combine(Path.GetTempPath(), "VrcCompanionTests"), new[] { "logs", "shared", "browser" }),
+        (Path.Combine(Path.GetTempPath(), "VrcMediaMeta"), Array.Empty<string>())
+    };
 
     [ModuleInitializer]
     internal static void Initialize()
@@ -33,9 +47,14 @@ internal static class TestProfile
 
         // A store still holding a handle must not turn the run's own litter into a leak:
         // retry briefly, then leave what is left to the next run's sweep.
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => DeleteScratch(directory);
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            DeletePath(directory);
+            ClearPerTestScratch(attempts: 5);
+        };
 
         // Runs that were killed or crashed never reached their own cleanup.
+        ClearPerTestScratch(attempts: 2);
         DeleteScratchOfFinishedRuns(directory);
     }
 
@@ -70,7 +89,34 @@ internal static class TestProfile
                 continue;
             }
 
-            DeleteScratch(folder, attempts: 2);
+            DeletePath(folder, attempts: 2);
+        }
+    }
+
+    private static void ClearPerTestScratch(int attempts)
+    {
+        foreach (var (root, kept) in PerTestRoots)
+        {
+            string[] entries;
+            try
+            {
+                entries = Directory.Exists(root)
+                    ? Directory.GetFileSystemEntries(root)
+                    : Array.Empty<string>();
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            foreach (var entry in entries)
+            {
+                var name = Path.GetFileName(entry);
+                if (!kept.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    DeletePath(entry, attempts);
+                }
+            }
         }
     }
 
@@ -100,13 +146,21 @@ internal static class TestProfile
         }
     }
 
-    private static void DeleteScratch(string folder, int attempts = 5)
+    private static void DeletePath(string path, int attempts = 5)
     {
         for (var attempt = 0; attempt < attempts; attempt++)
         {
             try
             {
-                Directory.Delete(folder, recursive: true);
+                if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, recursive: true);
+                }
+                else
+                {
+                    File.Delete(path);
+                }
+
                 return;
             }
             catch (DirectoryNotFoundException)
