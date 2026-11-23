@@ -12,8 +12,10 @@
 # over, and so is a store file left beside the temp files with no line about it.
 #
 # A deferral is not a licence to keep the folder for good: the note records when the run gave up,
-# and one older than a couple of hours means the next run's sweep never took it, which is a sweep
-# that has stopped working rather than a run that ran out of luck.
+# and one older than a couple of hours was not taken by the next run's sweep. This check takes it
+# itself - locally that usually just means nobody has run the suite since - and it only reports a
+# folder it could not take. A stale note that names something the note below would refuse is still
+# a failure, and still keeps the folder: that is evidence, not litter.
 #
 # The WebView2 profile is the separate exception: its browser holds it open until the host exits,
 # so it lives in vrc-companion-browser-<pid> and the next run's sweep reclaims it. It is judged
@@ -33,7 +35,7 @@ $runFolder = "vrc-companion-tests-"
 $browserFolder = "vrc-companion-browser-"
 $deferralNote = "cleanup-deferred.txt"
 
-# How long a deferral may stand before the sweep should have taken it.
+# How long a deferral may stand before this check takes it itself.
 $staleAfterHours = 2
 
 function Get-ScratchLeftover([string] $prefix) {
@@ -75,15 +77,20 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
     }
 
     # The note records when the run gave up, and the sweep takes a deferred folder on the next
-    # run's startup. One older than that means nothing swept it, so it would stand for good: the
-    # note is still true, but the machinery around it has stopped working.
+    # run's startup. One that has waited much longer than that was not swept, so this check takes
+    # it rather than waiting for a sweep that never came. Its age is reported, not judged, because
+    # the caller has still to refuse a note with anything else wrong with it - that folder is
+    # evidence, and deleting it would hide what the suite got wrong.
+    $staleHours = 0.0
     if ($null -eq $problem) {
-        $stamp = @($text -split "`r?`n" |
+        # Not wrapped in @(): an empty array is not $null, and a note with no such line has to
+        # read as one with no line, not as a line that would not parse.
+        $stamp = $text -split "`r?`n" |
             Where-Object { $_ -match '^utc: ' } |
             ForEach-Object { $_.Substring(5).Trim() } |
-            Select-Object -First 1)
+            Select-Object -First 1
         $when = [datetime]::MinValue
-        if ($null -eq $stamp) {
+        if ([string]::IsNullOrWhiteSpace($stamp)) {
             $problem = "the note has no utc line, so its age cannot be judged"
         }
         elseif (-not [datetime]::TryParse(
@@ -94,11 +101,8 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
             $problem = "the note's utc line cannot be read: " + $stamp
         }
         else {
-            $age = (Get-Date).ToUniversalTime() - $when.ToUniversalTime()
-            if ($age.TotalHours -gt $staleAfterHours) {
-                $problem = "the note is " + [int] [math]::Floor($age.TotalHours) +
-                    " hours old, so the next run's sweep should have taken this folder"
-            }
+            $age = ((Get-Date).ToUniversalTime() - $when.ToUniversalTime()).TotalHours
+            if ($age -gt $staleAfterHours) { $staleHours = [math]::Floor($age) }
         }
     }
 
@@ -152,7 +156,7 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
         }
     }
 
-    return [pscustomobject]@{ Held = $held; Problem = $problem }
+    return [pscustomobject]@{ Held = $held; Problem = $problem; StaleHours = $staleHours }
 }
 
 function Test-OwnerIsGone([int] $owner) {
@@ -160,6 +164,7 @@ function Test-OwnerIsGone([int] $owner) {
 }
 
 $failed = @()
+$waiting = 0
 foreach ($folder in $leftovers) {
     $owner = 0
     $namedForPid = $folder.Name -match ('^' + [regex]::Escape($runFolder) + '(\d+)$')
@@ -184,6 +189,25 @@ foreach ($folder in $leftovers) {
         continue
     }
 
+    # The note is a good one and old: nothing swept it, so this check does. A folder it cannot
+    # take is a failure in its own right - the point is that nothing stands, not that the report
+    # is quiet.
+    if ($deferral.StaleHours -gt 0) {
+        try {
+            Remove-Item -LiteralPath $folder.FullName -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            $failed += $folder.Name + " (its note is " + $deferral.StaleHours +
+                " hours old and it could not be taken: " + $_.Exception.Message + ")"
+            continue
+        }
+
+        Write-Host ("Took stale deferral " + $folder.Name + ": its note is " + $deferral.StaleHours +
+            " hours old, so the sweep that should have taken it never ran.")
+        continue
+    }
+
+    $waiting++
     Write-Host ("Run folder " + $folder.Name + " waits for the next run's sweep: it still held " +
         $deferral.Held.Count + " empty .tmp file(s), " + (($deferral.Held -replace '\s+-?\d+$', '') -join ', '))
 }
@@ -212,9 +236,10 @@ if ($failed.Count -gt 0) {
     Write-Host "The suite left scratch behind in $TempPath :"
     $failed | ForEach-Object { Write-Host ("  " + $_) }
     Write-Host ("A run must delete its own folders. A run folder may stand only with a " + $deferralNote +
-        " that names its own dead pid, is younger than " + $staleAfterHours + " hours, holds nothing" +
-        " but empty .tmp files, and the folder holds nothing the note does not name. A browser" +
-        " profile may stand only while its pid is gone, so that the next run's sweep takes it.")
+        " that names its own dead pid, holds nothing but empty .tmp files, and the folder holds" +
+        " nothing the note does not name - and this check takes one whose note is older than " +
+        $staleAfterHours + " hours, since the sweep never did. A browser profile may stand only" +
+        " while its pid is gone, so that the next run's sweep takes it.")
     exit 1
 }
 
@@ -222,6 +247,6 @@ $acceptedProfiles | ForEach-Object {
     Write-Host ("Browser profile " + $_.Name + " stays until the next run sweeps it: its browser holds it open.")
 }
 
-if ($leftovers.Count -eq 0) {
+if ($waiting -eq 0) {
     Write-Host "No run folder left in $TempPath."
 }

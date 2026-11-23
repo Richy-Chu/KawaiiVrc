@@ -1,10 +1,12 @@
 # Checks the verdict of build/assert-temp-clean.ps1 without running the suite: a genuine
-# Chromium deferral passes, and a folder that only looks deferred fails - no note at all, a note
-# naming a locked store file, a note whose .tmp file was not empty, a note too old to still be
-# waiting for a sweep. Every case is planted in a sandbox and the check is pointed at it, so the
-# machine's own %TEMP% never decides one. Browser profile folders get the same treatment: a dead
-# pid's profile is allowed to wait for the sweep, a name the sweep cannot read and a live pid's
-# folder are not.
+# Chromium deferral passes and is left alone, and a folder that only looks deferred fails - no
+# note at all, a note naming a locked store file, a note whose .tmp file was not empty. A deferral
+# too old for the sweep to still be coming is taken by the check itself, which is why the cases
+# assert the folder is gone - but only while nothing else is wrong with the note: a stale folder
+# that also names a locked file keeps failing and keeps standing, because that is evidence. Every
+# case is planted in a sandbox and the check is pointed at it, so the machine's own %TEMP% never
+# decides one. Browser profile folders get the same treatment: a dead pid's profile is allowed to
+# wait for the sweep, a name the sweep cannot read and a live pid's folder are not.
 $ErrorActionPreference = "Stop"
 
 $check = Join-Path $PSScriptRoot "assert-temp-clean.ps1"
@@ -58,6 +60,7 @@ $checks = @(
         Name = "a genuine deferral and a finished browser profile pass"
         Expected = 0
         Marker = "Browser profile vrc-companion-browser-$deadPid stays until the next run sweeps it"
+        Kept = "vrc-companion-tests-$deadPid"
         Plant = {
             param($sandbox)
             Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
@@ -132,17 +135,66 @@ $checks = @(
         }
     },
     @{
-        # A deferral waits for the next run's sweep. One that has waited hours means the sweep is
-        # not taking them, so the folder would stand for good.
-        Name = "a note too old to be waiting for a sweep fails"
-        Expected = 1
-        Marker = "hours old, so the next run's sweep should have taken this folder"
+        # The next run's sweep never came, so the check takes the folder itself: locally that
+        # usually just means nobody ran the suite since, and a folder nothing will take is worse
+        # than one this check can.
+        Name = "a note too old to be waiting for a sweep is taken"
+        Expected = 0
+        Marker = "Took stale deferral vrc-companion-tests-$deadPid"
+        Gone = "vrc-companion-tests-$deadPid"
         Plant = {
             param($sandbox)
             Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
             Write-RunNote $sandbox @(
                 "host pid: $deadPid",
                 "utc: $stale",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
+        # Age is the only thing that may be forgiven: a note naming a locked store file is the
+        # leak the check exists to catch, and taking the folder would destroy the evidence.
+        Name = "a stale note naming a locked store file still fails and is kept"
+        Expected = 1
+        Marker = "not a .tmp"
+        Kept = "vrc-companion-tests-$deadPid"
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunFile $sandbox "settings.json" 412
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: $stale",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0",
+                "held: settings.json 412")
+        }
+    },
+    @{
+        Name = "a stale note whose folder holds a file it does not name still fails and is kept"
+        Expected = 1
+        Marker = "the folder holds 1 file(s) the note does not: settings.json (412 bytes)"
+        Kept = "vrc-companion-tests-$deadPid"
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunFile $sandbox "settings.json" 412
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: $stale",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
+        # An unreadable age is not an old one: without the line there is no way to tell a folder
+        # from last night from one this run just deferred.
+        Name = "a note with no utc line fails"
+        Expected = 1
+        Marker = "has no utc line, so its age cannot be judged"
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
                 "held: 11111111-1111-1111-1111-111111111111.tmp 0")
         }
     },
@@ -199,6 +251,19 @@ try {
         if ($checkCase.Marker -and ($result.Text -notlike "*$($checkCase.Marker)*")) {
             Write-Host ("{0}: output did not say '{1}'" -f $checkCase.Name, $checkCase.Marker)
             Write-Host $result.Text
+            $failures++
+            continue
+        }
+
+        # Taking a stale folder is half the verdict: what it left or what it took is the other.
+        if ($checkCase.Gone -and (Test-Path -LiteralPath (Join-Path $sandbox $checkCase.Gone))) {
+            Write-Host ("{0}: left {1} behind, it had to take it" -f $checkCase.Name, $checkCase.Gone)
+            $failures++
+            continue
+        }
+
+        if ($checkCase.Kept -and -not (Test-Path -LiteralPath (Join-Path $sandbox $checkCase.Kept))) {
+            Write-Host ("{0}: took {1}, it had to keep it" -f $checkCase.Name, $checkCase.Kept)
             $failures++
         }
     }

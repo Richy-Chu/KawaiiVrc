@@ -71,7 +71,11 @@ it is one the run could not delete and did not explain. A folder with no note - 
 cleanup never ran - fails the job, and so does one whose note names a locked store file or whose
 folder still holds a store file the note never mentions. The note's own `utc:` line has to be
 recent too: the sweep takes a deferred folder on the next run's startup, so one older than two
-hours means nothing swept it, and the check says so instead of letting the folder stand for good.
+hours was not swept, and the check takes it itself instead of letting it stand - locally that
+usually just means nobody has run the suite since. Age is the one thing forgiven: a stale note
+that names a locked store file, or sits beside a file it does not name, still fails and keeps
+the folder, because that folder is evidence rather than litter. A stale folder the check cannot
+delete fails too, so a take never turns into a silent skip.
 
 The WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
 open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next
