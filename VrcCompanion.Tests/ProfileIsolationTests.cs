@@ -187,6 +187,52 @@ public sealed class ProfileIsolationTests
         }
     }
 
+    /// <summary>
+    /// A filtered pass hands the guard to a second process, which only has the file. If the
+    /// record does not survive that round trip, the guard compares the profile against itself
+    /// and calls every run clean.
+    /// </summary>
+    [Fact]
+    public void ARecordedProfileSurvivesIntoASecondProcess()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vrc-profile-baseline-" + Guid.NewGuid().ToString("N"));
+        var file = root + ".txt";
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        File.WriteAllText(Path.Combine(root, "stays.dat"), "a");
+        File.WriteAllText(Path.Combine(root, "nested", "deep.dat"), "bb");
+
+        try
+        {
+            var captured = RealProfileWatch.Capture(root);
+            RealProfileWatch.WriteBaselineFile(file, captured, new[] { "KawaiiVrc (pid 42)" });
+
+            var (loaded, running) = RealProfileWatch.LoadBaselineFile(file);
+
+            Assert.Equal(new[] { "KawaiiVrc (pid 42)" }, running);
+            Assert.Equal(captured.Files.Count, loaded.Files.Count);
+            foreach (var (path, entry) in captured.Files)
+            {
+                Assert.Equal(entry, loaded.Files[path]);
+            }
+
+            Assert.Equal(captured.Directories.Count, loaded.Directories.Count);
+            foreach (var (path, entry) in captured.Directories)
+            {
+                Assert.Equal(entry, loaded.Directories[path]);
+            }
+
+            File.WriteAllText(Path.Combine(root, "nested", "deep.dat"), "changed");
+            Assert.Contains(
+                RealProfileWatch.DescribeChanges(loaded, RealProfileWatch.Capture(root)),
+                change => change == "modified file " + Path.Combine("nested", "deep.dat"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            File.Delete(file);
+        }
+    }
+
     [Fact]
     public void StoresResolveInsideTheTestRoot()
     {

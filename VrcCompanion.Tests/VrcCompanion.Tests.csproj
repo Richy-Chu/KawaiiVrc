@@ -30,13 +30,49 @@
   -->
   <PropertyGroup>
     <ProfileGuardNoteFile>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'VrcCompanionTests', 'logs', 'profile-guard-note.txt'))</ProfileGuardNoteFile>
+    <ProfileGuardBaselineFile>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'VrcCompanionTests', 'logs', 'profile-baseline.txt'))</ProfileGuardBaselineFile>
   </PropertyGroup>
 
-  <Target Name="ReportProfileGuardNote" AfterTargets="VSTest">
+  <!--
+    The baseline belongs to the run starting now. Clearing it first means a filter that
+    matches nothing cannot leave an older run's baseline for the guard to judge.
+  -->
+  <Target Name="ClearProfileGuardBaseline" BeforeTargets="VSTest">
+    <Delete Files="$(ProfileGuardBaselineFile)" />
+  </Target>
+
+  <!--
+    A filter that leaves the guard out would end the run with nothing having looked at the
+    profile. After the filtered pass, run the guard by itself against the baseline that pass
+    recorded, so a filtered run gets the same verdict as a full one. This pass does not
+    build, and the exit code is judged only after the note is printed.
+  -->
+  <Target Name="RunProfileGuardForFilteredRun"
+          AfterTargets="VSTest"
+          BeforeTargets="ReportProfileGuardNote"
+          Condition="'$(VSTestTestCaseFilter)' != '' and !$(VSTestTestCaseFilter.Contains('TheRealProfileIsUnchangedByTheRun')) and Exists('$(ProfileGuardBaselineFile)')">
+    <Exec Command="dotnet vstest &quot;$(TargetPath)&quot; --TestCaseFilter:&quot;FullyQualifiedName=VrcCompanion.Tests.RealProfileGuard.TheRealProfileIsUnchangedByTheRun&quot;"
+          EnvironmentVariables="VRCC_PROFILE_GUARD_REPLAY=1"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="ProfileGuardExitCode" />
+    </Exec>
+  </Target>
+
+  <Target Name="ReportProfileGuardNote" AfterTargets="VSTest" DependsOnTargets="RunProfileGuardForFilteredRun">
     <ReadLinesFromFile File="$(ProfileGuardNoteFile)" Condition="Exists('$(ProfileGuardNoteFile)')">
       <Output TaskParameter="Lines" ItemName="ProfileGuardNoteLines" />
     </ReadLinesFromFile>
     <Message Importance="high" Text="%(ProfileGuardNoteLines.Identity)" Condition="'@(ProfileGuardNoteLines)' != ''" />
+  </Target>
+
+  <!--
+    A real profile write has to fail the run, and the note above has to be printed first,
+    so the reason is on screen next to the result.
+  -->
+  <Target Name="FailOnProfileGuardFailure"
+          AfterTargets="ReportProfileGuardNote"
+          Condition="'$(ProfileGuardExitCode)' != '' and '$(ProfileGuardExitCode)' != '0'">
+    <Error Text="The real-profile guard failed: this run wrote to the real profile. See the guard's output above." />
   </Target>
 
 </Project>

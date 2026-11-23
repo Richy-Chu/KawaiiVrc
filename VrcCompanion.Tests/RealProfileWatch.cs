@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 
@@ -35,6 +36,23 @@ internal static class RealProfileWatch
         "logs",
         "profile-guard-note.txt");
 
+    /// <summary>
+    /// The same record, on disk. A filtered test pass leaves the guard out of its filter, so
+    /// the project runs the guard afterwards in a second process, which cannot see the first
+    /// one's memory and has to read the profile as the run found it.
+    /// </summary>
+    internal static string BaselinePath => Path.Combine(
+        Path.GetTempPath(),
+        "VrcCompanionTests",
+        "logs",
+        "profile-baseline.txt");
+
+    /// <summary>
+    /// Set for the guard-only pass that follows a filtered run: take the recorded baseline
+    /// instead of recording a new one, which would be taken after the tests had already run.
+    /// </summary>
+    internal const string ReplayVariable = "VRCC_PROFILE_GUARD_REPLAY";
+
     private static ProfileSnapshot? _baseline;
     private static IReadOnlyList<string> _appAtBaseline = Array.Empty<string>();
 
@@ -52,6 +70,11 @@ internal static class RealProfileWatch
             return;
         }
 
+        if (TryReplayBaseline())
+        {
+            return;
+        }
+
         _appAtBaseline = RunningAppProcesses();
         _baseline = Capture(RealRoot);
 
@@ -63,6 +86,106 @@ internal static class RealProfileWatch
         {
             // A stale note only prints an extra line; never fail the baseline for it.
         }
+
+        PersistBaseline();
+    }
+
+    private static bool TryReplayBaseline()
+    {
+        if (Environment.GetEnvironmentVariable(ReplayVariable) != "1" || !File.Exists(BaselinePath))
+        {
+            return false;
+        }
+
+        var (snapshot, apps) = LoadBaselineFile(BaselinePath);
+        _appAtBaseline = apps;
+        _baseline = snapshot;
+        return true;
+    }
+
+    private static void PersistBaseline()
+    {
+        if (_baseline is null)
+        {
+            return;
+        }
+
+        try
+        {
+            WriteBaselineFile(BaselinePath, _baseline, _appAtBaseline);
+        }
+        catch (Exception)
+        {
+            // Only the filtered-run hand-off needs the file; this run still guards itself.
+        }
+    }
+
+    /// <summary>
+    /// One line per entry, prefixed by kind: <c>app|...</c>, <c>f|length|ticks|path</c>,
+    /// <c>d|ticks|path</c>. No relative path in a Windows profile holds a pipe.
+    /// </summary>
+    internal static void WriteBaselineFile(
+        string path,
+        ProfileSnapshot snapshot,
+        IReadOnlyList<string> running)
+    {
+        var lines = new List<string>(snapshot.Files.Count + snapshot.Directories.Count + running.Count);
+
+        foreach (var app in running)
+        {
+            lines.Add("app|" + app);
+        }
+
+        foreach (var (relative, entry) in snapshot.Files)
+        {
+            lines.Add("f|" + entry.Length.ToString(CultureInfo.InvariantCulture) +
+                      "|" + entry.LastWriteUtcTicks.ToString(CultureInfo.InvariantCulture) +
+                      "|" + relative);
+        }
+
+        foreach (var (relative, entry) in snapshot.Directories)
+        {
+            lines.Add("d|" + entry.LastWriteUtcTicks.ToString(CultureInfo.InvariantCulture) + "|" + relative);
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllLines(path, lines);
+    }
+
+    internal static (ProfileSnapshot Snapshot, IReadOnlyList<string> Running) LoadBaselineFile(string path)
+    {
+        var snapshot = new ProfileSnapshot();
+        var running = new List<string>();
+
+        foreach (var line in File.ReadLines(path))
+        {
+            var parts = line.Split('|');
+            if (parts.Length < 2)
+            {
+                continue;
+            }
+
+            switch (parts[0])
+            {
+                case "app":
+                    running.Add(string.Join("|", parts, 1, parts.Length - 1));
+                    break;
+
+                case "f" when parts.Length >= 4:
+                    snapshot.Files[parts[3]] = new ProfileEntry(
+                        long.Parse(parts[1], CultureInfo.InvariantCulture),
+                        long.Parse(parts[2], CultureInfo.InvariantCulture));
+                    break;
+
+                case "d" when parts.Length >= 3:
+                    snapshot.Directories[parts[2]] = new ProfileEntry(
+                        0,
+                        long.Parse(parts[1], CultureInfo.InvariantCulture));
+                    break;
+            }
+        }
+
+        return (snapshot, running);
     }
 
     /// <summary>
@@ -183,7 +306,7 @@ internal static class RealProfileWatch
             {
                 changes.Add("added directory " + path);
             }
-            else if (old != entry && !churnedParents.Contains(path))
+            else if (old != entry && !churnedParents.Contains(path) && Moved(old, entry))
             {
                 changes.Add("modified directory " + path);
             }
@@ -192,6 +315,15 @@ internal static class RealProfileWatch
         changes.Sort(StringComparer.Ordinal);
         return changes;
     }
+
+    /// <summary>
+    /// The system reports a directory's write time lazily: a directory written just before
+    /// the baseline can still report its older time there and the newer one a moment later,
+    /// which would blame the run for nothing. A real write moves the time well past that
+    /// window, so anything smaller is not evidence.
+    /// </summary>
+    private static bool Moved(ProfileEntry before, ProfileEntry after)
+        => Math.Abs(after.LastWriteUtcTicks - before.LastWriteUtcTicks) > TimeSpan.FromSeconds(2).Ticks;
 
     private static ProfileSnapshot Baseline()
         => _baseline ?? throw new InvalidOperationException(
