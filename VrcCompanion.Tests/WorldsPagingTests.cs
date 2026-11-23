@@ -102,8 +102,9 @@ public class WorldsPagingTests
             window.UpdateLayout();
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
 
-            Assert.True(
-                WaitUntil(() => shell.Worlds.Count == VrcApiClient.WorldsPageSize, 8000),
+            Settle.Until(
+                () => shell.Worlds.Count == VrcApiClient.WorldsPageSize,
+                Settle.PumpBackground,
                 "the first world page never arrived");
             window.UpdateLayout();
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
@@ -118,8 +119,9 @@ public class WorldsPagingTests
             Assert.NotNull(list);
 
             var flipping = shell.GoToWorldsPageAsync(2);
-            Assert.True(
-                WaitUntil(() => flipping.IsCompleted && shell.WorldsPageNumber == 2, 8000),
+            Settle.Until(
+                () => flipping.IsCompleted && shell.WorldsPageNumber == 2,
+                Settle.PumpBackground,
                 "the second world page never arrived");
 
             window.UpdateLayout();
@@ -292,25 +294,6 @@ public class WorldsPagingTests
 
             window.Close();
         });
-    }
-
-    // Container realization is a dispatcher round trip or two, so this is headroom for a loaded
-    // runner: a broken wait still fails the test in ten seconds.
-    private static bool WaitUntil(Func<bool> condition, int timeoutMs = 10_000)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (DateTime.UtcNow < deadline)
-        {
-            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
-            if (condition())
-            {
-                return true;
-            }
-
-            Thread.Sleep(20);
-        }
-
-        return condition();
     }
 
     private static int RealizedCount(ListBox list)

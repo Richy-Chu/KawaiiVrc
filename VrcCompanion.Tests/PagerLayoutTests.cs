@@ -62,10 +62,10 @@ public class PagerLayoutTests
 
                 var list = FindVisualChildren<ListBox>(window)
                     .Single(box => ReferenceEquals(box.ItemsSource, shell.FriendsPage.Items));
-                PumpUntil(window, () => list.Items.Count == 24, "The friends list did not show its first page.");
+                Settle.Until(() => list.Items.Count == 24, () => Pump(window), "The friends list did not show its first page.");
 
                 ClickNext(pager);
-                PumpUntil(window, () => list.Items.Count == 6, "The friends list did not flip to page 2.");
+                Settle.Until(() => list.Items.Count == 6, () => Pump(window), "The friends list did not flip to page 2.");
 
                 Assert.Equal(6, list.Items.Count);
                 Assert.Equal(2, shell.FriendsPage.PageNumber);
@@ -94,10 +94,7 @@ public class PagerLayoutTests
                 Pump(window);
 
                 var pager = PagerFor(window, shell.FriendsPage);
-                PumpUntil(
-                    window,
-                    () => pager.Visibility == Visibility.Collapsed,
-                    "The empty friends list showed a pager.");
+                Settle.Until(() => pager.Visibility == Visibility.Collapsed, () => Pump(window), "The empty friends list showed a pager.");
                 Assert.True(shell.HasNoVisibleFriends);
                 Assert.False(shell.FriendsPage.HasPages);
             }
@@ -132,17 +129,14 @@ public class PagerLayoutTests
             try
             {
                 var pager = PagerFor(window, viewModel.PeoplePage);
-                PumpUntil(
-                    window,
-                    () => pager.Visibility == Visibility.Visible,
-                    "The continuity pager stayed collapsed with 30 people.");
+                Settle.Until(() => pager.Visibility == Visibility.Visible, () => Pump(window), "The continuity pager stayed collapsed with 30 people.");
 
                 var list = FindVisualChildren<ListBox>(window)
                     .Single(box => ReferenceEquals(box.ItemsSource, viewModel.PeoplePage.Items));
-                PumpUntil(window, () => list.Items.Count == 24, "The people list did not show its first page.");
+                Settle.Until(() => list.Items.Count == 24, () => Pump(window), "The people list did not show its first page.");
 
                 ClickNext(pager);
-                PumpUntil(window, () => list.Items.Count == 6, "The people list did not flip to page 2.");
+                Settle.Until(() => list.Items.Count == 6, () => Pump(window), "The people list did not flip to page 2.");
 
                 Assert.Equal(6, list.Items.Count);
                 Assert.Equal("2 of 2", viewModel.PeoplePage.PageText);
@@ -167,11 +161,8 @@ public class PagerLayoutTests
             {
                 var peoplePager = PagerFor(window, viewModel.PeoplePage);
                 var worldsPager = PagerFor(window, viewModel.WorldsPage);
-                PumpUntil(
-                    window,
-                    () => peoplePager.Visibility == Visibility.Collapsed &&
-                          worldsPager.Visibility == Visibility.Collapsed,
-                    "A continuity pager with no second page stayed visible.");
+                Settle.Until(() => peoplePager.Visibility == Visibility.Collapsed &&
+                          worldsPager.Visibility == Visibility.Collapsed, () => Pump(window), "A continuity pager with no second page stayed visible.");
                 Assert.True(viewModel.IsEmpty);
             }
             finally
@@ -202,16 +193,10 @@ public class PagerLayoutTests
             try
             {
                 var pager = PagerFor(window, viewModel.PlayersPage);
-                PumpUntil(
-                    window,
-                    () => pager.Visibility == Visibility.Visible,
-                    "The context pager stayed collapsed with 30 players.");
+                Settle.Until(() => pager.Visibility == Visibility.Visible, () => Pump(window), "The context pager stayed collapsed with 30 players.");
 
                 ClickNext(pager);
-                PumpUntil(
-                    window,
-                    () => viewModel.PlayersPage.Items.Count == 6,
-                    "The context roster did not flip to page 2.");
+                Settle.Until(() => viewModel.PlayersPage.Items.Count == 6, () => Pump(window), "The context roster did not flip to page 2.");
 
                 Assert.Equal(6, viewModel.PlayersPage.Items.Count);
                 Assert.Equal(2, viewModel.PlayersPage.PageNumber);
@@ -233,10 +218,7 @@ public class PagerLayoutTests
             try
             {
                 var pager = PagerFor(window, viewModel.PlayersPage);
-                PumpUntil(
-                    window,
-                    () => pager.Visibility == Visibility.Collapsed,
-                    "The empty context roster showed a pager.");
+                Settle.Until(() => pager.Visibility == Visibility.Collapsed, () => Pump(window), "The empty context roster showed a pager.");
                 Assert.False(viewModel.HasPlayers);
                 Assert.Empty(viewModel.PlayersPage.Items);
             }
@@ -286,16 +268,10 @@ public class PagerLayoutTests
 
                 Assert.Equal(24, instance.PlayersPage.Items.Count);
                 var pager = PagerFor(window, instance.PlayersPage);
-                PumpUntil(
-                    window,
-                    () => pager.Visibility == Visibility.Visible,
-                    "The instance roster pager stayed collapsed with 30 players.");
+                Settle.Until(() => pager.Visibility == Visibility.Visible, () => Pump(window), "The instance roster pager stayed collapsed with 30 players.");
 
                 ClickNext(pager);
-                PumpUntil(
-                    window,
-                    () => instance.PlayersPage.Items.Count == 6,
-                    "The instance roster did not flip to page 2.");
+                Settle.Until(() => instance.PlayersPage.Items.Count == 6, () => Pump(window), "The instance roster did not flip to page 2.");
 
                 Assert.Equal(6, instance.PlayersPage.Items.Count);
                 Assert.Equal("2 of 2", instance.PlayersPage.PageText);
@@ -325,10 +301,7 @@ public class PagerLayoutTests
                 Pump(window);
 
                 var pager = PagerFor(window, instance.PlayersPage);
-                PumpUntil(
-                    window,
-                    () => pager.Visibility == Visibility.Collapsed,
-                    "The roster pager for an empty instance stayed visible.");
+                Settle.Until(() => pager.Visibility == Visibility.Collapsed, () => Pump(window), "The roster pager for an empty instance stayed visible.");
                 Assert.False(instance.HasInstance);
                 Assert.Empty(instance.PlayersPage.Items);
             }
@@ -468,11 +441,8 @@ public class PagerLayoutTests
     private static ListPager PagerFor(Window window, object page)
     {
         ListPager? found = null;
-        PumpUntil(
-            window,
-            () => (found = FindVisualChildren<ListPager>(window)
-                .FirstOrDefault(pager => ReferenceEquals(pager.DataContext, page))) is not null,
-            () => DescribeMissingPager(window, page));
+        Settle.Until(() => (found = FindVisualChildren<ListPager>(window)
+                .FirstOrDefault(pager => ReferenceEquals(pager.DataContext, page))) is not null, () => Pump(window), () => DescribeMissingPager(window, page));
         return found!;
     }
 
@@ -545,20 +515,6 @@ public class PagerLayoutTests
         timer.Start();
         Dispatcher.PushFrame(frame);
         window.UpdateLayout();
-    }
-
-    private static void PumpUntil(Window window, Func<bool> condition, string because)
-        => PumpUntil(window, condition, () => because);
-
-    private static void PumpUntil(Window window, Func<bool> condition, Func<string> because)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!condition())
-        {
-            Assert.True(DateTime.UtcNow < deadline, because());
-            Pump(window);
-            Thread.Sleep(5);
-        }
     }
 
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject

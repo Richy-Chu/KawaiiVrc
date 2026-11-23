@@ -114,7 +114,7 @@ public class FriendAvatarProfileTests
                 IconUrl = "https://example.test/profile-custom.png"
             };
 
-            await WaitUntil(() => profile.Avatars.Count > 0);
+            await Settle.UntilAsync(() => profile.Avatars.Count > 0);
 
             var avatar = Assert.Single(profile.Avatars);
             Assert.Equal("Profile picture", avatar.DisplayName);
@@ -391,27 +391,12 @@ public class FriendAvatarProfileTests
         Assert.True(vm.IsSlotPickerOpen);
 
         vm.ChooseFavoriteSlotCommand.Execute("avatars1");
-        await WaitUntil(() => avatar.IsFavorite);
+        await Settle.UntilAsync(() => avatar.IsFavorite);
         Assert.Equal(1, handler.PostCount);
 
         vm.ToggleFavoriteCommand.Execute(avatar.Id);
-        await WaitUntil(() => !avatar.IsFavorite);
+        await Settle.UntilAsync(() => !avatar.IsFavorite);
         Assert.Equal(1, handler.DeleteCount);
-    }
-
-    private static async Task WaitUntil(Func<bool> condition)
-    {
-        for (var attempt = 0; attempt < 400; attempt++)
-        {
-            if (condition())
-            {
-                return;
-            }
-
-            await Task.Delay(25);
-        }
-
-        Assert.True(condition(), "Timed out waiting for the favourite state to change.");
     }
 
     [Fact]
@@ -524,7 +509,7 @@ public class FriendAvatarProfileTests
                 IconUrl = "https://example.test/profile-custom.png"
             };
 
-            await WaitUntil(() => profile.Avatars.Count > 0);
+            await Settle.UntilAsync(() => profile.Avatars.Count > 0);
 
             var avatar = Assert.Single(profile.Avatars);
             Assert.True(avatar.IsProfilePictureFallback);
@@ -570,7 +555,7 @@ public class FriendAvatarProfileTests
                 IconUrl = "https://example.test/profile-custom.png"
             };
 
-            await WaitUntil(() => profile.Avatars.Any(avatar =>
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
                 string.Equals(avatar.AvatarId, "avtr_from_file", StringComparison.Ordinal)));
 
             var avatar = Assert.Single(profile.Avatars);
@@ -620,7 +605,7 @@ public class FriendAvatarProfileTests
                 IconUrl = iconUrl
             };
 
-            await WaitUntil(() => profile.Avatars.Count > 0);
+            await Settle.UntilAsync(() => profile.Avatars.Count > 0);
 
             var avatar = Assert.Single(profile.Avatars);
             Assert.Equal("Remi Tan", avatar.DisplayName);
@@ -667,7 +652,7 @@ public class FriendAvatarProfileTests
                 IconUrl = "https://example.test/custom-icon.png"
             };
 
-            await WaitUntil(() => profile.Avatars.Any(avatar =>
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
                 string.Equals(avatar.AvatarId, "avtr_from_log", StringComparison.Ordinal)));
 
             var avatar = Assert.Single(profile.Avatars);
@@ -715,11 +700,11 @@ public class FriendAvatarProfileTests
                 IconUrl = "https://example.test/custom-icon.png"
             };
 
-            await WaitUntil(() => profile.Avatars.Any(avatar =>
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
                 string.Equals(avatar.AvatarId, "avtr_from_log", StringComparison.Ordinal)));
 
             profile.ApplyLoggedAvatar(new LoggedAvatar("Second Avatar", "Second Author"));
-            await WaitUntil(() => profile.Avatars.Any(avatar =>
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
                 string.Equals(avatar.AvatarId, "avtr_second", StringComparison.Ordinal)));
 
             Assert.Equal(2, profile.Avatars.Count);
@@ -765,7 +750,7 @@ public class FriendAvatarProfileTests
                 IconUrl = "https://example.test/custom-icon.png"
             };
 
-            await WaitUntil(() => profile.Avatars.Any(avatar =>
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
                 string.Equals(avatar.AvatarId, "avtr_jane_right", StringComparison.Ordinal)));
 
             var avatar = Assert.Single(profile.Avatars);
@@ -826,7 +811,7 @@ public class FriendAvatarProfileTests
             });
             profile.RefreshAvatarLookupFromSearch();
 
-            await WaitUntil(() => profile.Avatars.Any(avatar =>
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
                 string.Equals(avatar.AvatarId, "avtr_late_search", StringComparison.Ordinal)));
             Assert.True(Assert.Single(profile.Avatars).IsCurrent);
         }
@@ -876,7 +861,7 @@ public class FriendAvatarProfileTests
                 IconUrl = "https://example.test/profile-custom.png"
             };
 
-            await WaitUntil(() => profile.Avatars.Any(avatar =>
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
                 string.Equals(avatar.AvatarId, "avtr_from_avtr_icu", StringComparison.Ordinal)));
 
             var avatar = Assert.Single(profile.Avatars);
@@ -923,7 +908,7 @@ public class FriendAvatarProfileTests
                 IconUrl = "https://example.test/profile-custom.png"
             };
 
-            await WaitUntil(() => profile.Avatars.Count > 0);
+            await Settle.UntilAsync(() => profile.Avatars.Count > 0);
 
             var avatar = Assert.Single(profile.Avatars);
             Assert.True(avatar.IsProfilePictureFallback);
@@ -985,7 +970,7 @@ public class FriendAvatarProfileTests
                 CurrentAvatarThumbnailImageUrl = "https://api.vrchat.cloud/api/1/image/file_search_cached/1/256"
             };
 
-            await WaitUntil(() => profile.Avatars.Any(avatar =>
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
                 string.Equals(avatar.AvatarId, "avtr_search_cached", StringComparison.Ordinal)));
 
             var avatar = Assert.Single(profile.Avatars);

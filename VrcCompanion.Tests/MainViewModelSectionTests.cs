@@ -38,7 +38,7 @@ public class MainViewModelSectionTests
             };
 
             shell.OpenActivityUserCommand.Execute(entry);
-            WaitUntil(() => handler.ProfileGets == 1 &&
+            Settle.Until(() => handler.ProfileGets == 1 &&
                             shell.SelectedFriendDetail?.Profile is not null);
 
             var profile = Assert.IsType<FriendDetailViewModel>(shell.SelectedFriendDetail);
@@ -70,7 +70,7 @@ public class MainViewModelSectionTests
             };
 
             shell.OpenActivityAvatarCommand.Execute(entry);
-            WaitUntil(() => avatars.SelectedAvatar?.Id == entry.AvatarId &&
+            Settle.Until(() => avatars.SelectedAvatar?.Id == entry.AvatarId &&
                             avatars.SelectedAvatar.CanUse);
 
             Assert.False(avatars.SelectedAvatar!.IsPrivate);
@@ -137,7 +137,7 @@ public class MainViewModelSectionTests
                 var entry = Assert.Single(feed.Entries);
                 Assert.True(entry.CanOpenAvatar);
                 Assert.Equal("Mellzie", entry.EffectiveAvatarName);
-                WaitUntil(() => entry.AvatarId == "avtr_public_change" &&
+                Settle.Until(() => entry.AvatarId == "avtr_public_change" &&
                                 !string.IsNullOrWhiteSpace(entry.AvatarUrl));
                 Assert.True(entry.HasAvatarImage);
                 Assert.Contains("file_log_avatar", entry.AvatarUrl);
@@ -179,7 +179,7 @@ public class MainViewModelSectionTests
                 // The name-only row opens immediately as a placeholder, then the
                 // public record fills in the id and picture.
                 Assert.NotNull(avatars.SelectedAvatar);
-                WaitUntil(() => avatars.SelectedAvatar?.Id == "avtr_public_change");
+                Settle.Until(() => avatars.SelectedAvatar?.Id == "avtr_public_change");
                 Assert.True(avatars.SelectedAvatar!.CanUse);
                 Assert.Equal("Public Avatar", avatars.SelectedAvatar.Name);
                 Assert.Equal("avtr_public_change", entry.AvatarId);
@@ -237,7 +237,7 @@ public class MainViewModelSectionTests
 
                 Assert.Equal("avtr_new", me.CurrentAvatar);
                 Assert.Equal("New Look", me.CurrentAvatarName);
-                WaitUntil(() => feed.Entries.Any(entry =>
+                Settle.Until(() => feed.Entries.Any(entry =>
                     entry.Type == ActivityType.AvatarChanged &&
                     entry.UserId == me.Id &&
                     entry.AvatarId == "avtr_new"));
@@ -297,7 +297,7 @@ public class MainViewModelSectionTests
                         AvatarSwitches: switches));
 
                 Assert.Equal("New Log Look", me.CurrentAvatarName);
-                WaitUntil(() => feed.Entries.Any(entry =>
+                Settle.Until(() => feed.Entries.Any(entry =>
                     entry.Type == ActivityType.AvatarChanged &&
                     entry.UserId == me.Id &&
                     entry.EffectiveAvatarName == "New Log Look"));
@@ -339,7 +339,7 @@ public class MainViewModelSectionTests
             };
 
             shell.OpenActivityUserCommand.Execute(entry);
-            WaitUntil(() => shell.SelectedFriendDetail?.Profile is not null);
+            Settle.Until(() => shell.SelectedFriendDetail?.Profile is not null);
 
             Assert.Equal("Live Activity", shell.SelectedFriendDetail!.DisplayName);
         });
@@ -411,8 +411,8 @@ public class MainViewModelSectionTests
             using var api = new VrcApiClient(null, new ActivityAvatarHandler(isPrivate: false));
             var feed = new ActivityFeedViewModel(api, activityStore, avatarStore);
             feed.SetAccount("acct_activity");
-            WaitUntil(() => feed.Entries.FirstOrDefault()?.AvatarId == "avtr_remembered");
-            WaitUntil(() => feed.Entries.First().Details.Contains("Public Avatar"));
+            Settle.Until(() => feed.Entries.FirstOrDefault()?.AvatarId == "avtr_remembered");
+            Settle.Until(() => feed.Entries.First().Details.Contains("Public Avatar"));
 
             var entry = Assert.Single(feed.Entries);
             Assert.True(entry.CanOpenAvatar);
@@ -448,7 +448,7 @@ public class MainViewModelSectionTests
                 };
 
                 shell.OpenActivityAvatarCommand.Execute(entry);
-                WaitUntil(() => avatars.SelectedAvatar?.IsPrivate == true);
+                Settle.Until(() => avatars.SelectedAvatar?.IsPrivate == true);
 
                 Assert.True(avatars.SelectedAvatar!.IsPrivate);
                 Assert.False(avatars.SelectedAvatar.CanUse);
@@ -482,7 +482,7 @@ public class MainViewModelSectionTests
                     new FriendNotesStore(Path.Combine(notesDirectory, "notes.json")));
 
                 profile.LoadAsync(forceRefresh: false, CancellationToken.None).GetAwaiter().GetResult();
-                WaitUntil(() => handler.FriendGroupGets >= 1 && handler.MyGroupGets >= 1);
+                Settle.Until(() => handler.FriendGroupGets >= 1 && handler.MyGroupGets >= 1);
 
                 Assert.Equal(1, handler.ProfileGets);
                 Assert.Equal(1, handler.MyGroupGets);
@@ -492,7 +492,7 @@ public class MainViewModelSectionTests
                 TestHooks.AttachFriendDetail(shell, profile);
                 shell.RefreshFriendProfileCommand.Execute(null);
 
-                WaitUntil(() => handler.FriendGroupGets >= 2 && handler.MyGroupGets >= 2);
+                Settle.Until(() => handler.FriendGroupGets >= 2 && handler.MyGroupGets >= 2);
 
                 Assert.Equal(2, handler.ProfileGets);
                 Assert.Equal(2, handler.MyGroupGets);
@@ -599,17 +599,6 @@ public class MainViewModelSectionTests
 
         Assert.Equal("chebe", accounts.ActiveAccountLabel);
         Assert.Equal("C", accounts.ActiveAccountInitial);
-    }
-
-    private static void WaitUntil(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!condition() && DateTime.UtcNow < deadline)
-        {
-            Thread.Sleep(25);
-        }
-
-        Assert.True(condition(), "Timed out waiting for the profile refresh.");
     }
 
     [Fact]

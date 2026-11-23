@@ -97,20 +97,6 @@ public class AvatarViewModelBrowseTests
             });
     }
 
-    private static async Task WaitUntilIdle(AvatarViewModel vm)
-    {
-        var deadline = Environment.TickCount64 + 5000;
-        while (vm.IsGlobalBusy)
-        {
-            if (Environment.TickCount64 > deadline)
-            {
-                throw new TimeoutException("AvatarViewModel stayed busy.");
-            }
-
-            await Task.Delay(20);
-        }
-    }
-
     [Fact]
     public async Task Browse_FailureThenRecovery_ClearsFailedStatus()
     {
@@ -121,13 +107,13 @@ public class AvatarViewModelBrowseTests
             var vm = new AvatarViewModel(new VrcApiClient());
 
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
 
             // Index recovers, then the refresh must replace the failure, not keep it.
             handler.Html = false;
             vm.RefreshBrowseCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
             Assert.DoesNotContain("failed", vm.CommunityStatusText);
@@ -149,7 +135,7 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
             // Page 1 asks both browse indexes (avtr.icu and VRCNDb) together.
@@ -163,7 +149,7 @@ public class AvatarViewModelBrowseTests
             // Once the cooldown passes, the next activation retries exactly once.
             now = now.AddSeconds(31);
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(4, handler.Requests);
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
 
@@ -174,7 +160,7 @@ public class AvatarViewModelBrowseTests
 
             now = now.AddSeconds(30);
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(6, handler.Requests);
         }
         finally
@@ -195,7 +181,7 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
@@ -223,7 +209,7 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             // 30, 60, 120, 240, then 300 twice: the cap, not 480.
             foreach (var seconds in new[] { 30, 60, 120, 240, 300, 300 })
@@ -239,7 +225,7 @@ public class AvatarViewModelBrowseTests
                 // At the deadline the next activation retries and fails again.
                 now = now.AddSeconds(1);
                 vm.BrowseCatalog();
-                await WaitUntilIdle(vm);
+                await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
                 Assert.Equal(before + 2, handler.Requests);
             }
 
@@ -264,14 +250,14 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(2, handler.Requests);
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
             // No tab switch: the countdown reaching zero is what triggers the retry.
             now = now.AddSeconds(30);
             TestHooks.PumpBrowseBackoff(vm);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(4, handler.Requests);
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
@@ -295,13 +281,13 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Empty(vm.GlobalResults);
 
             handler.Html = false;
             now = now.AddSeconds(30);
             TestHooks.PumpBrowseBackoff(vm);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(2, vm.GlobalResults.Count);
             Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
@@ -325,20 +311,20 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(2, handler.Requests);
 
             // Search owns the tab: a browse retry would replace its results.
             vm.GlobalSearchTerm = "cat";
             now = now.AddSeconds(30);
             TestHooks.PumpBrowseBackoff(vm);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(2, handler.Requests);
 
             // Once the search is cleared the next tick catches up and retries.
             vm.GlobalSearchTerm = string.Empty;
             TestHooks.PumpBrowseBackoff(vm);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(4, handler.Requests);
         }
         finally
@@ -359,12 +345,12 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             handler.Html = true;
             var afterFirstPage = handler.Requests;
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(afterFirstPage + 2, handler.Requests);
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
@@ -372,9 +358,9 @@ public class AvatarViewModelBrowseTests
 
             // Clicks inside the cooldown explain the wait instead of refetching.
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(afterFirstPage + 2, handler.Requests);
             Assert.Contains("cooling down", vm.GlobalError);
@@ -385,7 +371,7 @@ public class AvatarViewModelBrowseTests
             handler.Json = IdsJson(Ids(50, "more"));
             now = now.AddSeconds(31);
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(afterFirstPage + 4, handler.Requests);
             Assert.Contains("page 2", vm.CommunityStatusText);
@@ -409,12 +395,12 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             handler.Html = true;
             var afterPageOne = handler.Requests;
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(afterPageOne + 2, handler.Requests);
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
@@ -423,7 +409,7 @@ public class AvatarViewModelBrowseTests
             handler.Json = IdsJson(Ids(50, "more"));
             now = now.AddSeconds(30);
             TestHooks.PumpBrowseBackoff(vm);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(afterPageOne + 4, handler.Requests);
             Assert.Contains("page 2", vm.CommunityStatusText);
@@ -450,7 +436,7 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
             // Hold the page-1 retry open: with no pages loaded there is no page
@@ -468,7 +454,7 @@ public class AvatarViewModelBrowseTests
             pending.SetResult(Enumerable.Range(1, 50)
                 .Select(i => new Avatar { Id = $"avtr_retry-{i}", Name = $"retry-{i}", SourceName = "avtr.icu" })
                 .ToList());
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
             Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
@@ -491,11 +477,11 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             handler.Html = true;
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             var afterFailure = handler.Requests;
 
             // Leaving the tab before the cooldown expires must not retry behind it.
@@ -519,7 +505,7 @@ public class AvatarViewModelBrowseTests
             handler.Json = IdsJson(Ids(50, "more"));
             vm.IsBrowseTabActive = true;
             TestHooks.PumpBrowseBackoff(vm);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(afterFailure + 2, handler.Requests);
             Assert.Contains("page 2", vm.CommunityStatusText);
@@ -543,7 +529,7 @@ public class AvatarViewModelBrowseTests
             // No pages loaded: this is the page-1 retry path, not load-more.
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             var afterFailure = handler.Requests;
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
@@ -558,7 +544,7 @@ public class AvatarViewModelBrowseTests
 
             // Coming back to Avatar Search runs the page-1 retry by itself.
             vm.IsBrowseTabActive = true;
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(afterFailure + 2, handler.Requests);
             Assert.Contains("retrying in 60s", vm.CommunityStatusText);
@@ -581,7 +567,7 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             var afterFailure = handler.Requests;
             Assert.True(vm.IsBrowseBackoffTickerRunning);
 
@@ -601,7 +587,7 @@ public class AvatarViewModelBrowseTests
             now = now.AddSeconds(30);
             Assert.Equal(afterFailure, handler.Requests);
             vm.IsBrowseTabActive = true;
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(afterFailure + 2, handler.Requests);
             Assert.Contains("retrying in 60s", vm.CommunityStatusText);
@@ -624,11 +610,11 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             handler.Html = true;
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
             // Hold the retry open so the in-progress status can be observed.
@@ -645,7 +631,7 @@ public class AvatarViewModelBrowseTests
             pending.SetResult(Enumerable.Range(1, 50)
                 .Select(i => new Avatar { Id = $"avtr_more-{i}", Name = $"more-{i}", SourceName = "avtr.icu" })
                 .ToList());
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("page 2", vm.CommunityStatusText);
             Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
@@ -669,17 +655,17 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             handler.Json = IdsJson(Ids(50, "more"));
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("page 2", vm.CommunityStatusText);
 
             // Page 3 is the one that fails, so its retry must name page 3.
             handler.Html = true;
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("retrying in 30s", vm.CommunityStatusText);
 
             var pending = new TaskCompletionSource<List<Avatar>>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -694,7 +680,7 @@ public class AvatarViewModelBrowseTests
             pending.SetResult(Enumerable.Range(1, 50)
                 .Select(i => new Avatar { Id = $"avtr_third-{i}", Name = $"third-{i}", SourceName = "avtr.icu" })
                 .ToList());
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("page 3", vm.CommunityStatusText);
             Assert.DoesNotContain("retrying page 3", vm.CommunityStatusText);
@@ -717,7 +703,7 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             // Every later page fails; the offsets show what is being retried.
             var offsets = new List<int>();
@@ -728,7 +714,7 @@ public class AvatarViewModelBrowseTests
             });
 
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(new[] { 50 }, offsets);
 
             // Three automatic attempts at page 2, each after the cooldown.
@@ -736,7 +722,7 @@ public class AvatarViewModelBrowseTests
             {
                 now = now.AddSeconds(600);
                 TestHooks.PumpBrowseBackoff(vm);
-                await WaitUntilIdle(vm);
+                await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             }
 
             Assert.Equal(new[] { 50, 50, 50, 50 }, offsets);
@@ -757,7 +743,7 @@ public class AvatarViewModelBrowseTests
             Assert.DoesNotContain("retrying now", vm.CommunityStatusText);
 
             pending.SetException(new HttpRequestException("still down"));
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(new[] { 50, 50, 50, 50, 0 }, offsets);
             Assert.DoesNotContain("reloading page 1", vm.CommunityStatusText);
 
@@ -766,7 +752,7 @@ public class AvatarViewModelBrowseTests
             handler.Json = IdsJson(Ids(50, "fresh"));
             now = now.AddSeconds(600);
             TestHooks.PumpBrowseBackoff(vm);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(50, vm.GlobalResults.Count);
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
@@ -790,17 +776,17 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(2, handler.Requests);
 
             // An explicit refresh is the user asking: it ignores the cooldown.
             vm.RefreshBrowseCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(4, handler.Requests);
 
             handler.Html = false;
             vm.RefreshBrowseCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
 
             // Recovery cleared the backoff, so a tab activation serves the cache.
@@ -828,7 +814,7 @@ public class AvatarViewModelBrowseTests
             TestHooks.UseBrowseFetch(vm, (_, _) => throw new HttpRequestException("browse blew up"));
 
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal("Could not reach the community avatar index.", vm.GlobalError);
             // No index answered, so the status is only the cooldown countdown.
@@ -839,7 +825,7 @@ public class AvatarViewModelBrowseTests
             TestHooks.UseBrowseFetch(vm, null);
             now = now.AddSeconds(31);
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
             Assert.Equal(string.Empty, vm.GlobalError);
@@ -862,12 +848,12 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
 
             TestHooks.UseBrowseFetch(vm, (_, _) => throw new HttpRequestException("load more blew up"));
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal("Could not load more community avatars.", vm.GlobalError);
             // The failed page must not advance the browse page counter.
@@ -880,7 +866,7 @@ public class AvatarViewModelBrowseTests
             TestHooks.UseBrowseFetch(vm, null);
             now = now.AddSeconds(31);
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("page 2", vm.CommunityStatusText);
             Assert.Equal(string.Empty, vm.GlobalError);
@@ -901,13 +887,13 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
 
             // Real fetch path (no seam): the index now answers with HTML.
             handler.Html = true;
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
             Assert.DoesNotContain("page 2", vm.CommunityStatusText);
@@ -928,12 +914,12 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
 
             // Same 50 avatars again: nothing new, so no page advance and no "0".
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
             Assert.DoesNotContain("avtr.icu 0", vm.CommunityStatusText);
@@ -943,7 +929,7 @@ public class AvatarViewModelBrowseTests
             // A genuinely new page still advances and counts only the new rows.
             handler.Json = IdsJson(Ids(50, "more"));
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
             Assert.Contains("page 2", vm.CommunityStatusText);
@@ -964,13 +950,13 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("avtr.icu 50", vm.CommunityStatusText);
             Assert.Equal(50, vm.GlobalResults.Count);
 
             handler.Json = IdsJson(Enumerable.Range(1, 50).Select(i => i <= 21 ? $"bulk-{i}" : $"more-{i}"));
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             // Only the 29 genuinely new avatars count, and the grid shows just them.
             Assert.Contains("avtr.icu 29", vm.CommunityStatusText);
@@ -1011,12 +997,12 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(50, vm.GlobalResults.Count);
 
             handler.Json = IdsJson(page2);
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Contains("avtr.icu 29", vm.CommunityStatusText);
             Assert.Contains("page 2", vm.CommunityStatusText);
@@ -1024,7 +1010,7 @@ public class AvatarViewModelBrowseTests
 
             handler.Json = IdsJson(page3);
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             // Each page contributes only its new avatars, and the suffix keeps up.
             Assert.Contains("avtr.icu 20", vm.CommunityStatusText);
@@ -1051,16 +1037,16 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.False(vm.HasPreviousGlobal);
 
             handler.Json = IdsJson(page2);
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             handler.Json = IdsJson(page3);
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.True(vm.HasPreviousGlobal);
             Assert.Contains("avtr.icu 20", vm.CommunityStatusText);
@@ -1239,14 +1225,14 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(48, vm.GlobalResults.Count);
             Assert.Contains("avtr.icu 48", vm.CommunityStatusText);
 
             handler.Json = "[" + string.Join(",", page2) + "]";
             vm.NextGlobalPageCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             // 30 new rows arrived but only 28 are public, and the page is visible-only.
             Assert.Equal(28, vm.GlobalResults.Count);
@@ -1279,7 +1265,7 @@ public class AvatarViewModelBrowseTests
         {
             var vm = new AvatarViewModel(new VrcApiClient());
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             Assert.Equal(2, vm.GlobalResults.Count);
             Assert.Contains("avtr.icu 2", vm.CommunityStatusText);
@@ -1301,7 +1287,7 @@ public class AvatarViewModelBrowseTests
             var vm = new AvatarViewModel(new VrcApiClient());
 
             vm.BrowseCatalog();
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             var browseStatus = vm.CommunityStatusText;
             Assert.Contains("avtr.icu 2", browseStatus);
 
@@ -1310,13 +1296,13 @@ public class AvatarViewModelBrowseTests
             handler.Html = true;
             vm.GlobalSearchTerm = "cat";
             vm.RefreshBrowseCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Equal(browseStatus, vm.CommunityStatusText);
 
             // With no query owning the tab the same failure is reported.
             vm.GlobalSearchTerm = string.Empty;
             vm.RefreshBrowseCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
             Assert.Contains("avtr.icu failed", vm.CommunityStatusText);
         }
         finally
@@ -1389,14 +1375,14 @@ public class AvatarViewModelBrowseTests
 
             vm.GlobalSearchTerm = "Sofia";
             vm.GlobalSearchCommand.Execute(null);
-            await WaitUntilIdle(vm);
+            await Settle.UntilAsync(() => !vm.IsGlobalBusy, "The avatar view stayed busy.");
 
             var row = Assert.Single(vm.GlobalResults);
             Assert.Equal(default, row.CreatedAt);
             Assert.Equal("PC", row.PlatformsText);
 
             vm.OpenAvatarDetailsCommand.Execute(row.Id);
-            await WaitUntil(() => row.CreatedAt != default);
+            await Settle.UntilAsync(() => row.CreatedAt != default);
 
             Assert.Same(row, vm.SelectedAvatar);
             Assert.Equal("Full VRChat description", row.Description);
@@ -1410,18 +1396,5 @@ public class AvatarViewModelBrowseTests
         }
     }
 
-    private static async Task WaitUntil(Func<bool> condition)
-    {
-        var deadline = Environment.TickCount64 + 5000;
-        while (!condition())
-        {
-            if (Environment.TickCount64 > deadline)
-            {
-                throw new TimeoutException("Timed out waiting for avatar details.");
-            }
-
-            await Task.Delay(20);
-        }
-    }
 
 }

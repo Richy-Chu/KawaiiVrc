@@ -74,7 +74,7 @@ public class MediaViewerRenderTests
                 window.Show();
 
                 shell.SelectedSection = shell.Sections.Single(section => section.Key == "media");
-                WaitUntil(() => !media.IsBusy && media.PictureCount == 1, "Media page did not load.");
+                Settle.Until(() => !media.IsBusy && media.PictureCount == 1, PumpDispatcher, "Media page did not load.");
 
                 Assert.Single(media.Groups);
 
@@ -94,9 +94,7 @@ public class MediaViewerRenderTests
 
                 media.OpenViewer(media.Groups[0].Items[0]);
                 Assert.True(media.IsViewerOpen, "The viewer did not open.");
-                WaitUntil(
-                    () => media.ViewerHydration.IsCompleted,
-                    "world/player metadata did not resolve");
+                Settle.Until(() => media.ViewerHydration.IsCompleted, PumpDispatcher, "world/player metadata did not resolve");
                 Assert.True(
                     media.HasViewerContext,
                     $"The viewer had no session metadata (groups={media.Groups.Count}, pictures={media.PictureCount}).");
@@ -104,9 +102,7 @@ public class MediaViewerRenderTests
                 // The metadata panel lives inside a ScrollViewer, so it only joins
                 // the visual tree after a layout pass.
                 window.UpdateLayout();
-                WaitUntil(
-                    () => FindChildren<TextBlock>(window).Any(block => block.Text == "TAKEN IN"),
-                    "metadata panel did not layout");
+                Settle.Until(() => FindChildren<TextBlock>(window).Any(block => block.Text == "TAKEN IN"), PumpDispatcher, "metadata panel did not layout");
 
                 var texts = FindChildren<TextBlock>(window)
                     .Select(block => block.Text)
@@ -233,29 +229,19 @@ public class MediaViewerRenderTests
         }
     }
 
-    private static void WaitUntil(Func<bool> condition, string message)
+    private static void PumpDispatcher()
     {
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (!condition())
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            if (DateTime.UtcNow >= deadline)
-            {
-                Assert.True(condition(), message);
-                return;
-            }
-
-            var frame = new DispatcherFrame();
-            var timer = new DispatcherTimer(DispatcherPriority.Background)
-            {
-                Interval = TimeSpan.FromMilliseconds(50)
-            };
-            timer.Tick += (_, _) =>
-            {
-                timer.Stop();
-                frame.Continue = false;
-            };
-            timer.Start();
-            Dispatcher.PushFrame(frame);
-        }
+            Interval = TimeSpan.FromMilliseconds(50)
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            frame.Continue = false;
+        };
+        timer.Start();
+        Dispatcher.PushFrame(frame);
     }
 }

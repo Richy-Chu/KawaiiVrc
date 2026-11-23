@@ -75,8 +75,9 @@ public class AvatarTabSwitchTests
 
             TestHooks.SetAvatarBusy(shell.AvatarViewModel!, false);
 
-            Assert.True(
-                WaitUntil(() => shell.AvatarViewModel!.Avatars.Count == 0),
+            Settle.Until(
+                () => shell.AvatarViewModel!.Avatars.Count == 0,
+                DrainPriorities,
                 DescribeRefusedRelease(shell, window));
 
             window.Close();
@@ -108,8 +109,9 @@ public class AvatarTabSwitchTests
 
             Select(shell, window, "friends");
 
-            Assert.True(
-                WaitUntil(() => shell.AvatarViewModel!.Avatars.Count == 0),
+            Settle.Until(
+                () => shell.AvatarViewModel!.Avatars.Count == 0,
+                DrainPriorities,
                 "a cached avatar section kept its rows after the leave hook missed it");
             Assert.False(shell.AvatarViewModel.HasLoaded);
 
@@ -702,34 +704,24 @@ public class AvatarTabSwitchTests
                $"pending=[{keys}] delay={window.AvatarReleaseRetryDelay}";
     }
 
-    private static bool WaitUntil(Func<bool> condition, int timeoutMs = 10000)
+    /// <summary>
+    /// Drains every dispatcher priority for a bounded slice: a single Background invoke can miss a
+    /// retry that a thread-pool continuation queues while the suite is busy.
+    /// </summary>
+    private static void DrainPriorities()
     {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (DateTime.UtcNow < deadline)
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer(DispatcherPriority.Send)
         {
-            // Drain every priority for a bounded slice. A single Background
-            // invoke can miss a retry that a thread-pool continuation queues
-            // while the suite is busy.
-            var frame = new DispatcherFrame();
-            var timer = new DispatcherTimer(DispatcherPriority.Send)
-            {
-                Interval = TimeSpan.FromMilliseconds(20)
-            };
-            timer.Tick += (_, _) =>
-            {
-                timer.Stop();
-                frame.Continue = false;
-            };
-            timer.Start();
-            Dispatcher.PushFrame(frame);
-
-            if (condition())
-            {
-                return true;
-            }
-        }
-
-        return condition();
+            Interval = TimeSpan.FromMilliseconds(20)
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            frame.Continue = false;
+        };
+        timer.Start();
+        Dispatcher.PushFrame(frame);
     }
 
     private static MainWindow CreateWindow(MainViewModel shell)

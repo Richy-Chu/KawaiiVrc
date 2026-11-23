@@ -22,12 +22,12 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         vm.MemberSearchText = "Member 011";
         Assert.True(vm.SearchMembersCommand.CanExecute(null));
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         Assert.True(vm.IsMemberSearchActive);
         Assert.Equal(10, vm.Members.Count);
@@ -46,11 +46,11 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         vm.MemberSearchText = "usr_42";
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         Assert.Single(vm.Members);
         Assert.Equal("usr_42", vm.Members[0].UserId);
@@ -66,11 +66,11 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         vm.MemberSearchText = "usr_42";
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         // The membership record has no user object of its own; the resolved account fills it.
         var member = Assert.Single(vm.Members);
@@ -87,11 +87,11 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 10 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         vm.MemberSearchText = "usr_not_a_member";
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         Assert.Empty(vm.Members);
         Assert.Equal(
@@ -107,7 +107,7 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 10 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         vm.MemberSearchText = "ab";
 
@@ -123,13 +123,13 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
         vm.MemberSearchText = "Member 011";
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         vm.ClearMemberSearchCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         Assert.False(vm.IsMemberSearchActive);
         Assert.Equal(100, vm.Members.Count);
@@ -146,13 +146,13 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         // "member42" is the account username: their display name is "Member 0042",
         // which the display-name search cannot match.
         vm.MemberSearchText = "member42";
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         Assert.Single(vm.Members);
         Assert.Equal("usr_42", vm.Members[0].UserId);
@@ -172,11 +172,11 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         vm.MemberSearchText = "stranger";
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         Assert.Empty(vm.Members);
         Assert.Equal(
@@ -193,11 +193,11 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         vm.MemberSearchText = "a1b2c3";
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         // The partial id is resolved through the public user endpoint, which the group's
         // membership endpoint would refuse on locked-down groups.
@@ -215,27 +215,17 @@ public class GroupMemberSearchTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         // A usr_ id copied from a friend's profile: VRChat answers the group's member
         // lookup with 403, which must not become "Could not search this group's members".
         vm.MemberSearchText = "usr_99";
         vm.SearchMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The member search never settled.");
 
         Assert.Empty(vm.Members);
         Assert.DoesNotContain("Could not search", vm.MembersSummary);
         Assert.Contains("may not view this group's membership details", vm.MembersSummary);
     }
 
-    private static async Task SettleAsync(GroupViewModel vm)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (vm.IsBusy && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(10);
-        }
-
-        Assert.False(vm.IsBusy);
-    }
 }

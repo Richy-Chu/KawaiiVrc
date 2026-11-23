@@ -79,9 +79,7 @@ public class MediaThumbnailRenderTests
 
                 // Media stays cached in MainWindow; leaving it hides the section.
                 itemsControl.Visibility = Visibility.Collapsed;
-                WaitUntil(
-                    () => images.All(image => image.LoadedImage is null),
-                    "Timed out waiting for the hidden page to release its decoded images.");
+                Settle.Until(() => images.All(image => image.LoadedImage is null), PumpDispatcher, "Timed out waiting for the hidden page to release its decoded images.");
                 Assert.All(images, image => Assert.Null(image.LoadedImage));
 
                 itemsControl.Visibility = Visibility.Visible;
@@ -124,20 +122,16 @@ public class MediaThumbnailRenderTests
                 window.Show();
 
                 shell.SelectedSection = shell.Sections.Single(section => section.Key == "media");
-                WaitUntil(
-                    () => !media.IsBusy && media.PictureCount == PictureCount && media.CurrentPage == 1,
-                    "Timed out waiting for the real Media section to finish loading.");
+                Settle.Until(() => !media.IsBusy && media.PictureCount == PictureCount && media.CurrentPage == 1, PumpDispatcher, "Timed out waiting for the real Media section to finish loading.");
 
                 for (var page = 1; page < media.PageCount; page++)
                 {
                     media.NextPageCommand.Execute(null);
                 }
 
-                WaitUntil(
-                    () => media.CurrentPage == 20 &&
+                Settle.Until(() => media.CurrentPage == 20 &&
                           media.PageText == "Page 20 of 20" &&
-                          !media.HasNextPage,
-                    "Timed out waiting for the real Media section to reach page 20.");
+                          !media.HasNextPage, PumpDispatcher, "Timed out waiting for the real Media section to reach page 20.");
 
                 WaitForThumbnails(window, expectedColors);
                 var images = FindThumbnails(window, expectedColors);
@@ -197,7 +191,7 @@ public class MediaThumbnailRenderTests
     private static void LoadPage20(MediaLibraryViewModel viewModel)
     {
         var load = viewModel.LoadAsync(force: true);
-        WaitUntil(() => load.IsCompleted, "Timed out loading the Media test library.");
+        Settle.Until(() => load.IsCompleted, PumpDispatcher, "Timed out loading the Media test library.");
         load.GetAwaiter().GetResult();
 
         Assert.Equal(20, viewModel.PageCount);
@@ -363,21 +357,6 @@ public class MediaThumbnailRenderTests
             {
                 yield return child;
             }
-        }
-    }
-
-    private static void WaitUntil(Func<bool> condition, string message)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                Assert.True(condition(), message);
-                return;
-            }
-
-            PumpDispatcher();
         }
     }
 

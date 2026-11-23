@@ -39,7 +39,7 @@ public class DiscordBrowserTests
 
         viewModel.SearchCommand.Execute(null);
 
-        WaitUntil(() => automation.Text.Count == 1);
+        Settle.Until(() => automation.Text.Count == 1);
         Assert.Contains(automation.Keys, key => key.Key == "k" && key.Control);
         Assert.Equal("vrchat friends", automation.Text[0]);
         Assert.DoesNotContain(automation.Keys, key => key.Key == "Enter");
@@ -70,7 +70,7 @@ public class DiscordBrowserTests
 
         viewModel.FriendsCommand.Execute(null);
 
-        WaitUntil(() => navigated is not null);
+        Settle.Until(() => navigated is not null);
         Assert.Equal(DiscordBrowserViewModel.FriendsUrl, navigated);
     }
 
@@ -84,7 +84,7 @@ public class DiscordBrowserTests
 
         viewModel.AddFriendCommand.Execute(null);
 
-        WaitUntil(() => automation.Scripts.Count == 1);
+        Settle.Until(() => automation.Scripts.Count == 1);
         Assert.Equal(DiscordBrowserViewModel.FriendsUrl, navigated);
         Assert.Contains("add friend", automation.Scripts[0], StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Add Friend opened", viewModel.ActionStatus);
@@ -99,7 +99,7 @@ public class DiscordBrowserTests
 
         viewModel.SettingsCommand.Execute(null);
 
-        WaitUntil(() => automation.Scripts.Count == 1);
+        Settle.Until(() => automation.Scripts.Count == 1);
         Assert.Contains(automation.Keys, key => key.Key == "," && key.Control);
         Assert.Contains("theme", automation.Scripts[0]);
         Assert.Contains("search filled in", viewModel.ActionStatus);
@@ -129,17 +129,6 @@ public class DiscordBrowserTests
         viewModel.Automation = automation;
         viewModel.SetBrowserLocation(DiscordBrowserViewModel.FriendsUrl, "Discord");
         return (viewModel, automation);
-    }
-
-    private static void WaitUntil(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(6);
-        while (!condition() && DateTime.UtcNow < deadline)
-        {
-            Thread.Sleep(25);
-        }
-
-        Assert.True(condition(), "Timed out waiting for the Discord action.");
     }
 
     private sealed class FakeAutomation : IEmbeddedBrowserAutomation

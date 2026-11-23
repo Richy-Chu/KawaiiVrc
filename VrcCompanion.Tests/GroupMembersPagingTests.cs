@@ -23,7 +23,7 @@ public class GroupMembersPagingTests
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
 
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         Assert.Equal(100, vm.Members.Count);
         Assert.Equal("Showing 1–100 of 250 members", vm.MembersSummary);
@@ -43,23 +43,23 @@ public class GroupMembersPagingTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         vm.NextMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         Assert.Equal("Showing 101–200 of 250 members", vm.MembersSummary);
         Assert.Equal("Page 2 of 3", vm.MembersPageText);
         Assert.True(vm.CanGoToPreviousMembersPage);
         Assert.Equal(new[] { 0, 100 }, handler.Offsets);
 
         vm.NextMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         Assert.Equal(50, vm.Members.Count);
         Assert.Equal("Showing 201–250 of 250 members", vm.MembersSummary);
         Assert.False(vm.CanGoToNextMembersPage);
 
         vm.PreviousMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         Assert.Equal(100, vm.Members.Count);
         Assert.Equal("Page 2 of 3", vm.MembersPageText);
         Assert.Equal(new[] { 0, 100, 200, 100 }, handler.Offsets);
@@ -74,12 +74,12 @@ public class GroupMembersPagingTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         vm.NextMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         vm.RefreshMembersCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         Assert.Equal("Page 1 of 3", vm.MembersPageText);
         Assert.Equal(new[] { 0, 100, 0 }, handler.Offsets);
@@ -95,7 +95,7 @@ public class GroupMembersPagingTests
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 3 }
         };
 
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         Assert.Equal(3, vm.Members.Count);
         Assert.All(vm.Members, member => Assert.StartsWith("Member 000", member.DisplayName));
@@ -112,12 +112,12 @@ public class GroupMembersPagingTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 56900 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         vm.MemberPageInput = "500";
         Assert.True(vm.JumpToMembersPageCommand.CanExecute(null));
         vm.JumpToMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         Assert.Equal("Page 500 of 569", vm.MembersPageText);
         Assert.Equal("500", vm.MemberPageInput);
@@ -134,15 +134,15 @@ public class GroupMembersPagingTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 56900 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         vm.LastMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         Assert.Equal("Page 569 of 569", vm.MembersPageText);
         Assert.False(vm.CanGoToNextMembersPage);
 
         vm.FirstMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         Assert.Equal("Page 1 of 569", vm.MembersPageText);
         Assert.False(vm.CanGoToPreviousMembersPage);
         Assert.Equal(new[] { 0, 56800, 0 }, handler.Offsets);
@@ -157,11 +157,11 @@ public class GroupMembersPagingTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 56900 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         vm.MemberPageInput = "9999";
         vm.JumpToMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         Assert.Equal("Page 569 of 569", vm.MembersPageText);
         Assert.Equal(new[] { 0, 56800 }, handler.Offsets);
@@ -176,12 +176,12 @@ public class GroupMembersPagingTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 250 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         var firstPage = vm.Members;
         var firstToken = vm.MembersPageToken;
 
         vm.NextMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         // The popup scrolls to the top whenever this token changes, so a new page is
         // read from its first member instead of from wherever the pager was left.
@@ -200,17 +200,17 @@ public class GroupMembersPagingTests
         {
             SelectedGroup = new Group { Id = "grp_1", MemberCount = 56789 }
         };
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         vm.NextMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         vm.NextMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         Assert.Equal("Page 3 of 568", vm.MembersPageText);
 
         // VRChat keeps saying there are 56,789 members but sends nothing past 300.
         vm.NextMembersPageCommand.Execute(null);
-        await SettleAsync(vm);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
 
         Assert.Equal(100, vm.Members.Count);
         Assert.Equal("Page 3 of 3", vm.MembersPageText);
@@ -218,14 +218,4 @@ public class GroupMembersPagingTests
         Assert.Contains("VRChat only returns the first 300 members", vm.MembersSummary);
     }
 
-    private static async Task SettleAsync(GroupViewModel vm)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (vm.IsBusy && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(10);
-        }
-
-        Assert.False(vm.IsBusy);
-    }
 }

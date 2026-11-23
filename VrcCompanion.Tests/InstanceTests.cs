@@ -334,7 +334,7 @@ public class InstanceTests
                 Assert.Contains(viewModel.Players, player => player.UserId == CurrentUserId && player.IsSelf);
                 Assert.Contains(viewModel.Players, player => player.UserId == LoggedUserId);
 
-                WaitUntil(() => viewModel.Players
+                Settle.Until(() => viewModel.Players
                     .First(player => player.UserId == LoggedUserId)
                     .HasProfile);
                 Assert.Equal("Logged Person", viewModel.Players
@@ -346,17 +346,6 @@ public class InstanceTests
                 File.Delete(logPath);
             }
         });
-    }
-
-    private static void WaitUntil(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!condition() && DateTime.UtcNow < deadline)
-        {
-            Thread.Sleep(25);
-        }
-
-        Assert.True(condition(), "Timed out waiting for the instance roster.");
     }
 
     /// <summary>The view model uses WPF collection views.</summary>
