@@ -207,7 +207,12 @@ public sealed class VrChatWebSocketTests
             TimeSpan.FromSeconds(5));
 
         service.Start();
-        await WaitUntilAsync(() => sockets.Count >= 2, 1500);
+
+        // The service reconnects after ~25 ms of silence, so this wait is headroom for a loaded
+        // runner only: the 1500 ms it used to have missed once on CI while this passed locally in
+        // 85 ms. A broken reconnect never gets here at all, so it still fails the run in ten
+        // seconds rather than holding the suite.
+        await WaitUntilAsync(() => sockets.Count >= 2, 10_000);
         await service.StopAsync();
 
         Assert.True(sockets.Count >= 2);
