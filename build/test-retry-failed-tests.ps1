@@ -62,6 +62,28 @@ try {
         }
     }
 
+    # A broad failure is not a flake: it is refused rather than re-run, because re-running it
+    # would turn a real break green. Just under the limit still retries.
+    $broad = Join-Path $root "broad.trx"
+    Write-Trx $broad @(1..6 | ForEach-Object {
+            '<UnitTestResult testName="VrcCompanion.Tests.FooTests.Broke' + $_ + '" outcome="Failed" />'
+        })
+    $wide = Invoke-Plan $broad
+    if ($wide.ExitCode -ne 1 -or $wide.Text -notlike "*looks systemic*" -or $wide.Text -like "*Filter:*") {
+        Write-Host ("a broad failure should be refused as systemic without a plan (exit $($wide.ExitCode)):")
+        Write-Host $wide.Text
+        $failures++
+    }
+
+    $handful = Join-Path $root "handful.trx"
+    Write-Trx $handful @(1..5 | ForEach-Object {
+            '<UnitTestResult testName="VrcCompanion.Tests.FooTests.Broke' + $_ + '" outcome="Failed" />'
+        })
+    if ((Invoke-Plan $handful).ExitCode -ne 0) {
+        Write-Host "five failed tests should still be retried"
+        $failures++
+    }
+
     # A results file that records no failure means the run failed for some other reason.
     $green = Join-Path $root "green.trx"
     Write-Trx $green @('<UnitTestResult testName="VrcCompanion.Tests.FooTests.First" outcome="Passed" />')
@@ -89,7 +111,7 @@ try {
         exit 1
     }
 
-    Write-Host "5 retry-plan check(s) passed."
+    Write-Host "7 retry-plan check(s) passed."
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

@@ -37,9 +37,23 @@ if (-not (Test-Path -LiteralPath $Results -PathType Leaf)) {
     throw ("No test results at " + $Results + ". The first run did not get far enough to fail a test, so there is nothing to retry: look at the step that ran it.")
 }
 
-$failed = @(Read-Result $Results | Where-Object { $_.Ran -and -not $_.Passed } | ForEach-Object { $_.Name } | Sort-Object -Unique)
+    $failed = @(Read-Result $Results | Where-Object { $_.Ran -and -not $_.Passed } | ForEach-Object { $_.Name } | Sort-Object -Unique)
 if ($failed.Count -eq 0) {
     throw ("The first run failed but " + $Results + " names no failed test, so the failure was not a test failure.")
+}
+
+# A handful of tests can flake; a broad one cannot. Re-running a break that hits many tests would
+# turn it green and ship it, so above the limit the run is the commit's, not the runner's.
+$maxFlakes = 5
+if ($failed.Count -gt $maxFlakes) {
+    $listed = ($failed | Select-Object -First $maxFlakes) -join ", "
+    if ($failed.Count -gt $maxFlakes) {
+        $listed += ", ..."
+    }
+
+    Write-Host ("The first run failed " + $failed.Count + " test(s): " + $listed)
+    Write-Host ("At most " + $maxFlakes + " can pass for a flake, so this looks systemic, not flaky. Nothing was re-run.")
+    exit 1
 }
 
 $filter = ($failed | ForEach-Object { "FullyQualifiedName~" + $_ }) -join "|"
