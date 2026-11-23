@@ -64,26 +64,51 @@ internal static class TestProfile
         var directory = Path.Combine(
             Path.GetTempPath(),
             ScratchPrefix + Environment.ProcessId);
+        _scratch = directory;
         UserDataPaths.UseDirectoryForTests(directory);
 
         var logs = Path.Combine(directory, "vrchat-logs");
         Directory.CreateDirectory(logs);
         VrcLogPaths.UseDirectoryForTests(logs);
 
-        // A store still holding a handle must not turn the run's own litter into a leak:
-        // retry briefly, then leave what is left to the next run's sweep.
+        // A backstop only: the suite calls CleanUp itself from its last collection, because a
+        // test host that reports results need not reach its exit handlers. One CI run passed
+        // every test and left its whole scratch behind, so nothing may depend on this running.
         if (!KeepScratch)
         {
-            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-            {
-                DeletePath(directory);
-                ClearScratch(Path.GetTempPath(), directory, attempts: 5);
-            };
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => CleanUp();
         }
 
         // Runs that were killed or crashed never reached their own cleanup.
         ClearScratch(Path.GetTempPath(), directory, attempts: 2);
     }
+
+    /// <summary>
+    /// Deletes this run's scratch while the run is still alive, from the suite's last
+    /// collection. The exit handler calls it again on the way out; by then there is nothing
+    /// left to delete. A deliberate keep skips both.
+    /// </summary>
+    internal static void CleanUp()
+    {
+        var directory = _scratch;
+        if (KeepScratch || directory is null)
+        {
+            return;
+        }
+
+        // A store still holding a handle must not turn the run's own litter into a leak:
+        // retry briefly, then leave what is left to the next run's sweep.
+        DeletePath(directory, attempts: 10);
+        ClearScratch(Path.GetTempPath(), directory, attempts: 5);
+    }
+
+    /// <summary>This run's folder, or null before the module initializer has run.</summary>
+    internal static string? Scratch => _scratch;
+
+    /// <summary>Whether this run keeps its scratch on purpose (<c>VRCC_KEEP_TEST_SCRATCH=1</c>).</summary>
+    internal static bool KeepsScratch => KeepScratch;
+
+    private static string? _scratch;
 
     /// <summary>
     /// One pass over <paramref name="temp"/> and over the folders the tests write into:

@@ -28,24 +28,35 @@ public sealed class RealProfileGuard
 }
 
 /// <summary>
-/// Puts the guard collection after every other collection. Test parallelization is
-/// already disabled for the assembly, so the collections run one at a time in this
-/// order and the guard is genuinely the last thing the run does.
+/// Puts the guard and then the scratch cleanup after every other collection. Test
+/// parallelization is already disabled for the assembly, so the collections run one at a time
+/// in this order: the guard judges the run, and only then does the run delete its own scratch,
+/// so a leak is reported before the files it might mention are gone. Both used to depend on
+/// process exit, which a test host is not obliged to reach.
 /// </summary>
 public sealed class RealProfileGuardCollectionOrderer : ITestCollectionOrderer
 {
+    private static readonly string[] Tail =
+    {
+        RealProfileGuard.Collection,
+        ScratchCleanup.Collection
+    };
+
     public IEnumerable<ITestCollection> OrderTestCollections(IEnumerable<ITestCollection> testCollections)
     {
         var all = testCollections.ToList();
 
-        foreach (var collection in all.Where(collection => collection.DisplayName != RealProfileGuard.Collection))
+        foreach (var collection in all.Where(collection => !Tail.Contains(collection.DisplayName)))
         {
             yield return collection;
         }
 
-        foreach (var collection in all.Where(collection => collection.DisplayName == RealProfileGuard.Collection))
+        foreach (var name in Tail)
         {
-            yield return collection;
+            foreach (var collection in all.Where(collection => collection.DisplayName == name))
+            {
+                yield return collection;
+            }
         }
     }
 }

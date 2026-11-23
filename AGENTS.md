@@ -39,7 +39,11 @@ exempt, since it never starts the guard.
 ## The scratch sweep
 
 `TestProfile` (`VrcCompanion.Tests/TestProfile.cs`) deletes what runs leave in `%TEMP%`: at
-startup for runs that crashed, at exit for its own. It clears the roots (`VrcCompanionTests`
+startup for runs that crashed, and at the end of the run for its own. That end is the last
+collection (`ScratchCleanup`), not process exit: a test host that has reported every result is
+not obliged to run its exit handlers, and one CI run left its whole scratch behind that way.
+The exit handler stays only as a backstop for runs that never reach the last collection. It
+clears the roots (`VrcCompanionTests`
 except `logs`, `shared` and `browser`; `VrcMediaMeta`; `VrcCompanion.Tests`; `VrcMediaTests`),
 single files named with a test prefix **and** a GUID (a name without one belongs to another
 tool, so its `vrc-*.log` stays), and per-run folders `vrc-companion-tests-<pid>` only once that
