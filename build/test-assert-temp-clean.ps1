@@ -1,7 +1,10 @@
 # Checks the verdict of build/assert-temp-clean.ps1 without running the suite: a genuine
 # Chromium deferral passes, and a folder that only looks deferred fails - no note at all, a note
-# naming a locked store file, or a note whose .tmp file was not empty. Every case is planted in
-# a sandbox and the check is pointed at it, so the machine's own %TEMP% never decides one.
+# naming a locked store file, a note whose .tmp file was not empty, a note too old to still be
+# waiting for a sweep. Every case is planted in a sandbox and the check is pointed at it, so the
+# machine's own %TEMP% never decides one. Browser profile folders get the same treatment: a dead
+# pid's profile is allowed to wait for the sweep, a name the sweep cannot read and a live pid's
+# folder are not.
 $ErrorActionPreference = "Stop"
 
 $check = Join-Path $PSScriptRoot "assert-temp-clean.ps1"
@@ -10,6 +13,11 @@ $root = Join-Path ([System.IO.Path]::GetTempPath()) ("kawaiivrc-temp-check-" + [
 
 # No process can own this id, so a folder named for it is a finished run's.
 $deadPid = 2147483000
+
+# The note's timestamp is what the check ages, so a passing case has to be written now: a fixed
+# date would be a stale deferral by the time anyone runs this.
+$now = (Get-Date).ToUniversalTime().ToString("O")
+$stale = (Get-Date).ToUniversalTime().AddHours(-3).ToString("O")
 
 function Get-Sandbox {
     $sandbox = Join-Path $root ([guid]::NewGuid().ToString("N"))
@@ -28,6 +36,15 @@ function Write-RunNote([string] $sandbox, [string[]] $lines) {
     [System.IO.File]::WriteAllLines($note, $lines)
 }
 
+function ProfileFolder([string] $sandbox, [string] $owner) {
+    # A profile is a folder of files its browser holds open, not temp files in a run folder: the
+    # check must not apply the .tmp rule here, only the name and the owner.
+    $folder = Join-Path $sandbox ("vrc-companion-browser-" + $owner)
+    New-Item -ItemType Directory -Path $folder -Force | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $folder "Preferences"), (New-Object byte[] 64))
+    return $folder
+}
+
 function Invoke-Check([string] $sandbox) {
     $output = @(& $shell -NoProfile -File $check -TempPath $sandbox -WaitSeconds 0 2>&1)
     $code = $LASTEXITCODE
@@ -36,17 +53,21 @@ function Invoke-Check([string] $sandbox) {
 
 $checks = @(
     @{
-        Name = "a genuine deferral passes"
+        # A dead pid's profile is the one folder that always outlives its run, so it must pass
+        # beside a genuine deferral - and its files are not judged as temp files.
+        Name = "a genuine deferral and a finished browser profile pass"
         Expected = 0
+        Marker = "Browser profile vrc-companion-browser-$deadPid stays until the next run sweeps it"
         Plant = {
             param($sandbox)
             Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
             Write-RunFile $sandbox "22222222-2222-2222-2222-222222222222.tmp" 0
             Write-RunNote $sandbox @(
                 "host pid: $deadPid",
-                "utc: 2026-11-23T00:00:00Z",
+                "utc: $now",
                 "held: 11111111-1111-1111-1111-111111111111.tmp 0",
                 "held: 22222222-2222-2222-2222-222222222222.tmp 0")
+            ProfileFolder $sandbox $deadPid | Out-Null
         }
     },
     @{
@@ -60,13 +81,14 @@ $checks = @(
     @{
         Name = "a note naming a locked store file fails"
         Expected = 1
+        Marker = "not a .tmp"
         Plant = {
             param($sandbox)
             Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
             Write-RunFile $sandbox "settings.json" 412
             Write-RunNote $sandbox @(
                 "host pid: $deadPid",
-                "utc: 2026-11-23T00:00:00Z",
+                "utc: $now",
                 "held: 11111111-1111-1111-1111-111111111111.tmp 0",
                 "held: settings.json 412")
         }
@@ -79,7 +101,7 @@ $checks = @(
             Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 8
             Write-RunNote $sandbox @(
                 "host pid: $deadPid",
-                "utc: 2026-11-23T00:00:00Z",
+                "utc: $now",
                 "held: 11111111-1111-1111-1111-111111111111.tmp 8")
         }
     },
@@ -90,7 +112,7 @@ $checks = @(
         Plant = {
             param($sandbox)
             New-Item -ItemType Directory -Path (Join-Path $sandbox ("vrc-companion-tests-" + $deadPid)) -Force | Out-Null
-            Write-RunNote $sandbox @("host pid: $deadPid", "utc: 2026-11-23T00:00:00Z")
+            Write-RunNote $sandbox @("host pid: $deadPid", "utc: $now")
         }
     },
     @{
@@ -105,8 +127,43 @@ $checks = @(
             Write-RunFile $sandbox "settings.json" 412
             Write-RunNote $sandbox @(
                 "host pid: $deadPid",
-                "utc: 2026-11-23T00:00:00Z",
+                "utc: $now",
                 "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
+        # A deferral waits for the next run's sweep. One that has waited hours means the sweep is
+        # not taking them, so the folder would stand for good.
+        Name = "a note too old to be waiting for a sweep fails"
+        Expected = 1
+        Marker = "hours old, so the next run's sweep should have taken this folder"
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: $stale",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
+        # A name the sweep cannot read is a profile no run will ever reclaim.
+        Name = "a browser profile this check cannot name fails"
+        Expected = 1
+        Marker = "not a browser folder this check can name"
+        Plant = {
+            param($sandbox)
+            ProfileFolder $sandbox "not-a-pid" | Out-Null
+        }
+    },
+    @{
+        # This process is the live owner: a profile still in use is not a finished run's litter.
+        Name = "a browser profile whose process is still running fails"
+        Expected = 1
+        Marker = "is still running"
+        Plant = {
+            param($sandbox)
+            ProfileFolder $sandbox $PID | Out-Null
         }
     },
     @{
@@ -119,7 +176,7 @@ $checks = @(
             New-Item -ItemType Directory -Path (Join-Path $sandbox ("vrc-companion-tests-" + $deadPid)) -Force | Out-Null
             Write-RunNote $sandbox @(
                 "host pid: $deadPid",
-                "utc: 2026-11-23T00:00:00Z",
+                "utc: $now",
                 "unlisted: DirectoryNotFoundException: no such path")
         }
     }

@@ -69,10 +69,17 @@ own dead pid, every file it names was a zero-byte `.tmp`, and the folder holds n
 does not name: cleanup deletes every file it can before writing the note, so a file left out of
 it is one the run could not delete and did not explain. A folder with no note - a run whose
 cleanup never ran - fails the job, and so does one whose note names a locked store file or whose
-folder still holds a store file the note never mentions. The WebView2 profile is the one thing that never lives in the run's folder: its browser
-holds it open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and
-the next run's sweep reclaims it once that pid is gone. A run therefore leaves nothing but a
-browser profile, and a deferred folder that says why.
+folder still holds a store file the note never mentions. The note's own `utc:` line has to be
+recent too: the sweep takes a deferred folder on the next run's startup, so one older than two
+hours means nothing swept it, and the check says so instead of letting the folder stand for good.
+
+The WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
+open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next
+run's sweep reclaims it once that pid is gone. The check judges those folders rather than listing
+them: a profile may wait for the sweep only while its name parses to a pid, and that pid is no
+longer running. A name no sweep can read, or a pid still alive when the run is over, fails the
+job. A run therefore leaves nothing but a browser profile and a deferred folder that says why,
+and both are held to the rules above.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
