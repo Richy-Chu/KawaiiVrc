@@ -41,6 +41,21 @@ folder after a run), along with the cache folders under `%TEMP%\VrcMediaMeta`,
 `%TEMP%\VrcCompanion.Tests` and `%TEMP%\VrcMediaTests` and any loose `%TEMP%` files the tests
 wrote. The next run sweeps them at startup.
 
+## CI
+
+`lint-workflows.yml` runs on pushes and pull requests that touch `VrcCompanion.Tests/`,
+`build/` or `.github/workflows/`: `verifier` runs the release-verifier self-tests
+(`build/test-exit-codes.ps1`, `test-feed-parity.ps1`, `test-drift-report.ps1`), `actionlint`
+lints the workflows, the pre-push hook and `build/*.ps1` with PSScriptAnalyzer, and
+`profile-guard` on `windows-latest` runs `build/test-profile-guard-red.ps1`, which requires
+one filtered run to exit 1 on a fabricated baseline.
+
+`test-suite.yml` runs on every push and is the only job that runs all 860 tests. It finishes
+with `build/assert-temp-clean.ps1`, which fails the job when the run left a per-run folder, a
+loose file named with a test prefix and a GUID, or anything under the cache roots other than
+`logs`, `shared` and `browser`. The step runs even when the tests fail, so a red run still
+reports what it left. Run the script by hand after a local run to get the same verdict.
+
 ## Commits
 
 Imperative subject, then a short body that says why. No AI attribution and no trailers.
