@@ -16,12 +16,14 @@ $project = Join-Path (Split-Path -Parent $PSScriptRoot) "VrcCompanion.Tests\VrcC
 dotnet build $project -c Release --nologo
 if ($LASTEXITCODE -ne 0) { throw "The test project did not build (exit $LASTEXITCODE)." }
 
-$baseline = Join-Path ([System.IO.Path]::GetTempPath()) "VrcCompanionTests\logs\profile-baseline.txt"
 $probeEntry = "profile-guard-probe.json"
 
-# The run clears this file before VSTest, so an older run's record can never be mistaken for
-# the one this run writes.
-Remove-Item -LiteralPath $baseline -Force -ErrorAction SilentlyContinue
+# The run gets its own folder and the probe names it, so the file to append to is known before
+# the run writes it. The run clears the file before VSTest, so an older record can never be
+# mistaken for this one. A 32-hex name is what the guard prunes once it is a day old.
+$runDir = Join-Path ([System.IO.Path]::GetTempPath()) ("VrcCompanionTests\logs\guard\" + [guid]::NewGuid().ToString("N"))
+$baseline = Join-Path $runDir "profile-baseline.txt"
+New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 
 $startInfo = New-Object System.Diagnostics.ProcessStartInfo
 $startInfo.FileName = "dotnet"
@@ -29,6 +31,9 @@ $startInfo.Arguments = "test `"$project`" -c Release --no-build --nologo --filte
 $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $true
 $startInfo.UseShellExecute = $false
+# The run takes this folder as its own rather than making one, so it writes the baseline the
+# probe is about to edit.
+$startInfo.EnvironmentVariables["VRCC_PROFILE_GUARD_DIR"] = $runDir
 $process = [System.Diagnostics.Process]::Start($startInfo)
 $stdout = $process.StandardOutput.ReadToEndAsync()
 $stderr = $process.StandardError.ReadToEndAsync()

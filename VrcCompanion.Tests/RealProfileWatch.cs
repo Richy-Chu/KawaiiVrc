@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace VrcCompanion.Tests;
 
@@ -24,31 +25,57 @@ internal static class RealProfileWatch
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "VrcCompanion");
 
+    private static string LogsDirectory => Path.Combine(
+        Path.GetTempPath(),
+        "VrcCompanionTests",
+        "logs");
+
+    /// <summary>
+    /// Hands this run its own folder. The project makes one for every invocation and passes it
+    /// in the runsettings file it gives the test host, so two suites running at once keep
+    /// separate records and neither can hand the other's baseline to the replay pass.
+    /// </summary>
+    internal const string RunDirectoryVariable = "VRCC_PROFILE_GUARD_DIR";
+
+    /// <summary>
+    /// A run started without the project - the test explorer, a bare vstest - still gets a
+    /// folder no concurrent run can share: its test host's pid, which it alone owns.
+    /// </summary>
+    internal static string RunDirectory
+    {
+        get
+        {
+            var given = Environment.GetEnvironmentVariable(RunDirectoryVariable);
+            return string.IsNullOrWhiteSpace(given)
+                ? Path.Combine(LogsDirectory, "guard", Environment.ProcessId.ToString(CultureInfo.InvariantCulture))
+                : given;
+        }
+    }
+
     /// <summary>
     /// The one place a verdict is reported. The test runner keeps a passing test's output
     /// in its own buffers and drops it, so the project prints this file after VSTest.
     /// Written only for an inconclusive run and deleted at the start of every run, so a
     /// clean run prints nothing and a stale note can never appear.
     /// </summary>
-    private static string LogsDirectory => Path.Combine(
-        Path.GetTempPath(),
-        "VrcCompanionTests",
-        "logs");
-
-    internal static string NotePath => Path.Combine(LogsDirectory, "profile-guard-note.txt");
+    internal static string NotePath => Path.Combine(RunDirectory, "profile-guard-note.txt");
 
     /// <summary>
     /// The same record, on disk. A filtered test pass leaves the guard out of its filter, so
     /// the project runs the guard afterwards in a second process, which cannot see the first
-    /// one's memory and has to read the profile as the run found it.
+    /// one's memory and has to read the profile as the run found it. The second process gets
+    /// the same folder, which is what keeps it from reading a concurrent run's record.
     /// </summary>
-    internal static string BaselinePath => Path.Combine(LogsDirectory, "profile-baseline.txt");
+    internal static string BaselinePath => Path.Combine(RunDirectory, "profile-baseline.txt");
 
     /// <summary>
     /// Set for the guard-only pass that follows a filtered run: take the recorded baseline
     /// instead of recording a new one, which would be taken after the tests had already run.
     /// </summary>
     internal const string ReplayVariable = "VRCC_PROFILE_GUARD_REPLAY";
+
+    /// <summary>A folder this code names: the project's run id, or a test host's pid.</summary>
+    private static readonly Regex RunFolderName = new("^[0-9a-f]{32}$|^[0-9]+$", RegexOptions.Compiled);
 
     private static ProfileSnapshot? _baseline;
     private static IReadOnlyList<string> _appAtBaseline = Array.Empty<string>();
@@ -85,6 +112,51 @@ internal static class RealProfileWatch
         }
 
         PersistBaseline();
+        PruneOldRuns(RunDirectory);
+    }
+
+    /// <summary>
+    /// Every run keeps its own folder, so the record of a run a day old has already been
+    /// read: keep yesterday's for a failure whose note still needs looking at, delete the
+    /// rest so the folder does not grow with every run. Only names this code makes are
+    /// touched, so a folder handed in from outside is left alone.
+    /// </summary>
+    private static void PruneOldRuns(string own)
+    {
+        try
+        {
+            var parent = Path.GetDirectoryName(own);
+            if (parent is null || !Directory.Exists(parent))
+            {
+                return;
+            }
+
+            foreach (var directory in Directory.EnumerateDirectories(parent))
+            {
+                var name = Path.GetFileName(directory);
+                if (!RunFolderName.IsMatch(name) ||
+                    string.Equals(directory, own, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(directory) > TimeSpan.FromDays(1))
+                    {
+                        Directory.Delete(directory, recursive: true);
+                    }
+                }
+                catch (Exception)
+                {
+                    // Another run may be reading it; its turn comes after that run exits.
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Keeping an old record is always better than failing the run over it.
+        }
     }
 
     private static bool TryReplayBaseline()

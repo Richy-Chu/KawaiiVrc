@@ -19,11 +19,19 @@ points at a scratch folder before any test runs. Do not add a store that builds 
 path itself: `ProfileIsolationTests` scans every production source file for that.
 
 `RealProfileWatch` records the real profile in the module initializer and compares it when the
-suite ends. The verdict is printed from `%TEMP%\VrcCompanionTests\logs\profile-guard-note.txt`
-by MSBuild after VSTest, because the runner drops a passing test's output. A filtered run hands
-its baseline to a second guard pass (`VRCC_PROFILE_GUARD_REPLAY=1`), so a filtered run still
-goes red on a leak. A run that changes the profile while the installed app is running is
-reported as inconclusive rather than failed: the app writes those files too.
+suite ends. The verdict is printed from
+`%TEMP%\VrcCompanionTests\logs\guard\<run>\profile-guard-note.txt` by MSBuild after VSTest,
+because the runner drops a passing test's output. A filtered run hands its baseline to a second
+guard pass (`VRCC_PROFILE_GUARD_REPLAY=1`), so a filtered run still goes red on a leak. A run
+that changes the profile while the installed app is running is reported as inconclusive rather
+than failed: the app writes those files too.
+
+Each run gets its own `<run>` folder, so two suites running at once cannot read each other's
+baseline and pass a leak. The project makes the folder when it is evaluated and hands the test
+host the path in a generated runsettings file (`VRCC_PROFILE_GUARD_DIR`); a run started without
+the project - the test explorer, a bare `dotnet vstest` - names its folder after its test host's
+pid instead. The guard deletes run folders older than a day, so the folder does not grow with
+every run.
 
 ## The scratch sweep
 

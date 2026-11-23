@@ -26,19 +26,40 @@
   <!--
     A passing test cannot speak: the test runner keeps its output in per-test buffers and
     drops them, so a green run that could not judge the profile looks exactly like a clean
-    one. The guard leaves its verdict in this file and MSBuild prints it after the run.
+    one. The guard leaves its verdict in a file and MSBuild prints it after the run.
+
+    Each run gets its own folder under ProfileGuardRuns. Two suites running at once must never
+    share these files: replaying another run's clean baseline would let this run's leak pass.
+    The folder is named when the project is evaluated, which is once per `dotnet test`, and the
+    test host learns it from the runsettings file below - the only channel MSBuild has to hand
+    a child process a value without writing somewhere a second run also reads.
   -->
   <PropertyGroup>
-    <ProfileGuardNoteFile>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'VrcCompanionTests', 'logs', 'profile-guard-note.txt'))</ProfileGuardNoteFile>
-    <ProfileGuardBaselineFile>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'VrcCompanionTests', 'logs', 'profile-baseline.txt'))</ProfileGuardBaselineFile>
+    <ProfileGuardRuns>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'VrcCompanionTests', 'logs', 'guard'))</ProfileGuardRuns>
+
+    <!-- A caller that names the folder - the red-path probe does - decides this run's identity. -->
+    <ProfileGuardDirectory Condition="'$(VRCC_PROFILE_GUARD_DIR)' != ''">$(VRCC_PROFILE_GUARD_DIR)</ProfileGuardDirectory>
+    <ProfileGuardDirectory Condition="'$(ProfileGuardDirectory)' == ''">$(ProfileGuardRuns)\$([System.Guid]::NewGuid().ToString('N'))</ProfileGuardDirectory>
+
+    <ProfileGuardNoteFile>$(ProfileGuardDirectory)\profile-guard-note.txt</ProfileGuardNoteFile>
+    <ProfileGuardBaselineFile>$(ProfileGuardDirectory)\profile-baseline.txt</ProfileGuardBaselineFile>
+    <ProfileGuardSettingsFile>$(ProfileGuardDirectory)\profile-guard.runsettings</ProfileGuardSettingsFile>
+
+    <!-- A settings file the caller passed is left alone: that run loses the hand-off, not its settings. -->
+    <VSTestSetting Condition="'$(VSTestSetting)' == '' and '$(RunSettingsFilePath)' == ''">$(ProfileGuardSettingsFile)</VSTestSetting>
   </PropertyGroup>
 
   <!--
     The baseline belongs to the run starting now. Clearing it first means a filter that
     matches nothing cannot leave an older run's baseline for the guard to judge.
   -->
-  <Target Name="ClearProfileGuardBaseline" BeforeTargets="VSTest">
+  <Target Name="PrepareProfileGuardRun" BeforeTargets="VSTest">
     <Delete Files="$(ProfileGuardBaselineFile)" />
+    <MakeDir Directories="$(ProfileGuardDirectory)" />
+    <WriteLinesToFile
+        File="$(ProfileGuardSettingsFile)"
+        Lines="&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;;&lt;RunSettings&gt;;  &lt;RunConfiguration&gt;;    &lt;EnvironmentVariables&gt;;      &lt;VRCC_PROFILE_GUARD_DIR&gt;$(ProfileGuardDirectory.Replace('&amp;', '&amp;amp;'))&lt;/VRCC_PROFILE_GUARD_DIR&gt;;    &lt;/EnvironmentVariables&gt;;  &lt;/RunConfiguration&gt;;&lt;/RunSettings&gt;"
+        Overwrite="true" />
   </Target>
 
   <!--
@@ -52,7 +73,7 @@
           BeforeTargets="ReportProfileGuardNote"
           Condition="'$(VSTestTestCaseFilter)' != '' and !$(VSTestTestCaseFilter.Contains('TheRealProfileIsUnchangedByTheRun')) and Exists('$(ProfileGuardBaselineFile)')">
     <Exec Command="dotnet vstest &quot;$(TargetPath)&quot; --TestCaseFilter:&quot;FullyQualifiedName=VrcCompanion.Tests.RealProfileGuard.TheRealProfileIsUnchangedByTheRun&quot;"
-          EnvironmentVariables="VRCC_PROFILE_GUARD_REPLAY=1"
+          EnvironmentVariables="VRCC_PROFILE_GUARD_REPLAY=1;VRCC_PROFILE_GUARD_DIR=$(ProfileGuardDirectory)"
           IgnoreExitCode="true">
       <Output TaskParameter="ExitCode" PropertyName="ProfileGuardExitCode" />
     </Exec>
