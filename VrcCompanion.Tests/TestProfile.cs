@@ -18,16 +18,19 @@ internal static class TestProfile
     private const string ScratchPrefix = "vrc-companion-tests-";
 
     /// <summary>
-    /// Tests write their own scratch under these roots and nothing claimed it back: folders
-    /// named for a GUID, media caches named for a GUID and then suffixed. Each root is cleared
-    /// before the tests start (a run that crashed never cleaned up) and again when this one
-    /// exits. The log folder, the shared settings file and the browser profile are shared
-    /// infrastructure under the first root, not scratch, and stay.
+    /// The tests write their own scratch under these roots and nothing claimed it back:
+    /// folders and caches named for a GUID, media caches suffixed after one, and one settings
+    /// file per run. Each root is cleared before the tests start (a run that crashed never
+    /// cleaned up) and again when this one exits. The log folder and the browser profile are
+    /// infrastructure rather than scratch, so they stay.
     /// </summary>
-    private static readonly (string Root, string[] Kept)[] PerTestRoots =
+    private static readonly (string Root, string[] Kept)[] ScratchRoots =
     {
         (Path.Combine(Path.GetTempPath(), "VrcCompanionTests"), new[] { "logs", "shared", "browser" }),
-        (Path.Combine(Path.GetTempPath(), "VrcMediaMeta"), Array.Empty<string>())
+        (Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "shared"), Array.Empty<string>()),
+        (Path.Combine(Path.GetTempPath(), "VrcMediaMeta"), Array.Empty<string>()),
+        (Path.Combine(Path.GetTempPath(), "VrcCompanion.Tests"), Array.Empty<string>()),
+        (Path.Combine(Path.GetTempPath(), "VrcMediaTests"), Array.Empty<string>())
     };
 
     [ModuleInitializer]
@@ -50,11 +53,11 @@ internal static class TestProfile
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             DeletePath(directory);
-            ClearPerTestScratch(attempts: 5);
+            ClearScratchRoots(attempts: 5);
         };
 
         // Runs that were killed or crashed never reached their own cleanup.
-        ClearPerTestScratch(attempts: 2);
+        ClearScratchRoots(attempts: 2);
         DeleteScratchOfFinishedRuns(directory);
     }
 
@@ -93,9 +96,9 @@ internal static class TestProfile
         }
     }
 
-    private static void ClearPerTestScratch(int attempts)
+    private static void ClearScratchRoots(int attempts)
     {
-        foreach (var (root, kept) in PerTestRoots)
+        foreach (var (root, kept) in ScratchRoots)
         {
             string[] entries;
             try
