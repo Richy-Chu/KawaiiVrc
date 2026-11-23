@@ -54,12 +54,18 @@ not at process exit: a test host that has reported every result is not obliged t
 handlers, and one CI run left its whole scratch behind that way. The exit handler stays only as
 a backstop for runs that never reach the last collection.
 
-A file still held by a child process cannot be deleted from inside the host at all, so when the
-delete fails the run starts a small reaper that waits for the host to exit and removes what is
-left. The WebView2 profile is the one thing that never lives in the run's folder: its browser
-holds it open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the
-next run's sweep reclaims it once that pid is gone. A run therefore leaves a browser profile
-behind when it used the browser, and nothing else.
+What survives are Chromium's own temp files: zero-byte `<guid>.tmp` files WebView2's browser
+processes write into `%TMP%`, which is now the run's folder. They come and go while the browser
+runs, and the last two are still open when the cleanup deletes the folder, because the browser
+process lives as long as the host. No test or product call site writes that name, and nothing
+can close the browser first: `CoreWebView2Environment` is one process-wide `Lazy` with no
+shutdown, and WebView2 has no per-browser temp directory, so the files have to land in `%TMP%`.
+A file held that way cannot be deleted from inside the host at all, so when the delete fails
+the run starts a small reaper that waits for the host to exit and removes what is left. The
+WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
+open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next
+run's sweep reclaims it once that pid is gone. A run therefore leaves a browser profile behind
+when it used the browser, and nothing else.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
