@@ -64,9 +64,10 @@ A file held that way cannot be deleted from inside the host at all, so the run d
 leaves the folder where it is and writes `cleanup-deferred.txt` inside it, naming its own pid,
 the moment it gave up and what was still held. The next run's sweep takes the folder once that
 pid is gone. The post-run check accepts a leftover folder only when that note names the
-folder's own dead pid, so a folder with no note - a run whose cleanup never ran - still fails
-the job. The WebView2 profile is the one thing that never lives in the run's folder: its
-browser holds it open for the host's whole life, so it gets
+folder's own dead pid and every file it names was a zero-byte `.tmp`, so a folder with no note
+- a run whose cleanup never ran - still fails the job, and so does one whose note names a
+locked store file. The WebView2 profile is the one thing that never lives in the run's folder:
+its browser holds it open for the host's whole life, so it gets
 `%TEMP%\vrc-companion-browser-<pid>` and the next run's sweep reclaims it once that pid is
 gone. A run therefore leaves nothing but a browser profile, and a deferred folder that says
 why.
@@ -84,10 +85,11 @@ folder, and that the sweep takes a finished run's folder while leaving a live on
 
 `lint-workflows.yml` runs on pushes and pull requests that touch `VrcCompanion.Tests/`,
 `build/` or `.github/workflows/`: `verifier` runs the release-verifier self-tests
-(`build/test-exit-codes.ps1`, `test-feed-parity.ps1`, `test-drift-report.ps1`), `actionlint`
-lints the workflows, the pre-push hook and `build/*.ps1` with PSScriptAnalyzer, and
-`profile-guard` on `windows-latest` runs `build/test-profile-guard-red.ps1`, which requires
-one filtered run to exit 1 on a fabricated baseline.
+(`build/test-exit-codes.ps1`, `test-feed-parity.ps1`, `test-drift-report.ps1`,
+`test-assert-temp-clean.ps1`), `actionlint` lints the workflows, the pre-push hook and
+`build/*.ps1` with PSScriptAnalyzer, and `profile-guard` on `windows-latest` runs
+`build/test-profile-guard-red.ps1`, which requires one filtered run to exit 1 on a fabricated
+baseline.
 
 `test-suite.yml` runs on every push and is the only job that runs all 860 tests. It finishes
 with `build/assert-temp-clean.ps1`, which fails the job when a `vrc-companion-tests-*` folder

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -113,7 +114,10 @@ internal static class TestProfile
         GC.WaitForPendingFinalizers();
         CleanupDeferred = false;
         DeferredReason = null;
-        var held = Names(Scratch);
+
+        // What another process still holds open is what keeps the folder after the delete, so
+        // read it first: the note has to say exactly what was in the way.
+        var held = HeldFiles(Scratch);
         DeletePath(Scratch, attempts: 10);
         SweepFinishedRuns(RealTemp);
 
@@ -123,12 +127,15 @@ internal static class TestProfile
         }
 
         // Chromium's own temp files stay open in the browser process, which lives as long as
-        // this host, so no retry here can close them and none can delete the folder. It stays
-        // with a note saying what was still held: the next run's sweep takes it, and the check
-        // that runs after the suite accepts exactly this recorded case and nothing else.
+        // this host, so no retry here can close them. The folder stays with a note saying what
+        // was still held: the next run's sweep takes it, and the check that runs after the
+        // suite accepts it only when everything named there is an empty .tmp file.
         CleanupDeferred = true;
-        DeferredReason = DescribeDeferral(held, Names(Scratch));
-        RecordDeferral(Scratch, DeferredReason);
+        DeferredReason = held.Count == 0
+            ? "no file it could name was still held"
+            : held.Count + " file(s) still held: " +
+              string.Join(", ", held.Select(file => Path.GetFileName(file.Name)));
+        RecordDeferral(Scratch, held);
     }
 
     /// <summary>Whether the run had to leave its folder for the next run's sweep.</summary>
@@ -146,30 +153,75 @@ internal static class TestProfile
     /// </summary>
     internal const string DeferralRecord = "cleanup-deferred.txt";
 
-    private static string DescribeDeferral(string[] before, string[] left)
+    /// <summary>
+    /// The files another process still holds open - what stops the folder from being deleted.
+    /// An exclusive open fails on such a file whether the other side reads it or has already
+    /// asked for its delete, and the size is read now, while it can still be read.
+    /// </summary>
+    private static List<(string Name, long Size)> HeldFiles(string folder)
     {
-        // A file whose delete is pending drops out of the folder's listing, so an empty listing
-        // after the attempt still describes the files that were there before it.
-        var listed = left.Length > 0 ? left : before;
-        var names = listed.Length == 0
-            ? "nothing it could name"
-            : string.Join(", ", listed.Select(Path.GetFileName));
+        var held = new List<(string Name, long Size)>();
+        string[] files;
+        try
+        {
+            files = Directory.GetFiles(folder, "*", SearchOption.AllDirectories);
+        }
+        catch (Exception)
+        {
+            return held;
+        }
 
-        return (left.Length > 0
-                ? left.Length + " of " + before.Length
-                : before.Length + " (now delete-pending)") + " entries still held: " + names;
+        foreach (var path in files)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (FileNotFoundException)
+            {
+                continue;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                continue;
+            }
+            catch (Exception)
+            {
+                held.Add((Path.GetRelativePath(folder, path), Size(path)));
+            }
+        }
+
+        return held;
     }
 
-    private static void RecordDeferral(string folder, string reason)
+    private static long Size(string path)
     {
         try
         {
-            File.WriteAllLines(Path.Combine(folder, DeferralRecord), new[]
+            return new FileInfo(path).Length;
+        }
+        catch (Exception)
+        {
+            // The check refuses a size it cannot read, so an unreadable one must not look empty.
+            return -1;
+        }
+    }
+
+    private static void RecordDeferral(string folder, List<(string Name, long Size)> held)
+    {
+        try
+        {
+            var lines = new List<string>
             {
                 "host pid: " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
-                "utc: " + DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
-                reason
-            });
+                "utc: " + DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+            };
+            foreach (var file in held)
+            {
+                lines.Add("held: " + file.Name + " " + file.Size.ToString(CultureInfo.InvariantCulture));
+            }
+
+            File.WriteAllLines(Path.Combine(folder, DeferralRecord), lines);
         }
         catch (Exception)
         {
@@ -232,8 +284,6 @@ internal static class TestProfile
         }
     }
 
-    private static string[] Names(string folder)
-        => Entries(folder).Select(Path.GetFileName).OfType<string>().ToArray();
 
     private static bool IsAbandoned(string folder)
     {

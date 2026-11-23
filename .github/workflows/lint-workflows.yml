@@ -52,6 +52,12 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File build/test-drift-report.ps1
 
+      # The temp-clean step is the only one that judges a suite run's litter, so its verdict is
+      # tested here: a real Chromium deferral must pass and a leaking folder must fail.
+      - name: Test the temp-clean verdict
+        shell: pwsh
+        run: pwsh -NoProfile -File build/test-assert-temp-clean.ps1
+
   profile-guard:
     # The guard watches the Windows profile folder and drives a WPF test project, so this
     # cannot share the Ubuntu runner above. The probe proves the guard's verdict reaches a
