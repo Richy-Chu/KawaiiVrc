@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -13,32 +14,36 @@ namespace VrcCompanion.Tests;
 /// Runs before any test. A default <see cref="SessionStore"/> must never point
 /// at the user's profile: a test that reaches a 401 path would otherwise clear
 /// the real saved session and sign the user out.
+/// The run's own scratch gets the same treatment: everything it writes to %TEMP% is removed
+/// before the tests start, for runs that died, and again when this one exits.
 /// </summary>
 internal static class TestProfile
 {
     private const string ScratchPrefix = "vrc-companion-tests-";
 
     /// <summary>
-    /// The tests write their own scratch under these roots and nothing claimed it back:
-    /// folders and caches named for a GUID, media caches suffixed after one, and one settings
-    /// file per run. Each root is cleared before the tests start (a run that crashed never
-    /// cleaned up) and again when this one exits. The log folder and the browser profile are
-    /// infrastructure rather than scratch, so they stay.
+    /// The folders the tests write into: instance and store folders, media and paging caches,
+    /// and one shared settings file per run.
     /// </summary>
-    private static readonly (string Root, string[] Kept)[] ScratchRoots =
+    private static readonly string[] ScratchRoots =
     {
-        (Path.Combine(Path.GetTempPath(), "VrcCompanionTests"), new[] { "logs", "shared", "browser" }),
-        (Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "shared"), Array.Empty<string>()),
-        (Path.Combine(Path.GetTempPath(), "VrcMediaMeta"), Array.Empty<string>()),
-        (Path.Combine(Path.GetTempPath(), "VrcCompanion.Tests"), Array.Empty<string>()),
-        (Path.Combine(Path.GetTempPath(), "VrcMediaTests"), Array.Empty<string>())
+        Path.Combine(Path.GetTempPath(), "VrcCompanionTests"),
+        Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "shared"),
+        Path.Combine(Path.GetTempPath(), "VrcMediaMeta"),
+        Path.Combine(Path.GetTempPath(), "VrcCompanion.Tests"),
+        Path.Combine(Path.GetTempPath(), "VrcMediaTests")
     };
 
     /// <summary>
+    /// Under those roots but not scratch: the log folder the guard's verdict is read from
+    /// after the run, and the WebView2 profile.
+    /// </summary>
+    private static readonly HashSet<string> Kept =
+        new(StringComparer.OrdinalIgnoreCase) { "logs", "shared", "browser" };
+
+    /// <summary>
     /// Tests also drop single files straight into %TEMP%, named for what they test: store
-    /// databases, chatbox settings, cosmetic gifs. They are the run's scratch as much as the
-    /// folders are. The per-run folder is skipped here and left to the sweep that knows its
-    /// owner by pid, so a run in progress keeps its own.
+    /// databases, chatbox settings, cosmetic gifs.
     /// </summary>
     private static readonly string[] ScratchPrefixes =
     {
@@ -74,95 +79,42 @@ internal static class TestProfile
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             DeletePath(directory);
-            ClearScratch(attempts: 5);
+            ClearScratch(directory, attempts: 5);
         };
 
         // Runs that were killed or crashed never reached their own cleanup.
-        ClearScratch(attempts: 2);
-        DeleteScratchOfFinishedRuns(directory);
+        ClearScratch(directory, attempts: 2);
     }
 
     /// <summary>
-    /// The folder is named for the process that owns it, so a folder whose process is gone
-    /// is litter. A live process keeps its folder - including a run this one did not start -
-    /// unless the folder has gone untouched for far longer than any run lasts, which also
-    /// retires a folder whose pid Windows has since handed to an unrelated process.
+    /// One pass over %TEMP% and over the folders the tests write into. Anything named the way
+    /// a test names its scratch is deleted. A per-run folder is only litter once its process
+    /// is gone, which its pid decides, so a run this one did not start keeps its own.
     /// </summary>
-    private static void DeleteScratchOfFinishedRuns(string own)
+    private static void ClearScratch(string own, int attempts)
     {
-        string[] leftovers;
-        try
+        foreach (var root in ScratchRoots)
         {
-            leftovers = Directory.GetDirectories(Path.GetTempPath(), ScratchPrefix + "*");
-        }
-        catch (Exception)
-        {
-            return;
-        }
-
-        foreach (var folder in leftovers)
-        {
-            if (string.Equals(folder, own, StringComparison.OrdinalIgnoreCase))
+            foreach (var entry in Entries(root))
             {
-                continue;
-            }
-
-            var name = Path.GetFileName(folder).Substring(ScratchPrefix.Length);
-            if (!int.TryParse(name, out var owner) || (IsRunning(owner) && !IsAbandoned(folder)))
-            {
-                continue;
-            }
-
-            DeletePath(folder, attempts: 2);
-        }
-    }
-
-    private static void ClearScratch(int attempts)
-    {
-        foreach (var (root, kept) in ScratchRoots)
-        {
-            string[] entries;
-            try
-            {
-                entries = Directory.Exists(root)
-                    ? Directory.GetFileSystemEntries(root)
-                    : Array.Empty<string>();
-            }
-            catch (Exception)
-            {
-                continue;
-            }
-
-            foreach (var entry in entries)
-            {
-                var name = Path.GetFileName(entry);
-                if (!kept.Contains(name, StringComparer.OrdinalIgnoreCase))
+                if (!Kept.Contains(Path.GetFileName(entry)))
                 {
                     DeletePath(entry, attempts);
                 }
             }
         }
 
-        ClearScratchFiles(attempts);
-    }
-
-    private static void ClearScratchFiles(int attempts)
-    {
-        string[] entries;
-        try
-        {
-            entries = Directory.GetFileSystemEntries(Path.GetTempPath());
-        }
-        catch (Exception)
-        {
-            return;
-        }
-
-        foreach (var entry in entries)
+        foreach (var entry in Entries(Path.GetTempPath()))
         {
             var name = Path.GetFileName(entry);
+
             if (name.StartsWith(ScratchPrefix, StringComparison.OrdinalIgnoreCase))
             {
+                if (!string.Equals(entry, own, StringComparison.OrdinalIgnoreCase))
+                {
+                    DeleteFinishedRun(entry);
+                }
+
                 continue;
             }
 
@@ -171,6 +123,37 @@ internal static class TestProfile
             {
                 DeletePath(entry, attempts);
             }
+        }
+    }
+
+    /// <summary>
+    /// The folder is named for the process that owns it, so a folder whose process is gone
+    /// is litter. A live process keeps its folder - including a run this one did not start -
+    /// unless the folder has gone untouched for far longer than any run lasts, which also
+    /// retires a folder whose pid Windows has since handed to an unrelated process.
+    /// </summary>
+    private static void DeleteFinishedRun(string folder)
+    {
+        var name = Path.GetFileName(folder).Substring(ScratchPrefix.Length);
+        if (!int.TryParse(name, out var owner) || (IsRunning(owner) && !IsAbandoned(folder)))
+        {
+            return;
+        }
+
+        DeletePath(folder, attempts: 2);
+    }
+
+    private static string[] Entries(string folder)
+    {
+        try
+        {
+            return Directory.Exists(folder)
+                ? Directory.GetFileSystemEntries(folder)
+                : Array.Empty<string>();
+        }
+        catch (Exception)
+        {
+            return Array.Empty<string>();
         }
     }
 
