@@ -12,6 +12,8 @@ on:
       - "build/*.ps1"
       - "build/*.psd1"
       - "build/ReleaseVerifier/**"
+      # The guard the probe below exercises, and the project that runs it after VSTest.
+      - "VrcCompanion.Tests/**"
   pull_request:
     paths:
       - ".github/workflows/**"
@@ -19,6 +21,7 @@ on:
       - "build/*.ps1"
       - "build/*.psd1"
       - "build/ReleaseVerifier/**"
+      - "VrcCompanion.Tests/**"
   workflow_dispatch:
 
 permissions:
@@ -48,6 +51,24 @@ jobs:
       - name: Test drift reporting
         shell: pwsh
         run: pwsh -NoProfile -File build/test-drift-report.ps1
+
+  profile-guard:
+    # The guard watches the Windows profile folder and drives a WPF test project, so this
+    # cannot share the Ubuntu runner above. The probe proves the guard's verdict reaches a
+    # filtered run's exit code; it appends one entry to the run's own baseline and writes
+    # nothing to %LocalAppData%\VrcCompanion.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Test the profile guard's red path
+        shell: pwsh
+        run: pwsh -NoProfile -File build/test-profile-guard-red.ps1
 
   actionlint:
     runs-on: ubuntu-latest
