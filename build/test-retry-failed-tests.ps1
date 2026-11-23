@@ -19,6 +19,37 @@ function Write-Trx([string] $path, [string[]] $results) {
 "@)
 }
 
+function Write-AbortedTrx([string] $path) {
+    # The shape a hung run leaves: no results at all, an aborted summary, and the blame collector's
+    # two run infos. Copied from a real one.
+    [System.IO.File]::WriteAllText($path, @"
+<?xml version="1.0" encoding="utf-8"?>
+<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results />
+  <ResultSummary outcome="Failed">
+    <Counters total="0" executed="0" passed="0" failed="0" error="0" timeout="0" aborted="0" notExecuted="0" />
+    <RunInfos>
+      <RunInfo outcome="Error"><Text>The active test run was aborted. Reason: Test host process crashed</Text></RunInfo>
+      <RunInfo outcome="Warning"><Text>Data collector 'Blame' message: The specified inactivity time of 20 seconds has elapsed.</Text></RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>
+"@)
+}
+
+function Write-Sequence([string] $directory, [string[]] $unfinished) {
+    $items = ($unfinished | ForEach-Object {
+            '  <Test Name="' + $_ + '" DisplayName="' + $_ + '" Completed="False" />'
+        }) -join "`n"
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $directory "Sequence_0123456789abcdef.xml"), @"
+<?xml version="1.0"?>
+<TestSequence>
+$items
+</TestSequence>
+"@)
+}
+
 function Invoke-Plan([string] $path) {
     # A refusal writes its reason to stderr, and this script stops on errors, so the run's own
     # stderr must not be promoted to a terminating error before its exit code is read.
@@ -106,6 +137,30 @@ try {
         $failures++
     }
 
+    # A hung test aborts the run and the run keeps no results, so it is retried by re-running the
+    # whole suite: everything after the hang is unverified, and a filtered retry would go green
+    # with most of the suite never having run.
+    $hang = Join-Path $root "hang"
+    New-Item -ItemType Directory -Path $hang -Force | Out-Null
+    Write-AbortedTrx (Join-Path $hang "first.trx")
+    Write-Sequence (Join-Path $hang "1234abcd-0000-0000-0000-000000000000") @("VrcCompanion.Tests.FooTests.HangsForever")
+    $hangPlan = Invoke-Plan (Join-Path $hang "first.trx")
+    if ($hangPlan.ExitCode -ne 0 -or $hangPlan.Text -notlike "*HangsForever*" -or
+        $hangPlan.Text -notlike "*whole suite is re-run*" -or $hangPlan.Text -notlike "*(all tests)*") {
+        Write-Host ("a hung run should plan a whole-suite re-run naming the test (exit $($hangPlan.ExitCode)):")
+        Write-Host $hangPlan.Text
+        $failures++
+    }
+
+    # Without a sequence there is no way to place the hang, so the run is not guessed at.
+    $placeless = Join-Path $root "placeless"
+    New-Item -ItemType Directory -Path $placeless -Force | Out-Null
+    Write-AbortedTrx (Join-Path $placeless "first.trx")
+    if ((Invoke-Plan (Join-Path $placeless "first.trx")).ExitCode -eq 0) {
+        Write-Host "an aborted run with no blame sequence should not plan a re-run"
+        $failures++
+    }
+
     # A results file that records no failure means the run failed for some other reason.
     $green = Join-Path $root "green.trx"
     Write-Trx $green @('<UnitTestResult testName="VrcCompanion.Tests.FooTests.First" outcome="Passed" />')
@@ -133,7 +188,7 @@ try {
         exit 1
     }
 
-    Write-Host "9 retry-plan check(s) passed."
+    Write-Host "11 retry-plan check(s) passed."
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

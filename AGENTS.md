@@ -100,7 +100,11 @@ job stays green - a flaky test must not redden an otherwise good commit, but it 
 hidden either. A test that fails twice fails the job, and a first run that fails more than five
 test cases is not retried at all: a broad failure is the commit's, not the runner's. Cases, not
 method names, are counted, so a theory that fails most of its rows reads as broken rather than as
-one flake. The job finishes with
+one flake. Every run is bounded per test by `--blame-hang-timeout 2m`: a hung test aborts the run
+in two minutes and leaves a blame sequence naming it, instead of running out the job's clock with
+nothing recorded. An abort keeps no results at all, so for a hang the retry re-runs the whole
+suite rather than a filtered set - everything after the hang never ran - and it applies the same
+bound, so the re-run cannot hang either. The sequence files ride along in the artifact. The job finishes with
 `build/assert-temp-clean.ps1`, which fails it when a `vrc-companion-tests-*` folder is still in
 `%TEMP%` without a `cleanup-deferred.txt` naming that folder's own pid - the only litter a run
 can leave, and the only folder allowed to wait for the next run's sweep. The step runs even when
