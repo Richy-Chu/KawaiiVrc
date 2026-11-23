@@ -130,8 +130,23 @@ public sealed class MediaContext
     public DateTimeOffset LastSeenAt { get; }
 
     private readonly List<MediaPersonItem> _people;
+    private readonly object _peopleGate = new();
 
-    public IReadOnlyList<MediaPersonItem> People => _people;
+    /// <summary>
+    /// A snapshot: the background metadata pass merges a picture's roster in while the
+    /// viewer can be reading this list, and both may run on different threads when no
+    /// dispatcher synchronizes them.
+    /// </summary>
+    public IReadOnlyList<MediaPersonItem> People
+    {
+        get
+        {
+            lock (_peopleGate)
+            {
+                return _people.ToArray();
+            }
+        }
+    }
 
     /// <summary>
     /// True when the picture itself supplied people the session log did not
@@ -146,6 +161,17 @@ public sealed class MediaContext
     /// </summary>
     /// <returns>True when at least one player was added or upgraded.</returns>
     public bool ApplyPhotoRoster(IEnumerable<VrcPhotoPlayer> roster)
+    {
+        // The viewer and the background metadata pass both merge the same picture's
+        // roster, so two threads can reach here for one session. Without this, both can
+        // miss the same person and add them twice.
+        lock (_peopleGate)
+        {
+            return ApplyPhotoRosterLocked(roster);
+        }
+    }
+
+    private bool ApplyPhotoRosterLocked(IEnumerable<VrcPhotoPlayer> roster)
     {
         var changed = false;
         foreach (var player in roster)

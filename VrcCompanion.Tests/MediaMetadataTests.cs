@@ -222,6 +222,27 @@ public class MediaMetadataTests
         Assert.Equal("3 players recorded", context.PeopleCountText);
     }
 
+    /// <summary>
+    /// The viewer merges a picture's roster into the session it belongs to, and the
+    /// background metadata pass merges that same picture into that same session. With no
+    /// dispatcher tying them together, both can look for a player before either adds them.
+    /// </summary>
+    [Fact]
+    public void APhotoRosterMergedFromTwoThreadsDoesNotDuplicatePlayers()
+    {
+        var context = MediaMetadataResolver.Describe(
+            Session("s1", JapanId, "Japan Street", 10, 12),
+            AccountId);
+        var roster = new[]
+        {
+            new VrcPhotoPlayer { UserId = "usr_new", DisplayName = "Newcomer" }
+        };
+
+        Parallel.For(0, 128, _ => context.ApplyPhotoRoster(roster));
+
+        Assert.Single(context.People, person => person.UserId == "usr_new");
+    }
+
     [Fact]
     public async Task MediaFiltersListWorldsAndPeopleAndNarrowTheGrid()
     {
