@@ -112,41 +112,69 @@ internal static class TestProfile
         GC.Collect();
         GC.WaitForPendingFinalizers();
         CleanupDeferred = false;
+        DeferredReason = null;
+        var held = Names(Scratch);
         DeletePath(Scratch, attempts: 10);
         SweepFinishedRuns(RealTemp);
 
-        // Some files stay held by a child process - a rendered page keeps the temp files it
-        // was given - and no amount of waiting in this process frees them. A helper waits for
-        // this process to end and deletes what is left, which is the same end state the next
-        // run's sweep would reach, only now instead of later.
-        if (Directory.Exists(Scratch))
+        if (!Directory.Exists(Scratch))
         {
-            CleanupDeferred = true;
-            ReapAfterExit(Scratch);
+            return;
         }
+
+        // Chromium's own temp files stay open in the browser process, which lives as long as
+        // this host, so no retry here can close them and none can delete the folder. It stays
+        // with a note saying what was still held: the next run's sweep takes it, and the check
+        // that runs after the suite accepts exactly this recorded case and nothing else.
+        CleanupDeferred = true;
+        DeferredReason = DescribeDeferral(held, Names(Scratch));
+        RecordDeferral(Scratch, DeferredReason);
     }
 
-    /// <summary>Whether the last cleanup handed its folder to the reaper instead of deleting it.</summary>
+    /// <summary>Whether the run had to leave its folder for the next run's sweep.</summary>
     internal static bool CleanupDeferred { get; private set; }
 
-    private static void ReapAfterExit(string folder)
-    {
-        var script = "$host = " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + "; " +
-                     "try { Wait-Process -Id $host -Timeout 120 -ErrorAction Stop } catch { }; " +
-                     "Remove-Item -LiteralPath '" + folder.Replace("'", "''") + "' -Recurse -Force -ErrorAction SilentlyContinue";
+    /// <summary>
+    /// What the folder still held when the cleanup gave up, or null when it deleted the folder.
+    /// </summary>
+    internal static string? DeferredReason { get; private set; }
 
+    /// <summary>
+    /// The note a deferred folder carries. The post-run check lets a leftover folder stand only
+    /// when this file names that folder's own pid; a folder without it is a run whose cleanup
+    /// never ran, which is what the check is there to catch.
+    /// </summary>
+    internal const string DeferralRecord = "cleanup-deferred.txt";
+
+    private static string DescribeDeferral(string[] before, string[] left)
+    {
+        // A file whose delete is pending drops out of the folder's listing, so an empty listing
+        // after the attempt still describes the files that were there before it.
+        var listed = left.Length > 0 ? left : before;
+        var names = listed.Length == 0
+            ? "nothing it could name"
+            : string.Join(", ", listed.Select(Path.GetFileName));
+
+        return (left.Length > 0
+                ? left.Length + " of " + before.Length
+                : before.Length + " (now delete-pending)") + " entries still held: " + names;
+    }
+
+    private static void RecordDeferral(string folder, string reason)
+    {
         try
         {
-            Process.Start(new ProcessStartInfo("powershell.exe")
+            File.WriteAllLines(Path.Combine(folder, DeferralRecord), new[]
             {
-                Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"" + script + "\"",
-                CreateNoWindow = true,
-                UseShellExecute = false
+                "host pid: " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
+                "utc: " + DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+                reason
             });
         }
         catch (Exception)
         {
-            // The next run's sweep takes the folder anyway; never fail the run over this.
+            // No note means the post-run check fails the run, which is the right verdict: a
+            // folder the run cannot even describe should not pass as a deferral.
         }
     }
 
@@ -203,6 +231,9 @@ internal static class TestProfile
             return Array.Empty<string>();
         }
     }
+
+    private static string[] Names(string folder)
+        => Entries(folder).Select(Path.GetFileName).OfType<string>().ToArray();
 
     private static bool IsAbandoned(string folder)
     {

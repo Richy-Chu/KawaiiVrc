@@ -35,12 +35,19 @@ public sealed class ScratchCleanup
             return;
         }
 
-        // A folder that survives is only acceptable when the cleanup handed it to the reaper,
-        // which deletes it as soon as this process ends; the check that runs after the suite
-        // is what proves the end state.
+        // A folder that survives is only acceptable when the run wrote down why: Chromium's
+        // temp files stay open in the browser process, which lives as long as this host, so the
+        // folder waits for the next run's sweep. The note is what lets the check that runs after
+        // the suite tell that case from a run whose cleanup never ran.
         Assert.True(
             TestProfile.CleanupDeferred,
-            "The run's own folder is still there and nothing is scheduled to remove it: " +
+            "The run's own folder is still there and nothing recorded why: " +
             string.Join(", ", Directory.GetFileSystemEntries(scratch)));
+        Assert.False(
+            string.IsNullOrWhiteSpace(TestProfile.DeferredReason),
+            "A deferred folder says what it still held.");
+        Assert.True(
+            File.Exists(Path.Combine(scratch, TestProfile.DeferralRecord)),
+            "A deferred folder carries its note for the post-run check.");
     }
 }

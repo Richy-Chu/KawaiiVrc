@@ -60,12 +60,16 @@ runs, and the last two are still open when the cleanup deletes the folder, becau
 process lives as long as the host. No test or product call site writes that name, and nothing
 can close the browser first: `CoreWebView2Environment` is one process-wide `Lazy` with no
 shutdown, and WebView2 has no per-browser temp directory, so the files have to land in `%TMP%`.
-A file held that way cannot be deleted from inside the host at all, so when the delete fails
-the run starts a small reaper that waits for the host to exit and removes what is left. The
-WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
-open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next
-run's sweep reclaims it once that pid is gone. A run therefore leaves a browser profile behind
-when it used the browser, and nothing else.
+A file held that way cannot be deleted from inside the host at all, so the run does not try: it
+leaves the folder where it is and writes `cleanup-deferred.txt` inside it, naming its own pid,
+the moment it gave up and what was still held. The next run's sweep takes the folder once that
+pid is gone. The post-run check accepts a leftover folder only when that note names the
+folder's own dead pid, so a folder with no note - a run whose cleanup never ran - still fails
+the job. The WebView2 profile is the one thing that never lives in the run's folder: its
+browser holds it open for the host's whole life, so it gets
+`%TEMP%\vrc-companion-browser-<pid>` and the next run's sweep reclaims it once that pid is
+gone. A run therefore leaves nothing but a browser profile, and a deferred folder that says
+why.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
@@ -87,7 +91,10 @@ one filtered run to exit 1 on a fabricated baseline.
 
 `test-suite.yml` runs on every push and is the only job that runs all 860 tests. It finishes
 with `build/assert-temp-clean.ps1`, which fails the job when a `vrc-companion-tests-*` folder
-is still in `%TEMP%` - the only litter a run can now leave. The step runs even when the tests
+is still in `%TEMP%` without a `cleanup-deferred.txt` naming that folder's own pid - the only
+litter a run can now leave, and the only folder allowed to wait for the next run's sweep. The
+step runs even when the tests fail, so a red run still reports what it left. Run the script by
+hand after a local run to get the same verdict.
 fail, so a red run still reports what it left. Run the script by hand after a local run to get
 the same verdict.
 
