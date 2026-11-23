@@ -22,21 +22,8 @@ internal static class TestProfile
     private const string ScratchPrefix = "vrc-companion-tests-";
 
     /// <summary>
-    /// The folders the tests write into: instance and store folders, media and paging caches,
-    /// and one shared settings file per run.
-    /// </summary>
-    private static readonly string[] ScratchRoots =
-    {
-        Path.Combine(Path.GetTempPath(), "VrcCompanionTests"),
-        Path.Combine(Path.GetTempPath(), "VrcCompanionTests", "shared"),
-        Path.Combine(Path.GetTempPath(), "VrcMediaMeta"),
-        Path.Combine(Path.GetTempPath(), "VrcCompanion.Tests"),
-        Path.Combine(Path.GetTempPath(), "VrcMediaTests")
-    };
-
-    /// <summary>
-    /// Under those roots but not scratch: the log folder the guard's verdict is read from
-    /// after the run, and the WebView2 profile.
+    /// Under the scratch roots but not scratch: the log folder the guard's verdict is read
+    /// from after the run, and the WebView2 profile.
     /// </summary>
     private static readonly HashSet<string> Kept =
         new(StringComparer.OrdinalIgnoreCase) { "logs", "shared", "browser" };
@@ -79,21 +66,34 @@ internal static class TestProfile
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             DeletePath(directory);
-            ClearScratch(directory, attempts: 5);
+            ClearScratch(Path.GetTempPath(), directory, attempts: 5);
         };
 
         // Runs that were killed or crashed never reached their own cleanup.
-        ClearScratch(directory, attempts: 2);
+        ClearScratch(Path.GetTempPath(), directory, attempts: 2);
     }
 
     /// <summary>
-    /// One pass over %TEMP% and over the folders the tests write into. Anything named the way
-    /// a test names its scratch is deleted. A per-run folder is only litter once its process
-    /// is gone, which its pid decides, so a run this one did not start keeps its own.
+    /// One pass over <paramref name="temp"/> and over the folders the tests write into:
+    /// instance and store folders, media and paging caches. Anything named the way a test
+    /// names its scratch is deleted. A per-run folder is only litter once its process is
+    /// gone, which its pid decides, so a run this one did not start keeps its own, and
+    /// <paramref name="own"/> stays until this run's process exits.
+    /// The folders are passed in rather than read from %TEMP% so a test can sweep a sandbox.
     /// </summary>
-    private static void ClearScratch(string own, int attempts)
+    internal static void ClearScratch(string temp, string own, int attempts)
     {
-        foreach (var root in ScratchRoots)
+        var tests = Path.Combine(temp, "VrcCompanionTests");
+        var roots = new[]
+        {
+            tests,
+            Path.Combine(tests, "shared"),
+            Path.Combine(temp, "VrcMediaMeta"),
+            Path.Combine(temp, "VrcCompanion.Tests"),
+            Path.Combine(temp, "VrcMediaTests")
+        };
+
+        foreach (var root in roots)
         {
             foreach (var entry in Entries(root))
             {
@@ -104,13 +104,13 @@ internal static class TestProfile
             }
         }
 
-        foreach (var entry in Entries(Path.GetTempPath()))
+        foreach (var entry in Entries(temp))
         {
             var name = Path.GetFileName(entry);
 
             if (name.StartsWith(ScratchPrefix, StringComparison.OrdinalIgnoreCase))
             {
-                if (!string.Equals(entry, own, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(name, Path.GetFileName(own), StringComparison.OrdinalIgnoreCase))
                 {
                     DeleteFinishedRun(entry);
                 }
