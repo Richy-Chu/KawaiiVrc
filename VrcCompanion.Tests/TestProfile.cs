@@ -233,15 +233,23 @@ internal static class TestProfile
         }
     }
 
+    /// <summary>
+    /// Writes the note a deferred folder carries. The moment it records is when the run gave up,
+    /// so it can be passed in: a test dates a real note back to plant a deferral that the next
+    /// run's sweep never took, rather than hand-writing one the check was never given.
+    /// </summary>
     internal static void RecordDeferral(
-        string folder, List<(string Name, long Size)> held, string? unlisted)
+        string folder,
+        List<(string Name, long Size)> held,
+        string? unlisted,
+        DateTime? when = null)
     {
         try
         {
             var lines = new List<string>
             {
                 "host pid: " + OwnerOf(folder),
-                "utc: " + DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+                "utc: " + (when ?? DateTime.UtcNow).ToString("O", CultureInfo.InvariantCulture)
             };
             if (unlisted is not null)
             {

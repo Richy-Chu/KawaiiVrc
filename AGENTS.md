@@ -85,6 +85,10 @@ longer running. A name no sweep can read, or a pid still alive when the run is o
 job. A run therefore leaves nothing but a browser profile and a deferred folder that says why,
 and both are held to the rules above.
 
+`DeferralNoteContractTests` exercises the writer and the reader as a pair by running the real
+script over notes this project wrote, so CI decides the accepting path too. It plants the take
+by asking `RecordDeferral` for a note dated four hours back: a real note, with a stale clock.
+
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
 process.

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -145,6 +146,46 @@ public sealed class DeferralNoteContractTests
                     "The check refused a trimmed folder with a note for its held file: " + result.Output);
                 Assert.Contains("waits for the next run's sweep", result.Output, StringComparison.Ordinal);
             }
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A deferral is not a licence to keep the folder for good, and the check is what enforces
+    /// that: a real note dated hours back is a folder the next run's sweep never took, so the
+    /// check takes it itself and passes. The note is written by the deferral code with the clock
+    /// moved, not by hand, because the pair is the thing under test - a note the writer could not
+    /// produce would pass here and fail on a real deferral.
+    /// </summary>
+    [Fact]
+    public void AStaleNoteWrittenByTheProjectIsTakenByTheCheck()
+    {
+        var sandbox = NewSandbox(out var folder);
+        const string held = "0b0b0b0b-1111-2222-3333-444444444444.tmp";
+        File.WriteAllBytes(Path.Combine(folder, held), Array.Empty<byte>());
+
+        try
+        {
+            // Four hours on, the browser that held this file is long gone, so the folder is
+            // deletable now: the note is true about what blocked it, and only its age is stale.
+            TestProfile.RecordDeferral(
+                folder,
+                new List<(string Name, long Size)> { (held, 0) },
+                unlisted: null,
+                when: DateTime.UtcNow.AddHours(-4));
+
+            var result = RunCheck(sandbox);
+
+            Assert.True(
+                result.ExitCode == 0,
+                "The check failed a stale deferral the project wrote instead of taking it: " + result.Output);
+            Assert.Contains("Took stale deferral", result.Output, StringComparison.Ordinal);
+            Assert.False(
+                Directory.Exists(folder),
+                "The check reported taking the folder but left it in place: " + result.Output);
         }
         finally
         {
