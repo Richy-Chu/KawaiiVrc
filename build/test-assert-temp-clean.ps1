@@ -86,10 +86,25 @@ $checks = @(
     @{
         Name = "a note with nothing held in it fails"
         Expected = 1
+        Marker = "lists no held file"
         Plant = {
             param($sandbox)
             New-Item -ItemType Directory -Path (Join-Path $sandbox ("vrc-companion-tests-" + $deadPid)) -Force | Out-Null
             Write-RunNote $sandbox @("host pid: $deadPid", "utc: 2026-11-23T00:00:00Z")
+        }
+    },
+    @{
+        # A run that could not read its folder must not read as one that found nothing in it.
+        Name = "a note saying the folder could not be listed fails with that reason"
+        Expected = 1
+        Marker = "could not list the folder (DirectoryNotFoundException: no such path)"
+        Plant = {
+            param($sandbox)
+            New-Item -ItemType Directory -Path (Join-Path $sandbox ("vrc-companion-tests-" + $deadPid)) -Force | Out-Null
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: 2026-11-23T00:00:00Z",
+                "unlisted: DirectoryNotFoundException: no such path")
         }
     }
 )
@@ -103,6 +118,13 @@ try {
         $result = Invoke-Check $sandbox
         if ($result.ExitCode -ne $checkCase.Expected) {
             Write-Host ("{0}: exited {1}, expected {2}" -f $checkCase.Name, $result.ExitCode, $checkCase.Expected)
+            Write-Host $result.Text
+            $failures++
+            continue
+        }
+
+        if ($checkCase.Marker -and ($result.Text -notlike "*$($checkCase.Marker)*")) {
+            Write-Host ("{0}: output did not say '{1}'" -f $checkCase.Name, $checkCase.Marker)
             Write-Host $result.Text
             $failures++
         }

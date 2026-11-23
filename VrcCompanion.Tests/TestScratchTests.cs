@@ -68,8 +68,9 @@ public sealed class TestScratchTests
         {
             using (new FileStream(held, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
-                var names = TestProfile.HeldFiles(sandbox).Select(file => file.Name).ToArray();
+                var names = TestProfile.HeldFiles(sandbox, out var unlisted).Select(file => file.Name).ToArray();
 
+                Assert.Null(unlisted);
                 Assert.Contains("held.tmp", names);
                 Assert.DoesNotContain("free.tmp", names);
                 // Read-only is an attribute, not a lock: opening it is what the probe must try.
@@ -78,11 +79,16 @@ public sealed class TestScratchTests
 
             using (new FileStream(readOnly, FileMode.Open, FileAccess.Read, FileShare.None))
             {
-                var names = TestProfile.HeldFiles(sandbox).Select(file => file.Name).ToArray();
+                var names = TestProfile.HeldFiles(sandbox, out _).Select(file => file.Name).ToArray();
 
                 // Held is held, whatever the attributes say: a read probe still sees the lock.
                 Assert.Contains("readonly.tmp", names);
             }
+
+            // A folder it cannot read is reported as such, not as a folder that held nothing.
+            TestProfile.HeldFiles(Path.Combine(sandbox, "no-such-folder"), out var unreadable);
+            Assert.NotNull(unreadable);
+            Assert.StartsWith("DirectoryNotFoundException", unreadable);
         }
         finally
         {

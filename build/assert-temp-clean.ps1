@@ -51,35 +51,43 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
     $held = @($text -split "`r?`n" |
         Where-Object { $_ -match '^held: ' } |
         ForEach-Object { $_.Substring(6).Trim() })
+    $unlisted = @($text -split "`r?`n" |
+        Where-Object { $_ -match '^unlisted: ' } |
+        ForEach-Object { $_.Substring(10).Trim() })
 
+    # A run that could not read its own folder is not a run that found nothing in it, and the
+    # failure has to say which one happened.
     $problem = $null
-    if ($held.Count -eq 0) {
-        $problem = "nothing at all - the note cannot show what was in the way"
+    if ($unlisted.Count -gt 0) {
+        $problem = "the note says the run could not list the folder (" + ($unlisted -join ' ') + ")"
+    }
+    elseif ($held.Count -eq 0) {
+        $problem = "the note lists no held file, so it cannot show what was in the way"
     }
 
     foreach ($entry in $held) {
         if ($null -ne $problem) { break }
         if ($entry -notmatch '^(?<name>.+) (?<size>-?\d+)$') {
-            $problem = "an entry it cannot read: " + $entry
+            $problem = "the note has an entry it cannot read: " + $entry
             break
         }
 
         $name = $Matches['name']
         $size = [long] $Matches['size']
         if ($name -notmatch '\.tmp$') {
-            $problem = "a locked file that is not a .tmp: " + $name
+            $problem = "the note names a locked file that is not a .tmp: " + $name
             break
         }
 
         if ($size -ne 0) {
-            $problem = "a .tmp file that is not empty: " + $name
+            $problem = "the note names a .tmp file that is not empty: " + $name
             break
         }
 
         # A file that is still listed has to match what the note says about it.
         $file = Join-Path $folder.FullName $name
         if ((Test-Path -LiteralPath $file -PathType Leaf) -and (Get-Item -LiteralPath $file -Force).Length -ne 0) {
-            $problem = "a .tmp file that is not empty now: " + $name
+            $problem = "the note names a .tmp file that is not empty now: " + $name
             break
         }
     }
@@ -112,7 +120,7 @@ foreach ($folder in $leftovers) {
     }
 
     if ($null -ne $deferral.Problem) {
-        $failed += $folder.Name + " (its note says it still held " + $deferral.Problem + ")"
+        $failed += $folder.Name + " (" + $deferral.Problem + ")"
         continue
     }
 

@@ -117,7 +117,7 @@ internal static class TestProfile
 
         // What another process still holds open is what keeps the folder after the delete, so
         // read it first: the note has to say exactly what was in the way.
-        var held = HeldFiles(Scratch);
+        var held = HeldFiles(Scratch, out var unlisted);
         DeletePath(Scratch, attempts: 10);
         SweepFinishedRuns(RealTemp);
 
@@ -131,11 +131,13 @@ internal static class TestProfile
         // was still held: the next run's sweep takes it, and the check that runs after the
         // suite accepts it only when everything named there is an empty .tmp file.
         CleanupDeferred = true;
-        DeferredReason = held.Count == 0
-            ? "no file it could name was still held"
-            : held.Count + " file(s) still held: " +
-              string.Join(", ", held.Select(file => Path.GetFileName(file.Name)));
-        RecordDeferral(Scratch, held);
+        DeferredReason = unlisted is not null
+            ? "the folder could not be listed: " + unlisted
+            : held.Count == 0
+                ? "no file it could name was still held"
+                : held.Count + " file(s) still held: " +
+                  string.Join(", ", held.Select(file => Path.GetFileName(file.Name)));
+        RecordDeferral(Scratch, held, unlisted);
     }
 
     /// <summary>Whether the run had to leave its folder for the next run's sweep.</summary>
@@ -160,16 +162,21 @@ internal static class TestProfile
     /// not write: a read-only file is not held, and asking to write it would fail on the
     /// attribute alone and report it as one.
     /// </summary>
-    internal static List<(string Name, long Size)> HeldFiles(string folder)
+    internal static List<(string Name, long Size)> HeldFiles(string folder, out string? unlisted)
     {
         var held = new List<(string Name, long Size)>();
+        unlisted = null;
+
         string[] files;
         try
         {
             files = Directory.GetFiles(folder, "*", SearchOption.AllDirectories);
         }
-        catch (Exception)
+        catch (Exception error)
         {
+            // A run that could not look is not a run that found nothing: the note has to say
+            // which happened, or the check reads it as a deferral that proves nothing.
+            unlisted = error.GetType().Name + ": " + error.Message;
             return held;
         }
 
@@ -216,7 +223,8 @@ internal static class TestProfile
         }
     }
 
-    private static void RecordDeferral(string folder, List<(string Name, long Size)> held)
+    private static void RecordDeferral(
+        string folder, List<(string Name, long Size)> held, string? unlisted)
     {
         try
         {
@@ -225,6 +233,12 @@ internal static class TestProfile
                 "host pid: " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
                 "utc: " + DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)
             };
+            if (unlisted is not null)
+            {
+                // One line: the note is read line by line, and an exception message is not.
+                lines.Add("unlisted: " + unlisted.Replace('\r', ' ').Replace('\n', ' '));
+            }
+
             foreach (var file in held)
             {
                 lines.Add("held: " + file.Name + " " + file.Size.ToString(CultureInfo.InvariantCulture));
