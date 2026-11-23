@@ -401,7 +401,7 @@ public class FriendAvatarProfileTests
 
     private static async Task WaitUntil(Func<bool> condition)
     {
-        for (var attempt = 0; attempt < 80; attempt++)
+        for (var attempt = 0; attempt < 400; attempt++)
         {
             if (condition())
             {

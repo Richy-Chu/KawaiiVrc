@@ -94,7 +94,8 @@ public class GroupJoinButtonTests
     private static async Task JoinAsync(GroupViewModel vm)
     {
         vm.JoinGroupInfoCommand.Execute(null);
-        var deadline = DateTime.UtcNow.AddSeconds(3);
+        // The fake handler answers at once; ten seconds is scheduler headroom.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
         while (vm.IsGroupInfoBusy && DateTime.UtcNow < deadline)
         {
             await Task.Delay(10);

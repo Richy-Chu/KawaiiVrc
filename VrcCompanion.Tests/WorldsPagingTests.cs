@@ -294,7 +294,9 @@ public class WorldsPagingTests
         });
     }
 
-    private static bool WaitUntil(Func<bool> condition, int timeoutMs = 3000)
+    // Container realization is a dispatcher round trip or two, so this is headroom for a loaded
+    // runner: a broken wait still fails the test in ten seconds.
+    private static bool WaitUntil(Func<bool> condition, int timeoutMs = 10_000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < deadline)

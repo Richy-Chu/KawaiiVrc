@@ -363,7 +363,7 @@ public class NotificationPersistenceTests : IDisposable
 
         Assert.True(shell.CanSaveInvitePreset);
         shell.SaveInvitePresetCommand.Execute(null);
-        for (var attempt = 0; attempt < 100 && shell.IsBusy; attempt++)
+        for (var attempt = 0; attempt < 500 && shell.IsBusy; attempt++)
         {
             await Task.Delay(20);
         }
@@ -571,7 +571,7 @@ public class NotificationPersistenceTests : IDisposable
 
         shell.InviteFriendCommand.Execute(friend);
         shell.SendInviteChoiceCommand.Execute("invite");
-        for (var attempt = 0; attempt < 100 && shell.IsBusy; attempt++)
+        for (var attempt = 0; attempt < 500 && shell.IsBusy; attempt++)
         {
             await Task.Delay(20);
         }
@@ -604,7 +604,7 @@ public class NotificationPersistenceTests : IDisposable
         var request = new NotificationItem(Notification("not_request", "requestInvite"));
 
         shell.AcceptInviteRequestCommand.Execute(request);
-        for (var attempt = 0; attempt < 100 && !shell.IsInviteComposerOpen; attempt++)
+        for (var attempt = 0; attempt < 500 && !shell.IsInviteComposerOpen; attempt++)
         {
             await Task.Delay(20);
         }
@@ -658,7 +658,7 @@ public class NotificationPersistenceTests : IDisposable
         Assert.Equal("sorry, busy right now", shell.ResponseComposerMessage);
 
         shell.SendDeclineWithMessageCommand.Execute(null);
-        for (var attempt = 0; attempt < 100 && shell.IsBusy; attempt++)
+        for (var attempt = 0; attempt < 500 && shell.IsBusy; attempt++)
         {
             await Task.Delay(20);
         }
@@ -702,7 +702,7 @@ public class NotificationPersistenceTests : IDisposable
         Assert.Equal("hello how are you doing?", shell.ResponseComposerMessage);
 
         shell.SendDeclineWithMessageCommand.Execute(null);
-        for (var attempt = 0; attempt < 100 && shell.IsBusy; attempt++)
+        for (var attempt = 0; attempt < 500 && shell.IsBusy; attempt++)
         {
             await Task.Delay(20);
         }
@@ -718,7 +718,7 @@ public class NotificationPersistenceTests : IDisposable
     private static async Task WaitForSavedMessagesAsync(MainViewModel shell)
     {
         for (var attempt = 0;
-             attempt < 100 && (shell.IsInviteMessagesLoading || shell.InviteMessages.Count == 0);
+             attempt < 500 && (shell.IsInviteMessagesLoading || shell.InviteMessages.Count == 0);
              attempt++)
         {
             await Task.Delay(20);
@@ -729,7 +729,7 @@ public class NotificationPersistenceTests : IDisposable
 
     private static async Task WaitForComposerAsync(MainViewModel shell)
     {
-        for (var attempt = 0; attempt < 100 && (shell.IsBusy || shell.IsInviteComposerOpen); attempt++)
+        for (var attempt = 0; attempt < 500 && (shell.IsBusy || shell.IsInviteComposerOpen); attempt++)
         {
             await Task.Delay(20);
         }

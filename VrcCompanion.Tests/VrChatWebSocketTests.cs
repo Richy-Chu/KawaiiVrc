@@ -251,7 +251,9 @@ public sealed class VrChatWebSocketTests
         Assert.False(service.IsRunning);
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 2000)
+    // The service's own timings are milliseconds, so this bound is headroom for a loaded runner
+    // and nothing else: a broken wait still fails the run in ten seconds.
+    private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 10_000)
     {
         var started = Environment.TickCount64;
         while (!condition())

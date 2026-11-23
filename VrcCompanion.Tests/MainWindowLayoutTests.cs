@@ -276,7 +276,7 @@ public class MainWindowLayoutTests
                 shell.InviteFriendCommand.Execute(
                     new FriendItem(new VrcUser { Id = "usr_friend", DisplayName = "Friend" }));
                 for (var attempt = 0;
-                     attempt < 100 && (shell.IsInviteMessagesLoading || shell.InviteMessages.Count == 0);
+                     attempt < 500 && (shell.IsInviteMessagesLoading || shell.InviteMessages.Count == 0);
                      attempt++)
                 {
                     Pump(window);

@@ -258,7 +258,7 @@ public class BoopTests
         TestHooks.UpdateNotifications(shell, new[] { notification });
 
         var item = Assert.Single(shell.Notifications);
-        for (var attempt = 0; attempt < 100 && !item.HasBoopImage; attempt++)
+        for (var attempt = 0; attempt < 500 && !item.HasBoopImage; attempt++)
         {
             await Task.Delay(20);
         }

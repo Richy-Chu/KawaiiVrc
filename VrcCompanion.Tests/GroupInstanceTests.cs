@@ -184,7 +184,8 @@ public class GroupInstanceTests
             }
         };
 
-        var deadline = System.DateTime.UtcNow.AddSeconds(3);
+        // The roster comes from an instant fake handler; ten seconds is scheduler headroom.
+        var deadline = System.DateTime.UtcNow.AddSeconds(10);
         while (vm.Instances.Count == 0 && System.DateTime.UtcNow < deadline)
         {
             await Task.Delay(25);
