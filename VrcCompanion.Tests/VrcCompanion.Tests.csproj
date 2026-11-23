@@ -96,4 +96,16 @@
     <Error Text="The real-profile guard failed: this run wrote to the real profile. See the guard's output above." />
   </Target>
 
+  <!--
+    The guard always records a baseline, and a run that hands it no folder leaves it in one of
+    its own instead. Without this, a broken hand-off would look like a clean run: the replay
+    pass would not run, no note would print, and nothing would go red. Listing tests does not
+    start the guard, so that is the one run allowed to leave no record.
+  -->
+  <Target Name="FailOnMissingGuardBaseline"
+          AfterTargets="ReportProfileGuardNote"
+          Condition="'$(VSTestListTests)' == '' and !Exists('$(ProfileGuardBaselineFile)')">
+    <Error Text="The profile guard wrote no baseline for this run at $(ProfileGuardBaselineFile), so it judged nothing: the run settings that hand the guard its folder did not reach the test host. A run that never records its own profile must not pass." />
+  </Target>
+
 </Project>

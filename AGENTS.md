@@ -31,7 +31,10 @@ baseline and pass a leak. The project makes the folder when it is evaluated and 
 host the path in a generated runsettings file (`VRCC_PROFILE_GUARD_DIR`); a run started without
 the project - the test explorer, a bare `dotnet vstest` - names its folder after its test host's
 pid instead. The guard deletes run folders older than a day, so the folder does not grow with
-every run.
+every run. A run that leaves no baseline at the path MSBuild gave it fails the run
+(`FailOnMissingGuardBaseline`), so a hand-off that silently stops working cannot pass: without
+it the replay pass would skip and the note would never print. Listing tests is the one run
+exempt, since it never starts the guard.
 
 ## The scratch sweep
 
@@ -41,6 +44,11 @@ except `logs`, `shared` and `browser`; `VrcMediaMeta`; `VrcCompanion.Tests`; `Vr
 single files named with a test prefix **and** a GUID (a name without one belongs to another
 tool, so its `vrc-*.log` stays), and per-run folders `vrc-companion-tests-<pid>` only once that
 pid is gone, including a one-hour rule for pids Windows has reused.
+
+With two suites running at once, one run's files look exactly like a crashed run's, so the
+sweep stands down to what its pid decides: another live run keeps its folder, and the roots
+and loose GUID-named files are left for a run that sweeps alone. Deleting them mid-run is what
+used to break the other suite's tests.
 
 `TestScratchTests` sweeps a sandbox to keep those rules honest. Set
 `VRCC_KEEP_TEST_SCRATCH=1` to skip the exit sweep and keep a failing run's files: the run's own

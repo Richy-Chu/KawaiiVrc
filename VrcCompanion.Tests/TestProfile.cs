@@ -91,6 +91,9 @@ internal static class TestProfile
     /// names its scratch is deleted. A per-run folder is only litter once its process is
     /// gone, which its pid decides, so a run this one did not start keeps its own, and
     /// <paramref name="own"/> stays until this run's process exits.
+    /// A live second run's loose files and cache folders look exactly like litter, so those
+    /// are only swept when no other run is running: sweeping them mid-run deletes files a
+    /// test is still using. Its per-run folder is judged by its pid either way.
     /// The folders are passed in rather than read from %TEMP% so a test can sweep a sandbox.
     /// </summary>
     internal static void ClearScratch(string temp, string own, int attempts)
@@ -105,9 +108,11 @@ internal static class TestProfile
             Path.Combine(temp, "VrcMediaTests")
         };
 
+        var totalSweep = !AnotherRunIsRunning(temp, own);
+
         foreach (var root in roots)
         {
-            foreach (var entry in Entries(root))
+            foreach (var entry in totalSweep ? Entries(root) : Array.Empty<string>())
             {
                 if (!Kept.Contains(Path.GetFileName(entry)))
                 {
@@ -130,12 +135,38 @@ internal static class TestProfile
                 continue;
             }
 
-            if (GuidInName.IsMatch(name) &&
+            if (totalSweep &&
+                GuidInName.IsMatch(name) &&
                 ScratchPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
             {
                 DeletePath(entry, attempts);
             }
         }
+    }
+
+    /// <summary>
+    /// Whether a run other than this one is still going. Its files cannot be told apart from
+    /// a crashed run's, so the sweep leaves them all to the next run that runs alone.
+    /// </summary>
+    private static bool AnotherRunIsRunning(string temp, string own)
+    {
+        foreach (var entry in Entries(temp))
+        {
+            var name = Path.GetFileName(entry);
+            if (!name.StartsWith(ScratchPrefix, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, Path.GetFileName(own), StringComparison.OrdinalIgnoreCase) ||
+                !int.TryParse(name.Substring(ScratchPrefix.Length), out var owner))
+            {
+                continue;
+            }
+
+            if (IsRunning(owner) && !IsAbandoned(entry))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
