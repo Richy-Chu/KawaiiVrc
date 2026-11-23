@@ -22,6 +22,15 @@ internal static class TestProfile
     private const string ScratchPrefix = "vrc-companion-tests-";
 
     /// <summary>
+    /// Set to 1 to keep this run's scratch when it exits, for a failure whose files need
+    /// looking at: the store folders, media caches and %TEMP% files stay where the tests left
+    /// them, and the run's own folder stays under %TEMP%\vrc-companion-tests-&lt;pid&gt;. The
+    /// next run sweeps at startup, so nothing is kept for good.
+    /// </summary>
+    private static readonly bool KeepScratch =
+        Environment.GetEnvironmentVariable("VRCC_KEEP_TEST_SCRATCH") == "1";
+
+    /// <summary>
     /// Under the scratch roots but not scratch: the log folder the guard's verdict is read
     /// from after the run, and the WebView2 profile.
     /// </summary>
@@ -63,11 +72,14 @@ internal static class TestProfile
 
         // A store still holding a handle must not turn the run's own litter into a leak:
         // retry briefly, then leave what is left to the next run's sweep.
-        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        if (!KeepScratch)
         {
-            DeletePath(directory);
-            ClearScratch(Path.GetTempPath(), directory, attempts: 5);
-        };
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                DeletePath(directory);
+                ClearScratch(Path.GetTempPath(), directory, attempts: 5);
+            };
+        }
 
         // Runs that were killed or crashed never reached their own cleanup.
         ClearScratch(Path.GetTempPath(), directory, attempts: 2);
