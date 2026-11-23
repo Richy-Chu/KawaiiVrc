@@ -155,10 +155,12 @@ internal static class TestProfile
 
     /// <summary>
     /// The files another process still holds open - what stops the folder from being deleted.
-    /// An exclusive open fails on such a file whether the other side reads it or has already
-    /// asked for its delete, and the size is read now, while it can still be read.
+    /// The probe asks for a share mode no other handle can hold, so it fails on a held file
+    /// whether the other side reads it or has already asked for its delete. It opens for read,
+    /// not write: a read-only file is not held, and asking to write it would fail on the
+    /// attribute alone and report it as one.
     /// </summary>
-    private static List<(string Name, long Size)> HeldFiles(string folder)
+    internal static List<(string Name, long Size)> HeldFiles(string folder)
     {
         var held = new List<(string Name, long Size)>();
         string[] files;
@@ -175,7 +177,7 @@ internal static class TestProfile
         {
             try
             {
-                using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
             }
             catch (FileNotFoundException)
             {
@@ -185,9 +187,16 @@ internal static class TestProfile
             {
                 continue;
             }
-            catch (Exception)
+            catch (IOException)
             {
+                // A sharing violation: another handle is on the file, which is what keeps the
+                // folder from being deleted.
                 held.Add((Path.GetRelativePath(folder, path), Size(path)));
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Not something this probe can attribute to a lock, so it names nothing: a
+                // deferral that cannot explain the folder fails the post-run check instead.
             }
         }
 

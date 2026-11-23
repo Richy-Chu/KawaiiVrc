@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Xunit;
 
 namespace VrcCompanion.Tests;
@@ -40,6 +41,53 @@ public sealed class TestScratchTests
         finally
         {
             File.Delete(file);
+        }
+    }
+
+    /// <summary>
+    /// The deferral note is only worth reading if the probe behind it names real locks: a file
+    /// another handle holds has to be named, and a free file - including one that is merely
+    /// read-only, which a write-open would fail on - must not be, or the note would claim a
+    /// Chromium deferral while a store file sat in the way.
+    /// </summary>
+    [Fact]
+    public void TheLockProbeNamesAHeldFileAndIgnoresAFreeOne()
+    {
+        var sandbox = Path.Combine(TestProfile.Scratch, "vrc-held-" + Guid.NewGuid().ToString("N"));
+        var held = Path.Combine(sandbox, "held.tmp");
+        var free = Path.Combine(sandbox, "free.tmp");
+        var readOnly = Path.Combine(sandbox, "readonly.tmp");
+
+        Directory.CreateDirectory(sandbox);
+        File.WriteAllBytes(held, Array.Empty<byte>());
+        File.WriteAllBytes(free, Array.Empty<byte>());
+        File.WriteAllBytes(readOnly, Array.Empty<byte>());
+        File.SetAttributes(readOnly, FileAttributes.ReadOnly);
+
+        try
+        {
+            using (new FileStream(held, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                var names = TestProfile.HeldFiles(sandbox).Select(file => file.Name).ToArray();
+
+                Assert.Contains("held.tmp", names);
+                Assert.DoesNotContain("free.tmp", names);
+                // Read-only is an attribute, not a lock: opening it is what the probe must try.
+                Assert.DoesNotContain("readonly.tmp", names);
+            }
+
+            using (new FileStream(readOnly, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var names = TestProfile.HeldFiles(sandbox).Select(file => file.Name).ToArray();
+
+                // Held is held, whatever the attributes say: a read probe still sees the lock.
+                Assert.Contains("readonly.tmp", names);
+            }
+        }
+        finally
+        {
+            File.SetAttributes(readOnly, FileAttributes.Normal);
+            Directory.Delete(sandbox, recursive: true);
         }
     }
 

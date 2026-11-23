@@ -62,15 +62,15 @@ can close the browser first: `CoreWebView2Environment` is one process-wide `Lazy
 shutdown, and WebView2 has no per-browser temp directory, so the files have to land in `%TMP%`.
 A file held that way cannot be deleted from inside the host at all, so the run does not try: it
 leaves the folder where it is and writes `cleanup-deferred.txt` inside it, naming its own pid,
-the moment it gave up and what was still held. The next run's sweep takes the folder once that
-pid is gone. The post-run check accepts a leftover folder only when that note names the
-folder's own dead pid and every file it names was a zero-byte `.tmp`, so a folder with no note
-- a run whose cleanup never ran - still fails the job, and so does one whose note names a
-locked store file. The WebView2 profile is the one thing that never lives in the run's folder:
-its browser holds it open for the host's whole life, so it gets
-`%TEMP%\vrc-companion-browser-<pid>` and the next run's sweep reclaims it once that pid is
-gone. A run therefore leaves nothing but a browser profile, and a deferred folder that says
-why.
+the moment it gave up and every file an exclusive open found still held - a read, so a
+read-only file is not mistaken for a lock. The next run's sweep takes the folder once that pid
+is gone. The post-run check accepts a leftover folder only when that note names the folder's
+own dead pid and every file it names was a zero-byte `.tmp`, so a folder with no note - a run
+whose cleanup never ran - still fails the job, and so does one whose note names a locked store
+file. The WebView2 profile is the one thing that never lives in the run's folder: its browser
+holds it open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and
+the next run's sweep reclaims it once that pid is gone. A run therefore leaves nothing but a
+browser profile, and a deferred folder that says why.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
