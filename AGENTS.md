@@ -86,19 +86,21 @@ folder, and that the sweep takes a finished run's folder while leaving a live on
 `lint-workflows.yml` runs on pushes and pull requests that touch `VrcCompanion.Tests/`,
 `build/` or `.github/workflows/`: `verifier` runs the release-verifier self-tests
 (`build/test-exit-codes.ps1`, `test-feed-parity.ps1`, `test-drift-report.ps1`,
-`test-assert-temp-clean.ps1`), `actionlint` lints the workflows, the pre-push hook and
+`test-assert-temp-clean.ps1`, `test-retry-failed-tests.ps1`), `actionlint` lints the workflows, the pre-push hook and
 `build/*.ps1` with PSScriptAnalyzer, and `profile-guard` on `windows-latest` runs
 `build/test-profile-guard-red.ps1`, which requires one filtered run to exit 1 on a fabricated
 baseline.
 
-`test-suite.yml` runs on every push and is the only job that runs all 860 tests. It finishes
-with `build/assert-temp-clean.ps1`, which fails the job when a `vrc-companion-tests-*` folder
-is still in `%TEMP%` without a `cleanup-deferred.txt` naming that folder's own pid - the only
-litter a run can now leave, and the only folder allowed to wait for the next run's sweep. The
-step runs even when the tests fail, so a red run still reports what it left. Run the script by
-hand after a local run to get the same verdict.
-fail, so a red run still reports what it left. Run the script by hand after a local run to get
-the same verdict.
+`test-suite.yml` runs on every push and is the only job that runs all 865 tests. When a test
+fails, `build/retry-failed-tests.ps1` re-runs only the failed tests once: it plans the filter
+from the run's `trx`, reports what passed on retry as a warning and in the step summary, and the
+job stays green - a flaky test must not redden an otherwise good commit, but it must not be
+hidden either. A test that fails twice fails the job. The job finishes with
+`build/assert-temp-clean.ps1`, which fails it when a `vrc-companion-tests-*` folder is still in
+`%TEMP%` without a `cleanup-deferred.txt` naming that folder's own pid - the only litter a run
+can leave, and the only folder allowed to wait for the next run's sweep. The step runs even when
+the tests fail, so a red run still reports what it left. Run the script by hand after a local run
+to get the same verdict.
 
 ## Commits
 

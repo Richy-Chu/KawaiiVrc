@@ -58,6 +58,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File build/test-assert-temp-clean.ps1
 
+      # The retry decides what a red suite means, so its plan is tested here without running dotnet.
+      - name: Test the retry plan
+        shell: pwsh
+        run: pwsh -NoProfile -File build/test-retry-failed-tests.ps1
+
   profile-guard:
     # The guard watches the Windows profile folder and drives a WPF test project, so this
     # cannot share the Ubuntu runner above. The probe proves the guard's verdict reaches a
