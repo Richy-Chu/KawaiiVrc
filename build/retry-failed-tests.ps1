@@ -85,7 +85,10 @@ foreach ($name in $failed) {
 }
 
 if ($env:GITHUB_STEP_SUMMARY) {
-    $summary = "### Passed on retry`n`n" + (($failed | ForEach-Object { "- ``$_``" }) -join "`n") + "`n"
+    # The job's own log scrolls away and the badge stays green, so the summary is where a flake is
+    # visible afterwards; both runs' trx files are attached to the job for the same reason.
+    $summary = "### Passed on retry`n`n" + (($failed | ForEach-Object { "- ``$_``" }) -join "`n") +
+        "`n`nThe first run's and the retry's ``.trx`` files are attached to this run as an artifact.`n"
     Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary
 }
 

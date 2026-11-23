@@ -43,6 +43,20 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File build/retry-failed-tests.ps1 -Results "$env:RUNNER_TEMP\results\first.trx"
 
+      # A flake that passed on retry leaves nothing in the job badge, so the job that saw it keeps
+      # both runs' results. This runs after a failed retry as well: the evidence matters most when
+      # the suite is red. A missing file only warns, since the retry step already fails that case.
+      - name: Attach the results of a retried run
+        if: steps.suite.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: retried-test-results
+          path: |
+            ${{ runner.temp }}/results/first.trx
+            ${{ runner.temp }}/results/retry.trx
+          if-no-files-found: warn
+          retention-days: 14
+
       # Runs even when the tests fail, so a red run still reports what it left behind. The job is
       # red from the retry step or this one; the first test run cannot redden it on its own.
       - name: Check the run left no scratch in %TEMP%
