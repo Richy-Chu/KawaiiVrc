@@ -202,6 +202,14 @@ foreach ($folder in $leftovers) {
             continue
         }
 
+        # Remove-Item can report no error and still leave the folder, and a take that quietly
+        # skipped would read exactly like one that worked: the folder has to be gone.
+        if (Test-Path -LiteralPath $folder.FullName) {
+            $failed += $folder.Name + " (its note is " + $deferral.StaleHours +
+                " hours old and it could not be taken: the folder is still there)"
+            continue
+        }
+
         Write-Host ("Took stale deferral " + $folder.Name + ": its note is " + $deferral.StaleHours +
             " hours old, so the sweep that should have taken it never ran.")
         continue

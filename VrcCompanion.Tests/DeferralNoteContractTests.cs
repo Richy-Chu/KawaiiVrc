@@ -232,6 +232,44 @@ public sealed class DeferralNoteContractTests
     }
 
     /// <summary>
+    /// A stale folder the check decides to take but cannot is still a failure: the browser that
+    /// held it may outlive the note, and a take that quietly skipped would read exactly like one
+    /// that worked. The lock here is genuine - the test's own handle - so the delete has to fail.
+    /// </summary>
+    [Fact]
+    public void AStaleNoteTheCheckCannotTakeFailsInsteadOfPassing()
+    {
+        var sandbox = NewSandbox(out var folder);
+        var held = Path.Combine(folder, "0b0b0b0b-1111-2222-3333-444444444444.tmp");
+        File.WriteAllBytes(held, Array.Empty<byte>());
+
+        try
+        {
+            using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                // A sound note: the only file it names is an empty .tmp, and the only thing wrong
+                // with the folder is its age, so the check will try to take it.
+                WriteNote(folder, DateTime.UtcNow.AddHours(-4));
+
+                var result = RunCheck(sandbox);
+
+                Assert.True(
+                    result.ExitCode == 1,
+                    "The check passed a stale folder it could not delete: " + result.Output);
+                Assert.Contains("could not be taken", result.Output, StringComparison.Ordinal);
+                Assert.DoesNotContain("Took stale deferral", result.Output, StringComparison.Ordinal);
+                Assert.True(
+                    Directory.Exists(folder),
+                    "The folder the check could not take is the one it has to report.");
+            }
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// A sandbox laid out the way the check expects: one run folder named for a dead pid, directly
     /// under the temp path the check is pointed at.
     /// </summary>
