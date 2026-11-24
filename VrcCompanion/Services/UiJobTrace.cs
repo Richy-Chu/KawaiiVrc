@@ -12,8 +12,9 @@ namespace VrcCompanion.Services;
 /// </summary>
 /// <remarks>
 /// A job starts and finishes on whichever thread its awaits resume on, so the trace is guarded by a
-/// lock rather than dispatcher affinity. Nothing is written unless a stall is reported: the trace
-/// holds only the jobs still running plus the last few that finished.
+/// lock rather than dispatcher affinity. The trace holds only the jobs still running plus the last
+/// few that finished, and writes nothing itself: a stall line names the jobs that overlapped the
+/// gap, and a slow job reports its own length through <see cref="OnSlowJob"/>.
 /// </remarks>
 internal sealed class UiJobTrace
 {
@@ -27,8 +28,18 @@ internal sealed class UiJobTrace
         Comparer<(string Name, long Overlap)>.Create(
             (left, right) => right.Overlap.CompareTo(left.Overlap));
 
+    /// <summary>A job this long is one a person can feel; the app logs it by name and length.</summary>
+    internal const long SlowJobMilliseconds = 200;
+
     /// <summary>The process-wide trace the shipped app records into.</summary>
     internal static UiJobTrace Shared { get; } = new();
+
+    /// <summary>
+    /// Called with a job's name and length once it finishes, if it took at least
+    /// <see cref="SlowJobMilliseconds"/>. A stall line says which jobs overlapped the gap; this
+    /// says which of them was actually doing the work. Runs on whichever thread ended the job.
+    /// </summary>
+    internal Action<string, long>? OnSlowJob { get; set; }
 
     private readonly object _sync = new();
     private readonly List<Entry> _active = new();
@@ -103,7 +114,8 @@ internal sealed class UiJobTrace
 
     private void End(Entry entry)
     {
-        entry.Stop(Stopwatch.GetTimestamp());
+        var now = Stopwatch.GetTimestamp();
+        entry.Stop(now);
         lock (_sync)
         {
             if (_active.Remove(entry))
@@ -111,6 +123,17 @@ internal sealed class UiJobTrace
                 _recent[_recentNext] = entry;
                 _recentNext = (_recentNext + 1) % RecentCapacity;
             }
+        }
+
+        if (OnSlowJob is not { } report)
+        {
+            return;
+        }
+
+        var milliseconds = (now - entry.StartedTicks) * 1000L / Stopwatch.Frequency;
+        if (milliseconds >= SlowJobMilliseconds)
+        {
+            report(entry.Name, milliseconds);
         }
     }
 

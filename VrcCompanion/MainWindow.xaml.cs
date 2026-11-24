@@ -98,6 +98,11 @@ public partial class MainWindow : Window
         // free: the gap between ticks is exactly the time the UI could not
         // respond. Started before the window shows so startup freezes are
         // recorded too, and quiet while minimised where none of it is visible.
+        // A job that takes long enough to feel is worth a line of its own: the stall line names
+        // what was in flight, and this names which of them was doing the work.
+        UiJobTrace.Shared.OnSlowJob = (name, milliseconds) =>
+            LifecycleLog.Write($"ui job {name} {milliseconds}ms");
+
         _stallMonitor = new UiStallMonitor(
             stall =>
             {
@@ -888,28 +893,26 @@ public partial class MainWindow : Window
         _lastSettleAt = DateTimeOffset.UtcNow;
         _ = Task.Run(async () =>
         {
-            // The collect and the trim below both touch the whole process, so a stall they cause
-            // has to name them instead of looking like an unexplained freeze.
+            // The collect below touches the whole process, so a stall it caused has to name it
+            // instead of looking like an unexplained freeze.
             using var job = UiJobTrace.Shared.Begin("settle");
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-                // This ran a blocking compacting collection, which stops every thread in the
-                // process for the whole sweep: on a few-hundred-megabyte heap that is a stall
-                // of seconds, whichever thread asked for it. The background trim already made
-                // this mistake and its comment says the same thing, so the collect only hints
-                // here too and the working-set trim below is what gives memory back to Windows.
+                // Only hint, never sweep: a blocking collect stops every thread in the process
+                // for the whole pass, which on a few-hundred-megabyte heap is a stall of seconds.
                 GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
-                GC.WaitForPendingFinalizers();
                 // The evicted page's images are only reachable through the
                 // decode cache now; dropping it costs a re-decode from the disk
                 // cache and frees up to 24 MB.
                 ImageLoader.Shared.TrimMemory();
-                using (var process = Process.GetCurrentProcess())
-                {
-                    EmptyWorkingSet(process.Handle);
-                }
 
+                // The working set used to be emptied here, and that was the freeze: private
+                // memory sits around 500 MB, so handing every page back to the pagefile left a
+                // window that faulted all of it back in on the next paint - seconds of a dead UI
+                // (the stall log showed every job "across" a 5-second gap, which is a whole
+                // process that stopped, not one job). Windows trims idle pages itself; the image
+                // cache is the part worth dropping, and that is above.
                 LogMemory("after-evict");
             }
             catch (Exception ex)
@@ -1095,15 +1098,12 @@ public partial class MainWindow : Window
         {
             try
             {
-                // A blocking full collect freezes every thread in the process
-                // for the length of the sweep, which read as a UI stall every
-                // time the trim ran. The working-set trim below is what gives
-                // the memory back to Windows, so the collect only needs to
-                // hint.
+                // Only hint: a blocking collect freezes every thread in the process for the
+                // length of the sweep. The decoded-image cache has already been dropped by the
+                // caller, and the working set is left to Windows - emptying it here is what made
+                // the window dead for seconds after every trim, faulting half a gigabyte of pages
+                // back in the moment anything touched it.
                 GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
-                GC.WaitForPendingFinalizers();
-                using var process = Process.GetCurrentProcess();
-                EmptyWorkingSet(process.Handle);
             }
             catch (Exception ex)
             {
@@ -1160,6 +1160,4 @@ public partial class MainWindow : Window
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
-    [DllImport("psapi.dll")]
-    private static extern bool EmptyWorkingSet(IntPtr hProcess);
 }
