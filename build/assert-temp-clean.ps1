@@ -24,10 +24,16 @@
 # cannot be an age at all, so the note is due now and the check takes it - once every other rule
 # passes, because a wrong stamp is not a leak.
 #
+# A pid in a folder's name accounts for that folder only while its process runs and the folder has
+# been touched since: Windows hands a finished run's pid to an unrelated process, which would
+# otherwise keep a finished run's litter for as long as it runs. Past an hour untouched the folder
+# is a finished run's and is judged by its note like any other - the same hour the sweep retires it
+# by, because a check that failed such a folder would redden a run the next sweep takes.
+#
 # The WebView2 profile is the separate exception: its browser holds it open until the host exits,
 # so it lives in vrc-companion-browser-<pid> and the next run's sweep reclaims it. It is judged
-# all the same - a name this check cannot read is a folder no sweep will ever take, and a pid
-# still running means it is not a finished run's folder.
+# all the same: a name this check cannot read is a folder no sweep will ever take, and a pid that
+# is still running and has touched it inside the hour is not a finished run's folder.
 #
 # The path itself is judged before anything inside it: a -TempPath that does not exist, names a
 # file, or cannot be listed is not a folder that held nothing, and "No run folder left" is the one
@@ -53,6 +59,12 @@ $deferralNote = "cleanup-deferred.txt"
 
 # How long a deferral may stand before this check takes it itself.
 $staleAfterHours = 2
+
+# How long a folder may go untouched before the pid in its name stops accounting for it. Windows
+# hands a finished run's pid to an unrelated process, and TestProfile.SweepFinishedRuns retires a
+# folder on exactly this hour; reading it any other way here would judge a folder differently from
+# the sweep that is meant to take it.
+$abandonedAfterHours = 1
 
 # How far ahead of the clock a note may be dated and still be read as a recent deferral: ordinary
 # skew is seconds, so a note within this ages into the past on its own. Past it the age counts up
@@ -233,6 +245,16 @@ function Get-FolderAge([System.IO.DirectoryInfo] $folder) {
     return ($clock - $folder.LastWriteTimeUtc).TotalHours
 }
 
+# Whether the pid in a folder's name still accounts for that folder: gone, running, or abandoned -
+# a live process that has not touched the folder inside the hour. A folder a stranger has inherited
+# the pid of is a finished run's litter, and the sweep deletes it after the same hour, so this check
+# judges it by its note instead of failing it for a process that is not its run.
+function Get-OwnerState([int] $owner, [System.IO.DirectoryInfo] $folder) {
+    if (Test-OwnerIsGone $owner) { return "gone" }
+    if ((Get-FolderAge $folder) -gt $abandonedAfterHours) { return "abandoned" }
+    return "running"
+}
+
 function Get-HoursText([double] $hours) {
     return $hours.ToString("0.#", [System.Globalization.CultureInfo]::InvariantCulture) + " h"
 }
@@ -250,11 +272,12 @@ function Get-TableCell([string] $text) {
 # The rule in one place: a path this check cannot judge and a folder it refuses are both red on
 # the run page, and both have to say what a folder was allowed to be.
 $rule = "A run must delete its own folders. A run folder may stand only with a " + $deferralNote +
-    " that names its own dead pid, holds nothing but empty .tmp files, and the folder holds" +
+    " that names its own pid, holds nothing but empty .tmp files, and the folder holds" +
     " nothing the note does not name - and this check takes one whose note is older than " +
     $staleAfterHours + " hours or dated further ahead than clock skew explains, since neither" +
-    " kind ever ages into a sweep. A browser profile may stand only while its pid is gone, so" +
-    " that the next run's sweep takes it."
+    " kind ever ages into a sweep. A pid only accounts for a folder it has touched inside the" +
+    " hour, since Windows hands a finished run's pid to another process, and a browser profile" +
+    " may stand only while no pid accounts for it, so that the next run's sweep takes it."
 
 # A path this check cannot list has not been seen to hold nothing, and a -TempPath that is missing,
 # names a file, or may not be read would otherwise pass as "No run folder left" - the one verdict
@@ -313,7 +336,8 @@ foreach ($folder in $leftovers) {
         continue
     }
 
-    if (-not (Test-OwnerIsGone $owner)) {
+    $state = Get-OwnerState $owner $folder
+    if ($state -eq "running") {
         $failed += Get-ScratchFailure $folder.Name (Get-FolderAge $folder) ("process " + $owner + " is still running")
         continue
     }
@@ -362,8 +386,14 @@ foreach ($folder in $leftovers) {
     }
 
     $waiting++
-    Write-Host ("Run folder " + $folder.Name + " waits for the next run's sweep: it still held " +
-        $deferral.Held.Count + " empty .tmp file(s), " + (($deferral.Held -replace '\s+-?\d+$', '') -join ', '))
+    $waits = "Run folder " + $folder.Name + " waits for the next run's sweep: it still held " +
+        $deferral.Held.Count + " empty .tmp file(s), " + (($deferral.Held -replace '\s+-?\d+$', '') -join ', ')
+    if ($state -eq "abandoned") {
+        $waits += " - pid " + $owner + " is alive but has not touched the folder for " +
+            (Get-HoursText (Get-FolderAge $folder)) + ", so it is not the run that left it"
+    }
+
+    Write-Host $waits
 }
 
 # The browser profile outlives its host by design, so it is not litter while its pid is gone: the
@@ -378,12 +408,17 @@ foreach ($folder in Get-ScratchLeftover $browserFolder) {
         continue
     }
 
-    if (-not (Test-OwnerIsGone $owner)) {
+    $state = Get-OwnerState $owner $folder
+    if ($state -eq "running") {
         $failed += Get-ScratchFailure $folder.Name (Get-FolderAge $folder) ("process " + $owner + " is still running")
         continue
     }
 
-    $acceptedProfiles += $folder
+    $acceptedProfiles += [pscustomobject]@{
+        Folder = $folder
+        Owner = $owner
+        Abandoned = ($state -eq "abandoned")
+    }
 }
 
 if ($failed.Count -gt 0) {
@@ -421,8 +456,17 @@ if ($failed.Count -gt 0) {
     exit 1
 }
 
-$acceptedProfiles | ForEach-Object {
-    Write-Host ("Browser profile " + $_.Name + " stays until the next run sweeps it: its browser holds it open.")
+foreach ($kept in $acceptedProfiles) {
+    $line = "Browser profile " + $kept.Folder.Name + " stays until the next run sweeps it: "
+    if ($kept.Abandoned) {
+        $line += "pid " + $kept.Owner + " is alive but has not touched it for " +
+            (Get-HoursText (Get-FolderAge $kept.Folder)) + ", so the browser that held it is gone."
+    }
+    else {
+        $line += "its browser holds it open."
+    }
+
+    Write-Host $line
 }
 
 if ($waiting -eq 0) {

@@ -9,6 +9,10 @@
 # decides one. Browser profile folders get the same treatment: a dead pid's profile is allowed to
 # wait for the sweep, a name the sweep cannot read and a live pid's folder are not.
 #
+# The hour a live pid accounts for a folder is planted on both sides, because the check and the
+# sweep read one rule: a folder untouched exactly on the hour is still its run's, and one a second
+# past it is judged by its note as a dead pid's folder is - the answer the sweep deletes it on.
+#
 # The two-hour bound is not planted here. Deciding it needs one clock to reach both the note's
 # writer and this reader, and the writer is C#; DeferralNoteContractTests hands that one clock to
 # both, so the bound is decided there and these cases stay hours away from it.
@@ -46,21 +50,35 @@ $onTheGrace = $clock.AddMinutes(5).ToString("O")
 $pastTheGrace = $clock.AddMinutes(5).AddSeconds(1).ToString("O")
 $farAhead = $clock.AddHours(6).ToString("O")
 
+# The age a live pid stops accounting for its folder, stamped on the folder itself because that is
+# the last write both this check and the sweep's hour read. Both sides of the hour are planted: the
+# edge belongs to whoever reads it, and the two sides have to retire a reused pid at one moment.
+$insideTheHour = $clock.AddHours(-1)
+$pastTheHour = $clock.AddHours(-1).AddSeconds(-1)
+
 function Get-Sandbox {
     $sandbox = Join-Path $root ([guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
     return $sandbox
 }
 
-function Write-RunFile([string] $sandbox, [string] $name, [int] $bytes) {
-    $path = Join-Path (Join-Path $sandbox ("vrc-companion-tests-" + $deadPid)) $name
+# The owner is a pid no process can hold for the cases about a finished run, and this shell's own
+# pid for the cases that need a process which is still running.
+function Write-RunFile([string] $sandbox, [string] $name, [int] $bytes, [int] $owner = $deadPid) {
+    $path = Join-Path (Join-Path $sandbox ("vrc-companion-tests-" + $owner)) $name
     New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
     [System.IO.File]::WriteAllBytes($path, (New-Object byte[] $bytes))
 }
 
-function Write-RunNote([string] $sandbox, [string[]] $lines) {
-    $note = Join-Path (Join-Path $sandbox ("vrc-companion-tests-" + $deadPid)) "cleanup-deferred.txt"
+function Write-RunNote([string] $sandbox, [string[]] $lines, [int] $owner = $deadPid) {
+    $note = Join-Path (Join-Path $sandbox ("vrc-companion-tests-" + $owner)) "cleanup-deferred.txt"
     [System.IO.File]::WriteAllLines($note, $lines)
+}
+
+function Write-FolderTouched([string] $sandbox, [string] $name, [datetime] $when) {
+    # After everything inside is written: a file written into a folder touches it, so a stamp
+    # planted first would not be the age the check reads.
+    [System.IO.Directory]::SetLastWriteTimeUtc((Join-Path $sandbox $name), $when)
 }
 
 function ProfileFolder([string] $sandbox, [string] $owner) {
@@ -336,6 +354,60 @@ $checks = @(
         Plant = {
             param($sandbox)
             ProfileFolder $sandbox $PID | Out-Null
+        }
+    },
+    @{
+        # The edge of the hour, from the side that still belongs to a run: exactly on it the pid
+        # accounts for the folder, which is the edge the sweep's own cases decide too. A note this
+        # sound would otherwise pass, so only the hour can be why it fails.
+        Name = "a run folder whose pid is alive and untouched exactly on the hour fails"
+        Expected = 1
+        Marker = "::error title=Scratch left behind::vrc-companion-tests-$PID (1 h old: process $PID is still running)"
+        Kept = "vrc-companion-tests-$PID"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0 $PID
+            Write-RunNote $sandbox @(
+                "host pid: $PID",
+                "utc: $now",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0") $PID
+            Write-FolderTouched $sandbox ("vrc-companion-tests-" + $PID) $insideTheHour
+        }
+    },
+    @{
+        # The other side: a folder no process has touched for over an hour is a finished run's, even
+        # though something still holds its pid, and the sweep deletes it on that same hour. A check
+        # with no hour failed this folder for a process that is not its run, and would have reddened
+        # a run the next sweep clears - so it is judged by its note, which is sound and recent.
+        Name = "a run folder whose pid is alive but untouched past the hour is judged by its note"
+        Expected = 0
+        Marker = "Run folder vrc-companion-tests-$PID waits for the next run's sweep: it still held 1 empty .tmp file(s), 11111111-1111-1111-1111-111111111111.tmp - pid $PID is alive but has not touched the folder for 1 h, so it is not the run that left it"
+        Kept = "vrc-companion-tests-$PID"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0 $PID
+            Write-RunNote $sandbox @(
+                "host pid: $PID",
+                "utc: $now",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0") $PID
+            Write-FolderTouched $sandbox ("vrc-companion-tests-" + $PID) $pastTheHour
+        }
+    },
+    @{
+        # The sweep judges both prefixes with the one hour, so a profile whose pid a stranger
+        # inherited is equally due: this check has to let the next sweep take it rather than fail
+        # the job for a process that is not the browser.
+        Name = "a browser profile whose pid is alive but untouched past the hour waits for the sweep"
+        Expected = 0
+        Marker = "Browser profile vrc-companion-browser-$PID stays until the next run sweeps it: pid $PID is alive but has not touched it for 1 h, so the browser that held it is gone."
+        Kept = "vrc-companion-browser-$PID"
+        At = $now
+        Plant = {
+            param($sandbox)
+            ProfileFolder $sandbox $PID | Out-Null
+            Write-FolderTouched $sandbox ("vrc-companion-browser-" + $PID) $pastTheHour
         }
     },
     @{

@@ -49,7 +49,9 @@ run's folder, with no call site changed. Never build a test path from the system
 Because everything is in one folder, the sweep has nothing to weigh: it deletes folders whose
 process is gone (including a one-hour rule for pids Windows has since reused) and leaves
 everything else alone. `SweepFinishedRuns` takes the moment it judges against, so that hour is
-decided by cases a minute either side of it, and on it, rather than by how fast the runner is. Two suites at once write in different folders and never touch each
+decided by cases a minute either side of it, and on it, rather than by how fast the runner is. The
+post-run check reads that same hour, so neither calls a folder litter the other would take, and
+neither fails one for a process that is not its run. Two suites at once write in different folders and never touch each
 other. The run deletes its own folder at the end of its last collection (`ScratchCleanup`),
 not at process exit: a test host that has reported every result is not obliged to run its exit
 handlers, and one CI run left its whole scratch behind that way. The exit handler stays only as
@@ -91,13 +93,19 @@ such cap. A passing run writes neither, and the planted cases assert both channe
 check cannot list fails the job in its own right: a missing `%TEMP%`, or a file where the folder
 should be, is not an empty folder, so it is reported as `Scratch could not be checked` - one
 annotation and one summary row naming the path and why nothing was judged - instead of passing.
+A pid accounts for a folder only while its process runs and the folder has been touched inside the
+hour - the hour the sweep retires one by - so a folder nothing has touched for that long is a
+finished run's however live the pid is, and is judged by its note exactly as a dead pid's folder
+is. Without that hour the check failed such a folder for a process that is not its run, and kept
+failing it while the sweep would have taken it.
 
 The WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
 open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next
 run's sweep reclaims it once that pid is gone. The check judges those folders rather than listing
-them: a profile may wait for the sweep only while its name parses to a pid, and that pid is no
-longer running. A name no sweep can read, or a pid still alive when the run is over, fails the
-job. A run therefore leaves nothing but a browser profile and a deferred folder that says why,
+them: a profile may wait for the sweep only while its name parses to a pid which no process holds,
+or which has not touched the folder for the sweep's hour. A name no sweep can read, or a pid still
+alive and still touching the folder when the run is over, fails the job.
+A run therefore leaves nothing but a browser profile and a deferred folder that says why,
 and both are held to the rules above.
 
 `DeferralNoteContractTests` exercises the writer and the reader as a pair by running the real
@@ -112,14 +120,18 @@ while the writer stayed free to disagree with it. It does plant the
 skew grace itself - a note exactly five minutes ahead waits for the sweep, one a second past it
 is taken, a note six hours ahead is taken and one six hours ahead that names a locked store file
 is refused and kept - because that rule lives only in the reader, and each case pins the same
-clock on the check.
+clock on the check. The hour a live pid accounts for a folder is planted on both sides instead,
+because both read it: `TestScratchTests` decides the sweep's edge with a handed-in clock, and the
+harness plants the check's on the same edge, one case a second inside it and one a second past,
+for a run folder and for a browser profile.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
 process.
 
 `TestScratchTests` keeps both rules honest: that `Path.GetTempPath()` resolves inside the run's
-folder, and that the sweep takes a finished run's folder while leaving a live one alone. Set
+folder, and that the sweep takes a finished run's folder while leaving a live one alone until it
+has gone untouched for the hour, which is how a reused pid stops keeping litter. Set
 `VRCC_KEEP_TEST_SCRATCH=1` to keep a failing run's files: the whole folder stays at
 `%TEMP%\vrc-companion-tests-<pid>`, and the next run sweeps it at startup.
 
