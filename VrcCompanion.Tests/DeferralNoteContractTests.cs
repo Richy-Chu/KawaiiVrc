@@ -194,6 +194,44 @@ public sealed class DeferralNoteContractTests
     }
 
     /// <summary>
+    /// The other half of the stale rule: age is the one thing forgiven. A note that also names a
+    /// locked store file is the leak the check exists to catch, so the age does not buy it a
+    /// delete - the check refuses it and the folder stays where it is. Taking that folder would
+    /// destroy the evidence of what the suite got wrong, which is what the note is for.
+    /// </summary>
+    [Fact]
+    public void AStaleNoteNamingALockedStoreFileIsRejectedAndTheFolderStands()
+    {
+        var sandbox = NewSandbox(out var folder);
+        var held = Path.Combine(folder, "settings.json");
+        File.WriteAllBytes(held, new byte[412]);
+
+        try
+        {
+            using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                WriteNote(folder, DateTime.UtcNow.AddHours(-4));
+
+                var result = RunCheck(sandbox);
+
+                Assert.True(
+                    result.ExitCode == 1,
+                    "The check passed a stale note that named a locked store file: " + result.Output);
+                Assert.Contains("not a .tmp", result.Output, StringComparison.Ordinal);
+                Assert.Contains("settings.json", result.Output, StringComparison.Ordinal);
+                Assert.DoesNotContain("Took stale deferral", result.Output, StringComparison.Ordinal);
+                Assert.True(
+                    Directory.Exists(folder),
+                    "Refusing a stale note has to keep the folder: that folder is the evidence.");
+            }
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// A sandbox laid out the way the check expects: one run folder named for a dead pid, directly
     /// under the temp path the check is pointed at.
     /// </summary>
@@ -205,7 +243,8 @@ public sealed class DeferralNoteContractTests
         return sandbox;
     }
 
-    private static void WriteNote(string folder)
+    /// <param name="when">The moment the note records; the default is now, a real deferral's age.</param>
+    private static void WriteNote(string folder, DateTime? when = null)
     {
         var held = TestProfile.HeldFiles(folder, out var unlisted);
 
@@ -213,7 +252,7 @@ public sealed class DeferralNoteContractTests
         Assert.NotEmpty(held);
         Assert.Null(unlisted);
 
-        TestProfile.RecordDeferral(folder, held, unlisted);
+        TestProfile.RecordDeferral(folder, held, unlisted, when);
 
         Assert.True(
             File.Exists(Path.Combine(folder, TestProfile.DeferralRecord)),

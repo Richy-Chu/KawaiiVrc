@@ -86,8 +86,10 @@ job. A run therefore leaves nothing but a browser profile and a deferred folder 
 and both are held to the rules above.
 
 `DeferralNoteContractTests` exercises the writer and the reader as a pair by running the real
-script over notes this project wrote, so CI decides the accepting path too. It plants the take
-by asking `RecordDeferral` for a note dated four hours back: a real note, with a stale clock.
+script over notes this project wrote, so CI decides the accepting path too. It plants both halves
+of the stale rule by asking `RecordDeferral` for a note dated four hours back: over files nobody
+holds any more, which the check must take, and over a locked store file, which it must refuse and
+leave standing.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
