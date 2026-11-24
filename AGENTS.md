@@ -57,6 +57,18 @@ the saved session for both - and they would both write chatbox input and the sam
 `SingleInstanceTests` drives the claim, the hand-off, a hand-off nobody answers and the refusal
 to let a second copy serve the pipe, each with its own mutex and pipe name.
 
+## When something throws
+
+A UI-thread failure is logged and the window stays up, because a layout or render error can fire
+on every measure pass and one dialog per pass would bury the app. `CrashLog` writes one entry per
+kind of failure per run - type, throwing method and message - and keeps the file to its cap,
+rotating the previous generation to `crash.log.1`, so a failure that repeats costs one line
+rather than one per pass and the log cannot fill the disk. The same log takes an unobserved task
+failure (`TaskScheduler.UnobservedTaskException`), which would otherwise stay silent until exit.
+A command's failure is not a crash and must not reach the dispatcher: `AsyncRelayCommand` reports
+it to the lifecycle log, or to the `onFailure` a test hands it, and the button comes back either
+way (`AsyncCommandTests`).
+
 ## The scratch sweep
 
 `TestProfile` (`VrcCompanion.Tests/TestProfile.cs`) gives each run a folder of its own and

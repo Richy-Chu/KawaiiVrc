@@ -1,5 +1,5 @@
 using System;
-using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 using VrcCompanion.Services;
@@ -13,6 +13,9 @@ public partial class App : Application
     private bool _claimedHere;
 
     private static readonly string CrashLogPath = UserDataPaths.Combine("crash.log");
+
+    /// <summary>One entry per kind of failure per run; see <see cref="CrashLog"/>.</summary>
+    private readonly CrashLog _crashLog = new(CrashLogPath);
 
     /// <summary>
     /// The launch's single-instance claim. <see cref="Program.Main"/> makes it before any WPF
@@ -39,6 +42,7 @@ public partial class App : Application
 
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
         SessionEnding += (_, args) => LifecycleLog.Write($"session ending reason={args.ReasonSessionEnding}");
         LifecycleLog.Write("startup");
         base.OnStartup(e);
@@ -81,12 +85,13 @@ public partial class App : Application
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        LogCrash(e.Exception);
+        // One entry per kind of failure, however many measure passes repeat it.
+        _crashLog.Write(e.Exception);
         e.Handled = true;
 
         // A layout/render error can fire on every measure pass. Showing one
         // dialog per retry buries the app in duplicate windows, so report the
-        // first failure and keep subsequent details in the crash log.
+        // first failure and keep every later one in the crash log.
         if (_errorDialogShown)
         {
             return;
@@ -95,7 +100,8 @@ public partial class App : Application
         _errorDialogShown = true;
         MessageBox.Show(
             "KawaiiVrc hit an unexpected error and may not work correctly.\n\n" +
-            $"Details were written to:\n{CrashLogPath}",
+            Describe(e.Exception) +
+            $"\n\nDetails were written to:\n{CrashLogPath}",
             "KawaiiVrc",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
@@ -105,22 +111,25 @@ public partial class App : Application
     {
         if (e.ExceptionObject is Exception ex)
         {
-            LogCrash(ex);
+            _crashLog.Write(ex);
         }
     }
 
-    private static void LogCrash(Exception exception)
+    private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
     {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(CrashLogPath)!);
-            File.AppendAllText(
-                CrashLogPath,
-                $"[{DateTimeOffset.Now:O}]{Environment.NewLine}{exception}{Environment.NewLine}{Environment.NewLine}");
-        }
-        catch
-        {
-            // Never let crash logging take down the app.
-        }
+        // A task nobody awaited failed. Without this it stays silent until the process ends,
+        // which is how a broken background feature can look like one that simply stopped.
+        _crashLog.Write(e.Exception);
+        e.SetObserved();
+    }
+
+    /// <summary>
+    /// Enough of the failure for the dialog to be worth reading: the type names what broke, and
+    /// the message is usually the one thing the user could report.
+    /// </summary>
+    private static string Describe(Exception exception)
+    {
+        var text = exception.GetType().Name + ": " + exception.Message;
+        return text.Length > 300 ? text.Substring(0, 300) + "..." : text;
     }
 }

@@ -133,7 +133,16 @@ public partial class MainWindow : Window
 
         // Background refresh only pulls what changes often; the full friend
         // download stays on startup and on the manual Refresh button.
-        await _viewModel.RefreshInBackgroundAsync();
+        try
+        {
+            await _viewModel.RefreshInBackgroundAsync();
+        }
+        catch (Exception ex)
+        {
+            // Nobody asked for this tick and the next one is five minutes away, so a failed
+            // refresh is logged rather than reported: the manual Refresh shows its own errors.
+            LifecycleLog.Write($"refresh: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     /// <summary>
