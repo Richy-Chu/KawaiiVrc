@@ -1,5 +1,6 @@
 using System;
 using Velopack;
+using VrcCompanion.Services;
 
 namespace VrcCompanion;
 
@@ -19,6 +20,19 @@ public static class Program
         Startup.Restart();
         VelopackApp.Build().Run();
 
+        // One copy per Windows user, claimed before any WPF work. Two copies share the one saved
+        // VRChat session and every request rotates its cookie, so the copy that loses the race
+        // signs both out; they also both write chatbox input and the same settings file. A later
+        // launch asks the running window to come forward and leaves without building either.
+        using var instance = SingleInstance.Claim();
+        if (!instance.IsOwner)
+        {
+            var answered = instance.HandOff();
+            LifecycleLog.Write($"startup: second launch left (answered={answered})");
+            return;
+        }
+
+        App.LaunchGate = instance;
         var app = new App();
         app.InitializeComponent();
         app.Run();

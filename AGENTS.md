@@ -44,6 +44,19 @@ A run that leaves no baseline at the path MSBuild gave it fails the run
 it the replay pass would skip and the note would never print. Listing tests is the one run
 exempt, since it never starts the guard.
 
+## One copy at a time
+
+`SingleInstance` keeps one KawaiiVrc per signed-in Windows user. `Program.Main` claims a `Local\`
+named mutex before any WPF work; a launch that finds it taken asks the running copy to come
+forward and returns without building a window or a view model, which is why `App.xaml` names no
+`StartupUri` and the one window is made in `App.OnStartup`, after the claim is settled. The
+running copy answers later launches on a named pipe and calls `MainWindow.BringToFront` on its
+dispatcher. Two copies must never run: they share the one saved VRChat session and VRChat
+rotates the auth cookie on nearly every request, so the copy that loses the race 401s and clears
+the saved session for both - and they would both write chatbox input and the same settings file.
+`SingleInstanceTests` drives the claim, the hand-off, a hand-off nobody answers and the refusal
+to let a second copy serve the pipe, each with its own mutex and pipe name.
+
 ## The scratch sweep
 
 `TestProfile` (`VrcCompanion.Tests/TestProfile.cs`) gives each run a folder of its own and

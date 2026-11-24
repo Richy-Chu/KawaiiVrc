@@ -69,6 +69,34 @@ public class MainWindowLifetimeTests
         });
     }
 
+    /// <summary>
+    /// A second launch wakes this window: minimized is the state a user leaves it in, and
+    /// activating a minimized window changes nothing, so the raise has to restore it first.
+    /// </summary>
+    [Fact]
+    public void ASecondLaunchRestoresTheMinimizedWindow()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel();
+            TestHooks.SetLoggedIn(shell);
+            var window = CreateWindow(shell);
+
+            window.Show();
+            Pump(window);
+            window.WindowState = WindowState.Minimized;
+            Pump(window);
+
+            window.BringToFront();
+            Pump(window);
+
+            Assert.Equal(WindowState.Normal, window.WindowState);
+
+            window.Close();
+            Pump(window);
+        });
+    }
+
     [Fact]
     public void AClosedWindowCannotTrimTheSharedImageCache()
     {

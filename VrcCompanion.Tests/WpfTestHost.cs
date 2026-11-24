@@ -1,5 +1,4 @@
 using System;
-using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -93,18 +92,9 @@ internal static class WpfTestHost
                     };
                     application.InitializeComponent();
 
-                    // App.xaml's StartupUri makes WPF open the shipped main window
-                    // on the first Show(). Tests build and close their own windows,
-                    // so that shell would stay open for the whole run and, once
-                    // another window took focus, keep a background trim timer armed
-                    // that drops the shared image cache mid-test. StartupUri rejects
-                    // null, so clear the field it reads instead.
-                    var startupUri = typeof(Application).GetField(
-                        "_startupUri",
-                        BindingFlags.Instance | BindingFlags.NonPublic)
-                        ?? throw new InvalidOperationException(
-                            "WPF no longer stores StartupUri in Application._startupUri.");
-                    startupUri.SetValue(application, null);
+                    // The app creates its one window from OnStartup rather than from a
+                    // StartupUri, and a test host never runs OnStartup, so nothing opens a
+                    // shell window here: tests build and close their own.
                     SynchronizationContext.SetSynchronizationContext(
                         new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
                     _dispatcher = Dispatcher.CurrentDispatcher;

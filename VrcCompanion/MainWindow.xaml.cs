@@ -136,6 +136,33 @@ public partial class MainWindow : Window
         await _viewModel.RefreshInBackgroundAsync();
     }
 
+    /// <summary>
+    /// Brings the window back after a second launch handed over: restore it first, because
+    /// activating a minimized window changes nothing, then raise it above whatever had focus.
+    /// </summary>
+    internal void BringToFront()
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        Show();
+        Activate();
+
+        // Windows can refuse the foreground to a process the user did not just start, and
+        // Activate alone then only flashes the taskbar. The momentary topmost raise is what
+        // actually brings the window up, and clearing the flag again keeps it from staying above
+        // other windows.
+        Topmost = true;
+        Topmost = false;
+    }
+
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         if (TryHandleBrowserFocusShortcut(e))
