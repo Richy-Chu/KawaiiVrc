@@ -893,12 +893,14 @@ public partial class MainWindow : Window
         _lastSettleAt = DateTimeOffset.UtcNow;
         _ = Task.Run(async () =>
         {
-            // The collect below touches the whole process, so a stall it caused has to name it
-            // instead of looking like an unexplained freeze.
-            using var job = UiJobTrace.Shared.Begin("settle");
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                // Timed from here, after the settle's own deliberate second: timing the whole
+                // method made every run report a second of "slow work" that was this delay.
+                // The collect below touches the whole process, so a stall it caused has to name
+                // it instead of looking like an unexplained freeze.
+                using var job = UiJobTrace.Shared.Begin("settle");
                 // Only hint, never sweep: a blocking collect stops every thread in the process
                 // for the whole pass, which on a few-hundred-megabyte heap is a stall of seconds.
                 GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
