@@ -273,8 +273,11 @@ public sealed class DeferralNoteContractTests
     /// <summary>
     /// The two-hour rule is a bound, and a bound is only pinned by what sits either side of it.
     /// One clock is handed to the writer and to the check - the note is dated from it, the check
-    /// ages against it - so a minute inside and a minute past decide the same way on a fast
-    /// machine as on a slow one, and neither side of the boundary is the wall clock's.
+    /// ages against it - so a minute inside, exactly on it and a minute past decide the same way
+    /// on a fast machine as on a slow one. This is the only place that bound is planted: the
+    /// planted cases in <c>build/test-assert-temp-clean.ps1</c> write their notes by hand, so
+    /// they could only pin the reader, and an age they choose themselves is one no writer has to
+    /// agree with. The pair is what a format or timestamp regression breaks.
     /// </summary>
     [Fact]
     public void TheThresholdIsDecidedByTheClockBothSidesAreGiven()
@@ -282,12 +285,14 @@ public sealed class DeferralNoteContractTests
         var clock = new DateTime(2026, 11, 24, 12, 0, 0, DateTimeKind.Utc);
         var sandbox = Path.Combine(TestProfile.Scratch, "vrc-note-" + Guid.NewGuid().ToString("N"));
         var inside = Path.Combine(sandbox, "vrc-companion-tests-" + DeadPid);
-        var past = Path.Combine(sandbox, "vrc-companion-tests-" + (DeadPid + 1));
+        var onTheHour = Path.Combine(sandbox, "vrc-companion-tests-" + (DeadPid + 1));
+        var past = Path.Combine(sandbox, "vrc-companion-tests-" + (DeadPid + 2));
 
         try
         {
-            // Both notes are the same sound deferral; only the age differs, by two minutes.
+            // The three notes are the same sound deferral; only the age differs.
             WriteSoundNote(inside, clock - TimeSpan.FromHours(2) + TimeSpan.FromMinutes(1));
+            WriteSoundNote(onTheHour, clock - TimeSpan.FromHours(2));
             WriteSoundNote(past, clock - TimeSpan.FromHours(2) - TimeSpan.FromMinutes(1));
 
             var result = RunCheck(sandbox, clock);
@@ -298,10 +303,15 @@ public sealed class DeferralNoteContractTests
             Assert.Contains(
                 "Run folder vrc-companion-tests-" + DeadPid + " waits", result.Output, StringComparison.Ordinal);
             Assert.Contains(
-                "Took stale deferral vrc-companion-tests-" + (DeadPid + 1), result.Output, StringComparison.Ordinal);
+                "Run folder vrc-companion-tests-" + (DeadPid + 1) + " waits", result.Output, StringComparison.Ordinal);
+            Assert.Contains(
+                "Took stale deferral vrc-companion-tests-" + (DeadPid + 2), result.Output, StringComparison.Ordinal);
             Assert.True(
                 Directory.Exists(inside),
                 "A note a minute inside the threshold still waits for the sweep.");
+            Assert.True(
+                Directory.Exists(onTheHour),
+                "A note exactly on the threshold still waits: the take starts past it, not on it.");
             Assert.False(
                 Directory.Exists(past),
                 "A note a minute past the threshold is taken.");

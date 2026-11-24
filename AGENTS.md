@@ -78,8 +78,8 @@ that names a locked store file, or sits beside a file it does not name, still fa
 the folder, because that folder is evidence rather than litter. A stale folder the check cannot
 delete fails too, so a take never turns into a silent skip - including a delete that reports no
 error and leaves the folder where it was. The check ages a note against `-Now` when it is given,
-so the two-hour bound is decided by pinned cases one minute either side of it, and on it, rather
-than by whatever the machine's clock says while the cases run.
+so the two-hour bound is decided by one pinned clock one minute either side of it, and on it,
+rather than by whatever the machine's clock says while the test runs.
 
 The WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
 open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next
@@ -93,7 +93,11 @@ and both are held to the rules above.
 script over notes this project wrote, so CI decides the accepting path too. It plants both halves
 of the stale rule by asking `RecordDeferral` for a note dated four hours back: over files nobody
 holds any more, which the check must take, and over a locked store file, which it must refuse and
-leave standing.
+leave standing. It is also the one place the two-hour bound is planted - a minute inside, exactly
+on it, a minute past - because the note and the check have to be aged against the same clock, and
+only here does a clock reach both. `build/test-assert-temp-clean.ps1` therefore plants no case
+near the bound: its notes are written by hand, so an age it chose itself would pin the reader
+while the writer stayed free to disagree with it.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this

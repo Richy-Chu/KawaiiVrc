@@ -7,6 +7,10 @@
 # case is planted in a sandbox and the check is pointed at it, so the machine's own %TEMP% never
 # decides one. Browser profile folders get the same treatment: a dead pid's profile is allowed to
 # wait for the sweep, a name the sweep cannot read and a live pid's folder are not.
+#
+# The two-hour bound is not planted here. Deciding it needs one clock to reach both the note's
+# writer and this reader, and the writer is C#; DeferralNoteContractTests hands that one clock to
+# both, so the bound is decided there and these cases stay hours away from it.
 $ErrorActionPreference = "Stop"
 
 $check = Join-Path $PSScriptRoot "assert-temp-clean.ps1"
@@ -20,11 +24,6 @@ $deadPid = 2147483000
 # date would be a stale deferral by the time anyone runs this.
 $now = (Get-Date).ToUniversalTime().ToString("O")
 $stale = (Get-Date).ToUniversalTime().AddHours(-3).ToString("O")
-
-# The threshold cases need both halves to read the same clock, or a slow machine decides them:
-# the note is dated against this, and the check is told to age it against this.
-$boundaryClock = [datetime]::new(2026, 11, 24, 12, 0, 0, [DateTimeKind]::Utc)
-$boundaryIso = $boundaryClock.ToString("O")
 
 function Get-Sandbox {
     $sandbox = Join-Path $root ([guid]::NewGuid().ToString("N"))
@@ -52,9 +51,8 @@ function ProfileFolder([string] $sandbox, [string] $owner) {
     return $folder
 }
 
-function Invoke-Check([string] $sandbox, [string] $now = "") {
+function Invoke-Check([string] $sandbox) {
     $arguments = @("-NoProfile", "-File", $check, "-TempPath", $sandbox, "-WaitSeconds", "0")
-    if ($now) { $arguments += @("-Now", $now) }
     $output = @(& $shell @arguments 2>&1)
     $code = $LASTEXITCODE
     return [pscustomobject]@{ ExitCode = $code; Text = ($output -join "`n") }
@@ -226,58 +224,6 @@ $checks = @(
         }
     },
     @{
-        # The threshold has two sides, and only a pinned clock says where they are: an hour and
-        # fifty-nine is still a deferral the sweep may take, so the check must leave it alone.
-        Name = "a note a minute inside the threshold waits for the sweep"
-        Expected = 0
-        Marker = "waits for the next run's sweep"
-        Clock = $boundaryIso
-        Kept = "vrc-companion-tests-$deadPid"
-        Plant = {
-            param($sandbox)
-            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
-            $inside = $boundaryClock.AddHours(-2).AddMinutes(1).ToString("O")
-            Write-RunNote $sandbox @(
-                "host pid: $deadPid",
-                "utc: $inside",
-                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
-        }
-    },
-    @{
-        # Exactly at the bound is still inside it: the rule is "older than", so the take starts a
-        # moment past, not on it.
-        Name = "a note exactly at the threshold waits for the sweep"
-        Expected = 0
-        Marker = "waits for the next run's sweep"
-        Clock = $boundaryIso
-        Kept = "vrc-companion-tests-$deadPid"
-        Plant = {
-            param($sandbox)
-            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
-            $exact = $boundaryClock.AddHours(-2).ToString("O")
-            Write-RunNote $sandbox @(
-                "host pid: $deadPid",
-                "utc: $exact",
-                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
-        }
-    },
-    @{
-        Name = "a note a minute past the threshold is taken"
-        Expected = 0
-        Marker = "Took stale deferral vrc-companion-tests-$deadPid"
-        Clock = $boundaryIso
-        Gone = "vrc-companion-tests-$deadPid"
-        Plant = {
-            param($sandbox)
-            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
-            $past = $boundaryClock.AddHours(-2).AddMinutes(-1).ToString("O")
-            Write-RunNote $sandbox @(
-                "host pid: $deadPid",
-                "utc: $past",
-                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
-        }
-    },
-    @{
         # A run that could not read its folder must not read as one that found nothing in it.
         Name = "a note saying the folder could not be listed fails with that reason"
         Expected = 1
@@ -299,7 +245,7 @@ try {
     foreach ($checkCase in $checks) {
         $sandbox = Get-Sandbox
         & $checkCase.Plant $sandbox
-        $result = Invoke-Check $sandbox $checkCase.Clock
+        $result = Invoke-Check $sandbox
         if ($result.ExitCode -ne $checkCase.Expected) {
             Write-Host ("{0}: exited {1}, expected {2}" -f $checkCase.Name, $result.ExitCode, $checkCase.Expected)
             Write-Host $result.Text
