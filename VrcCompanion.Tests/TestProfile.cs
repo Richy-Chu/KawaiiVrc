@@ -135,19 +135,21 @@ internal static class TestProfile
 
         // Read the folder after the trim, not before the delete: the note names what is here.
         var held = HeldFiles(Scratch, out var unlisted);
+        var folders = FoldersLeft(Scratch);
+        var remaining = held.Select(file => file.Name).Concat(folders).ToList();
 
         // Chromium's own temp files stay open in the browser process, which lives as long as
         // this host, so no retry here can close them. The folder stays with a note saying what
-        // was still held: the next run's sweep takes it, and the check that runs after the
-        // suite accepts it only when everything named there is an empty .tmp file.
+        // was still there: the next run's sweep takes it, and the check that runs after the
+        // suite accepts it only when everything named there is an empty .tmp file or a folder
+        // the run could not delete.
         CleanupDeferred = true;
         DeferredReason = unlisted is not null
             ? "the folder could not be listed: " + unlisted
-            : held.Count == 0
-                ? "no file it could name was still held"
-                : held.Count + " file(s) still held: " +
-                  string.Join(", ", held.Select(file => Path.GetFileName(file.Name)));
-        RecordDeferral(Scratch, held, unlisted);
+            : remaining.Count == 0
+                ? "no file or folder it could name was still there"
+                : remaining.Count + " file(s) or folder(s) still there: " + string.Join(", ", remaining);
+        RecordDeferral(Scratch, held, unlisted, folders: folders);
     }
 
     /// <summary>Whether the run had to leave its folder for the next run's sweep.</summary>
@@ -234,15 +236,41 @@ internal static class TestProfile
     }
 
     /// <summary>
-    /// Writes the note a deferred folder carries. The moment it records is when the run gave up,
-    /// so it can be passed in: a test dates a real note back to plant a deferral that the next
-    /// run's sweep never took, rather than hand-writing one the check was never given.
+    /// The folders the trim could not take, relative to <paramref name="folder"/> and in a stable
+    /// order. A folder can be what stopped the delete with nothing held inside it - an empty one
+    /// whose own handle is still open - so the note has to be able to name it: one that named no
+    /// folder would say nothing about why the run could not delete its scratch.
+    /// </summary>
+    internal static List<string> FoldersLeft(string folder)
+    {
+        try
+        {
+            return Directory.GetDirectories(folder, "*", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(folder, path))
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+        }
+        catch (Exception)
+        {
+            // A folder this walk cannot read is one the trim could not empty either, so the list
+            // would be wrong however it went: the unlisted line is what says why the note is short.
+            return new List<string>();
+        }
+    }
+
+    /// <summary>
+    /// Writes the note a deferred folder carries: the files that were still held, with their
+    /// sizes, and the folders the trim could not take, which have no size to report. The moment it
+    /// records is when the run gave up, so it can be passed in: a test dates a real note back to
+    /// plant a deferral that the next run's sweep never took, rather than hand-writing one the
+    /// check was never given.
     /// </summary>
     internal static void RecordDeferral(
         string folder,
         List<(string Name, long Size)> held,
         string? unlisted,
-        DateTime? when = null)
+        DateTime? when = null,
+        IReadOnlyList<string>? folders = null)
     {
         try
         {
@@ -260,6 +288,11 @@ internal static class TestProfile
             foreach (var file in held)
             {
                 lines.Add("held: " + file.Name + " " + file.Size.ToString(CultureInfo.InvariantCulture));
+            }
+
+            foreach (var name in folders ?? Array.Empty<string>())
+            {
+                lines.Add("dir: " + name);
             }
 
             File.WriteAllLines(Path.Combine(folder, DeferralRecord), lines);

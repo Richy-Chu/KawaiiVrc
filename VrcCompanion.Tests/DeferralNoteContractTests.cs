@@ -4,6 +4,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Xunit;
 
 namespace VrcCompanion.Tests;
@@ -146,6 +148,60 @@ public sealed class DeferralNoteContractTests
                     result.ExitCode == 0,
                     "The check refused a trimmed folder with a note for its held file: " + result.Output);
                 Assert.Contains("waits for the next run's sweep", result.Output, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A folder can be what stops the delete with nothing inside it: an empty folder with its own
+    /// handle open has no file for the probe to name, so a note that could only describe files
+    /// said nothing, and the check refused a folder holding no file at all as one the run could
+    /// not explain - for good, since the one thing it forgives is age. The trim leaves such a
+    /// folder, the note names it, and the check accepts it and leaves it to the sweep, because
+    /// the handle goes with the process that holds it.
+    /// </summary>
+    [Fact]
+    public void ANoteNamingOnlyTheFolderTheDeleteCouldNotTakeIsAccepted()
+    {
+        var sandbox = NewSandbox(out var folder);
+        var blocked = Path.Combine(folder, "media");
+
+        try
+        {
+            Directory.CreateDirectory(blocked);
+
+            // Opened without FILE_SHARE_DELETE, which is how a browser or an enumerator keeps a
+            // folder the delete refuses: the handle is the obstacle, not anything inside it.
+            using (var handle = OpenFolderForReading(blocked))
+            {
+                Assert.False(handle.IsInvalid, "The test could not open the folder it needs held.");
+
+                TestProfile.DeleteDeletableFiles(folder);
+
+                Assert.True(
+                    Directory.Exists(blocked),
+                    "An open folder handle has to keep the folder the note is about.");
+                Assert.Empty(TestProfile.HeldFiles(folder, out var unlisted));
+                Assert.Null(unlisted);
+
+                var folders = TestProfile.FoldersLeft(folder);
+                Assert.Equal(new[] { "media" }, folders);
+
+                TestProfile.RecordDeferral(folder, TestProfile.HeldFiles(folder, out _), null, folders: folders);
+
+                var result = RunCheck(sandbox);
+
+                Assert.True(
+                    result.ExitCode == 0,
+                    "The check refused a note that named only the folder it could not take: " + result.Output);
+                Assert.Contains(
+                    "waits for the next run's sweep: it could not delete 1 folder(s), media",
+                    result.Output,
+                    StringComparison.Ordinal);
             }
         }
         finally
@@ -321,6 +377,39 @@ public sealed class DeferralNoteContractTests
             Directory.Delete(sandbox, recursive: true);
         }
     }
+
+    /// <summary>
+    /// A folder opened for reading without FILE_SHARE_DELETE, so a delete beneath it fails the
+    /// way it does when a browser or an enumerator holds the folder: the case has to be a real
+    /// obstacle, not a note that claims one.
+    /// </summary>
+    private static SafeFileHandle OpenFolderForReading(string folder)
+    {
+        const uint GenericRead = 0x80000000;
+        const uint ShareRead = 0x00000001;
+        const uint ShareWrite = 0x00000002;
+        const uint OpenExisting = 3;
+        const uint FlagBackupSemantics = 0x02000000;
+
+        return CreateFile(
+            folder,
+            GenericRead,
+            ShareRead | ShareWrite,
+            IntPtr.Zero,
+            OpenExisting,
+            FlagBackupSemantics,
+            IntPtr.Zero);
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string name,
+        uint access,
+        uint share,
+        IntPtr security,
+        uint creation,
+        uint attributes,
+        IntPtr template);
 
     /// <summary>
     /// The deferral a run leaves when only empty .tmp files were in the way, dated from a given

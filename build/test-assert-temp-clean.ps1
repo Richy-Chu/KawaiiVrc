@@ -17,6 +17,10 @@
 # writer and this reader, and the writer is C#; DeferralNoteContractTests hands that one clock to
 # both, so the bound is decided there and these cases stay hours away from it.
 #
+# A note that names only a folder the delete could not take is planted in
+# DeferralNoteContractTests too, not here: the case needs a folder a real delete refuses - an empty
+# one with its own handle open - and only the project's own writer can name what its trim left.
+#
 # The grace for a stamp ahead of the clock is planted here, because only this reader has one: a
 # note exactly on the grace waits, one a second past it is taken, and both pin the clock on the
 # check so that edge is a case rather than a race.
@@ -182,9 +186,11 @@ $checks = @(
         }
     },
     @{
-        Name = "a note with nothing held in it fails"
+        # A note that names neither a held file nor a folder it could not delete shows nothing
+        # about why the folder is still there, which is the one thing the note is for.
+        Name = "a note naming nothing it could not take fails"
         Expected = 1
-        Marker = "lists no held file"
+        Marker = "lists nothing it could not take"
         Plant = {
             param($sandbox)
             New-Item -ItemType Directory -Path (Join-Path $sandbox ("vrc-companion-tests-" + $deadPid)) -Force | Out-Null

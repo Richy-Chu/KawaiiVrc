@@ -74,14 +74,18 @@ shutdown, and WebView2 has no per-browser temp directory, so the files have to l
 A file held that way cannot be deleted from inside the host at all, so the run does not try: it
 leaves the folder where it is and writes `cleanup-deferred.txt` inside it, naming its own pid,
 the moment it gave up and every file an exclusive open found still held - a read, so a
-read-only file is not mistaken for a lock. The next run's sweep takes the folder once that pid
-is gone. The post-run check accepts a leftover folder only when that note names the folder's
-own dead pid, every file it names was a zero-byte `.tmp`, and the folder holds nothing else it
-does not name: cleanup deletes every file it can before writing the note, so a file left out of
-it is one the run could not delete and did not explain. A folder with no note - a run whose
-cleanup never ran - fails the job, and so does one whose note names a locked store file or whose
-folder still holds a store file the note never mentions. The note's own `utc:` line has to be
-recent too: the sweep takes a deferred folder on the next run's startup, so one older than two
+read-only file is not mistaken for a lock. A folder can also be what stopped the delete with
+nothing held inside it - an empty one whose own handle is still open - so the note names every
+folder the trim could not take with a `dir:` line of its own, and the check needs at least one
+file or folder in the note, because one that names neither shows nothing about what was in the
+way. The next run's sweep takes the folder once that pid is gone. The post-run check accepts a
+leftover folder only when that note names the folder's own dead pid, every file it names was a
+zero-byte `.tmp`, and the folder holds nothing else it does not name: cleanup deletes every file
+it can before writing the note, so a file left out of it is one the run could not delete and did
+not explain. A folder with no note - a run whose cleanup never ran - fails the job, and so does
+one whose note names a locked store file or whose folder still holds a store file the note never
+mentions. The note's own `utc:` line has to be recent too: the sweep takes a deferred folder on
+the next run's startup, so one older than two
 hours was not swept, and the check takes it itself instead of letting it stand - locally that
 usually just means nobody has run the suite since. A note dated ahead of the clock is the same
 folder from the other side: its age is negative and only walks towards the bound, so the folder
@@ -138,7 +142,10 @@ for a run folder and for a browser profile. The guard's day is planted in the ha
 age is stamped on the planted folder, so a case on the day and one a second past decide that edge
 without a second clock. Its value is not repeated in the harness either: it is written once, in
 `RealProfileWatch.RunRetention`, the check reads it from that source, and a case that lands on the
-wrong side because the value moved turns red and has to be re-planted on purpose.
+wrong side because the value moved turns red and has to be re-planted on purpose. The folder a run
+could not delete is planted in the pair's tests as well, and for the same reason it is not in the
+harness: only a real open handle makes a delete refuse an empty folder, so that case holds one
+while the project's note names the folder and the check accepts it.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this

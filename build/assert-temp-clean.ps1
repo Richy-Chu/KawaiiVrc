@@ -5,11 +5,14 @@
 #
 # One residue cannot be deleted from inside the host: Chromium's own zero-byte <guid>.tmp files,
 # which WebView2's browser process keeps open for as long as the host lives. A run that hits them
-# leaves its folder in place with a note naming its own pid and every file that was still held,
-# and the next run's sweep takes the folder. That is the only folder allowed to stay, and only
-# when the note says nothing but empty .tmp files were in the way, and the folder holds nothing
-# the note does not name: a note naming a locked store file is a leak the suite must not paper
-# over, and so is a store file left beside the temp files with no line about it.
+# leaves its folder in place with a note naming its own pid, every file that was still held and any
+# folder the run could not delete, and the next run's sweep takes the folder. That is the only
+# folder allowed to stay, and only when the note says nothing but empty .tmp files and folders it
+# could not delete were in the way, and the folder holds nothing the note does not name: a note
+# naming a locked store file is a leak the suite must not paper over, and so is a store file left
+# beside the temp files with no line about it. A folder needs a line of its own because it can be
+# what stops the delete with nothing held inside it - its own handle open - so a note that named
+# no folder would read as one that could not explain why the folder was still there.
 #
 # A deferral is not a licence to keep the folder for good: the note records when the run gave up,
 # and one older than a couple of hours was not taken by the next run's sweep. This check takes it
@@ -145,6 +148,13 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
     $unlisted = @($text -split "`r?`n" |
         Where-Object { $_ -match '^unlisted: ' } |
         ForEach-Object { $_.Substring(10).Trim() })
+    # A folder the run could not delete has no size to report, so its line carries the name alone.
+    # A line with nothing after the prefix names no folder, and counts as no line at all rather
+    # than as an entry that would show something was in the way.
+    $dirs = @($text -split "`r?`n" |
+        Where-Object { $_ -match '^dir: ' } |
+        ForEach-Object { $_.Substring(5).Trim() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
     # A run that could not read its own folder is not a run that found nothing in it, and the
     # failure has to say which one happened.
@@ -152,8 +162,8 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
     if ($unlisted.Count -gt 0) {
         $problem = "the note says the run could not list the folder (" + ($unlisted -join ' ') + ")"
     }
-    elseif ($held.Count -eq 0) {
-        $problem = "the note lists no held file, so it cannot show what was in the way"
+    elseif ($held.Count -eq 0 -and $dirs.Count -eq 0) {
+        $problem = "the note lists nothing it could not take, so it cannot show what was in the way"
     }
 
     # The note records when the run gave up, and the sweep takes a deferred folder on the next
@@ -230,8 +240,9 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
     # The note says what blocked the delete, not what is in the folder, and the run deletes every
     # file it can before writing it: anything else still here is something the run could not take
     # with it. A store file beside the browser's temp files is a leak however short the note is, so
-    # a file the note does not name fails the deferral. Directories may stand - the browser makes
-    # its own - and their files are judged by this same walk.
+    # a file the note does not name fails the deferral. Folders may stand - the browser makes its
+    # own, and one the run could not delete is named by its own line - and their files are judged
+    # by this same walk.
     if ($null -eq $problem) {
         $note = Join-Path $folder.FullName $deferralNote
         try {
@@ -252,6 +263,7 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
 
     return [pscustomobject]@{
         Held = $held
+        Dirs = $dirs
         Problem = $problem
         StaleHours = $staleHours
         FutureStamp = $futureStamp
@@ -304,14 +316,14 @@ function Get-TableCell([string] $text) {
 # The rule in one place: a path this check cannot judge and a folder it refuses are both red on
 # the run page, and both have to say what a folder was allowed to be.
 $rule = "A run must delete its own folders. A run folder may stand only with a " + $deferralNote +
-    " that names its own pid, holds nothing but empty .tmp files, and the folder holds" +
-    " nothing the note does not name - and this check takes one whose note is older than " +
-    $staleAfterHours + " hours or dated further ahead than clock skew explains, since neither" +
-    " kind ever ages into a sweep. A pid only accounts for a folder it has touched inside the" +
-    " hour, since Windows hands a finished run's pid to another process, and a browser profile" +
-    " may stand only while no pid accounts for it, so that the next run's sweep takes it. A guard" +
-    " run folder may stand only for the day the next run prunes one by, since a failed run's note" +
-    " may still need reading in it."
+    " that names its own pid, lists the empty .tmp files left held and every folder it could not" +
+    " delete, and the folder holds nothing the note does not name - and this check takes one whose" +
+    " note is older than " + $staleAfterHours + " hours or dated further ahead than clock skew" +
+    " explains, since neither kind ever ages into a sweep. A pid only accounts for a folder it has" +
+    " touched inside the hour, since Windows hands a finished run's pid to another process, and a" +
+    " browser profile may stand only while no pid accounts for it, so that the next run's sweep" +
+    " takes it. A guard run folder may stand only for the day the next run prunes one by, since a" +
+    " failed run's note may still need reading in it."
 
 # A path this check cannot list has not been seen to hold nothing, and a -TempPath that is missing,
 # names a file, or may not be read would otherwise pass as "No run folder left" - the one verdict
@@ -420,8 +432,19 @@ foreach ($folder in $leftovers) {
     }
 
     $waiting++
-    $waits = "Run folder " + $folder.Name + " waits for the next run's sweep: it still held " +
-        $deferral.Held.Count + " empty .tmp file(s), " + (($deferral.Held -replace '\s+-?\d+$', '') -join ', ')
+    $stillThere = @()
+    if ($deferral.Held.Count -gt 0) {
+        $stillThere += "it still held " + $deferral.Held.Count + " empty .tmp file(s), " +
+            (($deferral.Held -replace '\s+-?\d+$', '') -join ', ')
+    }
+
+    if ($deferral.Dirs.Count -gt 0) {
+        $stillThere += "it could not delete " + $deferral.Dirs.Count + " folder(s), " +
+            ($deferral.Dirs -join ', ')
+    }
+
+    $waits = "Run folder " + $folder.Name + " waits for the next run's sweep: " +
+        ($stillThere -join ' and ')
     if ($state -eq "abandoned") {
         $waits += " - pid " + $owner + " is alive but has not touched the folder for " +
             (Get-HoursText (Get-FolderAge $folder)) + ", so it is not the run that left it"
