@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using Xunit;
 
@@ -270,6 +271,64 @@ public sealed class DeferralNoteContractTests
     }
 
     /// <summary>
+    /// The two-hour rule is a bound, and a bound is only pinned by what sits either side of it.
+    /// One clock is handed to the writer and to the check - the note is dated from it, the check
+    /// ages against it - so a minute inside and a minute past decide the same way on a fast
+    /// machine as on a slow one, and neither side of the boundary is the wall clock's.
+    /// </summary>
+    [Fact]
+    public void TheThresholdIsDecidedByTheClockBothSidesAreGiven()
+    {
+        var clock = new DateTime(2026, 11, 24, 12, 0, 0, DateTimeKind.Utc);
+        var sandbox = Path.Combine(TestProfile.Scratch, "vrc-note-" + Guid.NewGuid().ToString("N"));
+        var inside = Path.Combine(sandbox, "vrc-companion-tests-" + DeadPid);
+        var past = Path.Combine(sandbox, "vrc-companion-tests-" + (DeadPid + 1));
+
+        try
+        {
+            // Both notes are the same sound deferral; only the age differs, by two minutes.
+            WriteSoundNote(inside, clock - TimeSpan.FromHours(2) + TimeSpan.FromMinutes(1));
+            WriteSoundNote(past, clock - TimeSpan.FromHours(2) - TimeSpan.FromMinutes(1));
+
+            var result = RunCheck(sandbox, clock);
+
+            Assert.True(
+                result.ExitCode == 0,
+                "The check did not settle both sides of the threshold: " + result.Output);
+            Assert.Contains(
+                "Run folder vrc-companion-tests-" + DeadPid + " waits", result.Output, StringComparison.Ordinal);
+            Assert.Contains(
+                "Took stale deferral vrc-companion-tests-" + (DeadPid + 1), result.Output, StringComparison.Ordinal);
+            Assert.True(
+                Directory.Exists(inside),
+                "A note a minute inside the threshold still waits for the sweep.");
+            Assert.False(
+                Directory.Exists(past),
+                "A note a minute past the threshold is taken.");
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The deferral a run leaves when only empty .tmp files were in the way, dated from a given
+    /// clock: the folder is a run's, the note is the project's, and the age is the caller's.
+    /// </summary>
+    private static void WriteSoundNote(string folder, DateTime when)
+    {
+        Directory.CreateDirectory(folder);
+        const string name = "0b0b0b0b-1111-2222-3333-444444444444.tmp";
+        File.WriteAllBytes(Path.Combine(folder, name), Array.Empty<byte>());
+        TestProfile.RecordDeferral(
+            folder,
+            new List<(string Name, long Size)> { (name, 0) },
+            unlisted: null,
+            when: when);
+    }
+
+    /// <summary>
     /// A sandbox laid out the way the check expects: one run folder named for a dead pid, directly
     /// under the temp path the check is pointed at.
     /// </summary>
@@ -298,11 +357,16 @@ public sealed class DeferralNoteContractTests
     }
 
     /// <summary>Runs the real check against a sandbox, with the first PowerShell this machine has.</summary>
-    private static (int ExitCode, string Output) RunCheck(string temp)
+    /// <param name="now">The moment to age deferrals against; null lets the check read the clock.</param>
+    private static (int ExitCode, string Output) RunCheck(string temp, DateTime? now = null)
     {
         var script = Path.Combine(RepositoryRoot(), "build", "assert-temp-clean.ps1");
         var arguments =
             "-NoProfile -NonInteractive -File \"" + script + "\" -TempPath \"" + temp + "\" -WaitSeconds 0";
+        if (now is not null)
+        {
+            arguments += " -Now \"" + now.Value.ToString("O", CultureInfo.InvariantCulture) + "\"";
+        }
 
         foreach (var shell in new[] { "pwsh", "powershell.exe" })
         {

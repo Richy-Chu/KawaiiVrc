@@ -76,7 +76,9 @@ usually just means nobody has run the suite since. Age is the one thing forgiven
 that names a locked store file, or sits beside a file it does not name, still fails and keeps
 the folder, because that folder is evidence rather than litter. A stale folder the check cannot
 delete fails too, so a take never turns into a silent skip - including a delete that reports no
-error and leaves the folder where it was.
+error and leaves the folder where it was. The check ages a note against `-Now` when it is given,
+so the two-hour bound is decided by pinned cases one minute either side of it, and on it, rather
+than by whatever the machine's clock says while the cases run.
 
 The WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
 open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next

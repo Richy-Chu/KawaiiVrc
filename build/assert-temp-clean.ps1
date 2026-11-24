@@ -27,7 +27,12 @@ param(
     [string] $TempPath = [System.IO.Path]::GetTempPath(),
 
     # How long to give a run whose host fell back to its exit handler. Zero judges at once.
-    [int] $WaitSeconds = 20
+    [int] $WaitSeconds = 20,
+
+    # The moment a deferral is aged against, as an ISO 8601 timestamp in UTC. A test pins it so
+    # the two-hour threshold can be decided one minute either side of it; a run leaves it out and
+    # the check reads the clock.
+    [string] $Now = ""
 )
 $ErrorActionPreference = "Stop"
 
@@ -37,6 +42,21 @@ $deferralNote = "cleanup-deferred.txt"
 
 # How long a deferral may stand before this check takes it itself.
 $staleAfterHours = 2
+
+# One reading for the whole check, so a deferral's age does not depend on how long a wait took.
+$clock = (Get-Date).ToUniversalTime()
+if (-not [string]::IsNullOrWhiteSpace($Now)) {
+    $pinned = [datetime]::MinValue
+    if (-not [datetime]::TryParse(
+            $Now,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind,
+            [ref] $pinned)) {
+        throw "The -Now value is not an ISO 8601 timestamp: " + $Now
+    }
+
+    $clock = $pinned.ToUniversalTime()
+}
 
 function Get-ScratchLeftover([string] $prefix) {
     return @(Get-ChildItem -LiteralPath $TempPath -Directory -Force -ErrorAction SilentlyContinue |
@@ -101,7 +121,7 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
             $problem = "the note's utc line cannot be read: " + $stamp
         }
         else {
-            $age = ((Get-Date).ToUniversalTime() - $when.ToUniversalTime()).TotalHours
+            $age = ($clock - $when.ToUniversalTime()).TotalHours
             if ($age -gt $staleAfterHours) { $staleHours = [math]::Floor($age) }
         }
     }
