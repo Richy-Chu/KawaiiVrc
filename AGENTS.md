@@ -55,7 +55,10 @@ dispatcher. Two copies must never run: they share the one saved VRChat session a
 rotates the auth cookie on nearly every request, so the copy that loses the race 401s and clears
 the saved session for both - and they would both write chatbox input and the same settings file.
 `SingleInstanceTests` drives the claim, the hand-off, a hand-off nobody answers and the refusal
-to let a second copy serve the pipe, each with its own mutex and pipe name.
+to let a second copy serve the pipe, each with its own mutex and pipe name. `AppStartupTests`
+drives the startup wiring itself on the host's one application: with a second claim in place,
+`App.RunStartup` returns false, stops once, and never calls the shell factory, so no window and
+no view model exist to touch the saved session.
 
 ## When something throws
 

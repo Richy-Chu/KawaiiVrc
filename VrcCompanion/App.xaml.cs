@@ -17,6 +17,12 @@ public partial class App : Application
     /// <summary>One entry per kind of failure per run; see <see cref="CrashLog"/>.</summary>
     private readonly CrashLog _crashLog = new(CrashLogPath);
 
+    public App()
+    {
+        CreateShell = () => new MainWindow();
+        Stop = Shutdown;
+    }
+
     /// <summary>
     /// The launch's single-instance claim. <see cref="Program.Main"/> makes it before any WPF
     /// work, so a second launch can leave without building a window or a view model; a host that
@@ -24,7 +30,31 @@ public partial class App : Application
     /// </summary>
     internal static SingleInstance? LaunchGate { get; set; }
 
+    /// <summary>
+    /// The one window a launch builds. A test replaces this to prove that a launch which handed
+    /// off never asks for one: the shipped factory is the only place the shell is made, so a
+    /// launch that does not call it builds no window and no view model.
+    /// </summary>
+    internal Func<MainWindow> CreateShell { get; set; }
+
+    /// <summary>
+    /// How a launch that handed off stops. The shipped value shuts the application down; the
+    /// shared test host cannot do that, so a test replaces it.
+    /// </summary>
+    internal Action Stop { get; set; }
+
     protected override void OnStartup(StartupEventArgs e)
+    {
+        RunStartup(() => base.OnStartup(e));
+    }
+
+    /// <summary>
+    /// The launch itself, kept out of <see cref="OnStartup"/> so both of its sides can run in a
+    /// test on the host's one application: claim the app, then either build its single window or
+    /// hand off to the copy already running and stop. Returns whether this launch owns the app;
+    /// false means it left without a window, a view model or a startup event.
+    /// </summary>
+    internal bool RunStartup(Action? startupEvent = null)
     {
         _singleInstance = LaunchGate ?? SingleInstance.Claim();
         _claimedHere = LaunchGate is null;
@@ -34,8 +64,8 @@ public partial class App : Application
             // or a view model that could touch it.
             var answered = _singleInstance.HandOff();
             LifecycleLog.Write($"startup: second launch left (answered={answered})");
-            Shutdown();
-            return;
+            Stop();
+            return false;
         }
 
         _singleInstance.Listen(BringRunningWindowForward);
@@ -45,13 +75,14 @@ public partial class App : Application
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
         SessionEnding += (_, args) => LifecycleLog.Write($"session ending reason={args.ReasonSessionEnding}");
         LifecycleLog.Write("startup");
-        base.OnStartup(e);
+        startupEvent?.Invoke();
 
         // App.xaml names no StartupUri: a launch that handed off must not have a window built for
         // it at all, so the one window is made here, after the claim is settled.
-        var shell = new MainWindow();
+        var shell = CreateShell();
         MainWindow = shell;
         shell.Show();
+        return true;
     }
 
     /// <summary>

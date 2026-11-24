@@ -18,6 +18,12 @@ internal static class WpfTestHost
     private static Dispatcher? _dispatcher;
     private static Exception? _startupFailure;
 
+    /// <summary>
+    /// The one application the host built. A test that has to drive the real startup path runs it
+    /// here, because WPF allows a single <see cref="Application"/> per process.
+    /// </summary>
+    internal static App? Application { get; private set; }
+
     public static void Run(Action action)
     {
         var dispatcher = EnsureStarted();
@@ -97,6 +103,7 @@ internal static class WpfTestHost
                     // shell window here: tests build and close their own.
                     SynchronizationContext.SetSynchronizationContext(
                         new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+                    Application = application;
                     _dispatcher = Dispatcher.CurrentDispatcher;
                 }
                 catch (Exception ex)
