@@ -48,7 +48,8 @@ run's folder, with no call site changed. Never build a test path from the system
 
 Because everything is in one folder, the sweep has nothing to weigh: it deletes folders whose
 process is gone (including a one-hour rule for pids Windows has since reused) and leaves
-everything else alone. Two suites at once write in different folders and never touch each
+everything else alone. `SweepFinishedRuns` takes the moment it judges against, so that hour is
+decided by cases a minute either side of it, and on it, rather than by how fast the runner is. Two suites at once write in different folders and never touch each
 other. The run deletes its own folder at the end of its last collection (`ScratchCleanup`),
 not at process exit: a test host that has reported every result is not obliged to run its exit
 handlers, and one CI run left its whole scratch behind that way. The exit handler stays only as

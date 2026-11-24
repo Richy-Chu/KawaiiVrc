@@ -278,9 +278,14 @@ internal static class TestProfile
     /// another's, so two suites at once never reach into each other.
     /// The folders are passed in rather than read from %TEMP% so a test can sweep a sandbox.
     /// </summary>
-    internal static void SweepFinishedRuns(string temp)
+    /// <param name="now">
+    /// The moment the one-hour rule is measured against. A test pins it so both sides of that
+    /// bound are decided by the cases rather than by how fast the machine runs them.
+    /// </param>
+    internal static void SweepFinishedRuns(string temp, DateTime? now = null)
     {
         var own = Environment.ProcessId;
+        var clock = now ?? DateTime.UtcNow;
 
         foreach (var entry in Entries(temp))
         {
@@ -298,7 +303,7 @@ internal static class TestProfile
             // A live process keeps its folder - including a run this one did not start - unless
             // the folder has gone untouched for far longer than any run lasts, which also
             // retires a folder whose pid Windows has since handed to an unrelated process.
-            if (IsRunning(owner) && !IsAbandoned(entry))
+            if (IsRunning(owner) && !IsAbandoned(entry, clock))
             {
                 continue;
             }
@@ -347,11 +352,18 @@ internal static class TestProfile
     }
 
 
-    private static bool IsAbandoned(string folder)
+    /// <summary>
+    /// How long a folder must go untouched before a live pid stops accounting for it: Windows
+    /// hands a finished run's pid to an unrelated process, and that process would otherwise keep
+    /// the finished run's litter for as long as it runs.
+    /// </summary>
+    private static readonly TimeSpan AbandonedAfter = TimeSpan.FromHours(1);
+
+    private static bool IsAbandoned(string folder, DateTime clock)
     {
         try
         {
-            return DateTime.UtcNow - Directory.GetLastWriteTimeUtc(folder) > TimeSpan.FromHours(1);
+            return clock - Directory.GetLastWriteTimeUtc(folder) > AbandonedAfter;
         }
         catch (Exception)
         {

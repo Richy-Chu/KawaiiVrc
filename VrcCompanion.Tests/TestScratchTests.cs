@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Xunit;
@@ -94,6 +96,85 @@ public sealed class TestScratchTests
         {
             File.SetAttributes(readOnly, FileAttributes.Normal);
             Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The sweep's other bound: a folder is only abandoned - taken despite a live pid - once it
+    /// has gone untouched for an hour, which is how a pid Windows reused stops keeping litter
+    /// alive. The clock is handed in, so this decides both sides of that hour instead of trusting
+    /// the wall clock: a folder a minute inside still belongs to a run that may be using it, one
+    /// exactly on the hour is still inside the rule, and one a minute past it goes.
+    /// </summary>
+    [Fact]
+    public void TheSweepHonoursTheHourOnAFolderWhoseOwnerIsStillRunning()
+    {
+        var clock = new DateTime(2026, 11, 24, 12, 0, 0, DateTimeKind.Utc);
+
+        // The one-hour rule only decides a folder whose owner runs, so the owner has to be a
+        // live process that is not this one - this run's own pid is skipped before the rule.
+        var live = Process.Start(new ProcessStartInfo("cmd.exe", "/c pause")
+        {
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }) ?? throw new InvalidOperationException("cmd.exe did not start.");
+
+        // One sandbox per case, because the sweep reads the pid from the folder's name and every
+        // case needs the same live owner. Each is judged against the same pinned clock, so the
+        // three differ only in how long the folder has gone untouched.
+        var sandboxes = new List<string>();
+
+        bool Survives(TimeSpan age)
+        {
+            var sandbox = Path.Combine(TestProfile.Scratch, "vrc-hour-" + Guid.NewGuid().ToString("N"));
+            sandboxes.Add(sandbox);
+
+            var folder = Path.Combine(sandbox, "vrc-companion-tests-" + live.Id);
+            Directory.CreateDirectory(folder);
+            Directory.SetLastWriteTimeUtc(folder, clock - age);
+
+            TestProfile.SweepFinishedRuns(sandbox, clock);
+            return Directory.Exists(folder);
+        }
+
+        try
+        {
+            Assert.True(
+                Survives(TimeSpan.FromHours(1) - TimeSpan.FromMinutes(1)),
+                "A folder a minute inside the hour belongs to a run that may still be using it.");
+            Assert.True(
+                Survives(TimeSpan.FromHours(1)),
+                "A folder exactly on the hour is still inside the rule: retirement starts past it.");
+            Assert.False(
+                Survives(TimeSpan.FromHours(1) + TimeSpan.FromMinutes(1)),
+                "A folder a minute past the hour is retired even though its pid still runs.");
+        }
+        finally
+        {
+            try
+            {
+                if (!live.HasExited)
+                {
+                    live.Kill(entireProcessTree: true);
+                    live.WaitForExit(5_000);
+                }
+            }
+            catch (Exception)
+            {
+                // Already gone, which is all this cleanup needed.
+            }
+
+            live.Dispose();
+            foreach (var sandbox in sandboxes)
+            {
+                if (Directory.Exists(sandbox))
+                {
+                    Directory.Delete(sandbox, recursive: true);
+                }
+            }
         }
     }
 
