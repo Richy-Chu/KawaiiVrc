@@ -31,8 +31,22 @@ public sealed class VrChatLogAvatarService
         @"\[AssetBundleDownloadManager\] \[\d+\] Unpacking Avatar \((?<name>.+) by (?<author>.+?)\)\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    /// <summary>
+    /// Only the end of a log can name a current avatar, and VRChat logs grow to tens of megabytes.
+    /// Reading a bounded tail of the newest files keeps the refresh milliseconds long; reading
+    /// whole files with a regex per line took seconds, on the caller's thread, which is the UI one.
+    /// </summary>
+    internal const long TailBytes = 4 * 1024 * 1024;
+
+    /// <summary>The newest logs; older ones cannot hold a switch newer than these.</summary>
+    internal const int TailFiles = 2;
+
+    private const string BehaviourMarker = "[Behaviour]";
+    private const string UnpackingMarker = "Unpacking Avatar";
+
     private readonly object _gate = new();
     private readonly Dictionary<string, string> _namesById = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _idsByName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarsByName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarsById = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _authorsByAvatarName = new(StringComparer.OrdinalIgnoreCase);
@@ -103,7 +117,7 @@ public sealed class VrChatLogAvatarService
             // newest logs matters for a current avatar; full logs can be huge.
             var files = Directory.GetFiles(directory, "output_log_*.txt")
                 .OrderBy(File.GetLastWriteTimeUtc)
-                .TakeLast(3)
+                .TakeLast(TailFiles)
                 .ToArray();
             foreach (var file in files)
             {
@@ -125,11 +139,10 @@ public sealed class VrChatLogAvatarService
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);
-            const long tailBytes = 32 * 1024 * 1024;
-            var startsMidFile = stream.Length > tailBytes;
+            var startsMidFile = stream.Length > TailBytes;
             if (startsMidFile)
             {
-                stream.Seek(-tailBytes, SeekOrigin.End);
+                stream.Seek(-TailBytes, SeekOrigin.End);
             }
 
             using var reader = new StreamReader(stream);
@@ -141,57 +154,70 @@ public sealed class VrChatLogAvatarService
 
             while (reader.ReadLine() is { } line)
             {
-                var joined = Joined.Match(line);
-                if (joined.Success)
+                // Almost every line is neither a join, a switch nor an unpacking. The substring
+                // check is what keeps three regexes off tens of thousands of other lines.
+                if (line.Contains(BehaviourMarker, StringComparison.Ordinal))
                 {
-                    var name = joined.Groups["name"].Value.Trim();
-                    var userId = joined.Groups["id"].Value.Trim();
-                    if (name.Length > 0)
+                    var joined = Joined.Match(line);
+                    if (joined.Success)
                     {
-                        _avatarsByName.TryAdd(name, string.Empty);
+                        var name = joined.Groups["name"].Value.Trim();
+                        var userId = joined.Groups["id"].Value.Trim();
+                        if (name.Length > 0)
+                        {
+                            _avatarsByName.TryAdd(name, string.Empty);
+                        }
+
+                        if (name.Length > 0 && userId.Length > 0)
+                        {
+                            _namesById[userId] = name;
+                            _idsByName[name] = userId;
+                        }
+
+                        continue;
                     }
 
-                    if (name.Length > 0 && userId.Length > 0)
+                    var switching = Switching.Match(line);
+                    if (!switching.Success)
                     {
-                        _namesById[userId] = name;
+                        continue;
                     }
 
+                    var player = switching.Groups["name"].Value.Trim();
+                    var avatar = switching.Groups["avatar"].Value.Trim();
+                    if (player.Length == 0 || avatar.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    _avatarsByName[player] = avatar;
+                    // The name-to-id map makes this a lookup; scanning every known id for each
+                    // switch line made the tail cost grow with the number of lines in it.
+                    if (_idsByName.TryGetValue(player, out var playerId) &&
+                        !string.IsNullOrWhiteSpace(playerId))
+                    {
+                        _avatarsById[playerId] = avatar;
+                    }
+
+                    continue;
+                }
+
+                if (!line.Contains(UnpackingMarker, StringComparison.Ordinal))
+                {
                     continue;
                 }
 
                 var unpacking = Unpacking.Match(line);
-                if (unpacking.Success)
-                {
-                    var avatarName = unpacking.Groups["name"].Value.Trim();
-                    var author = unpacking.Groups["author"].Value.Trim();
-                    if (avatarName.Length > 0 && author.Length > 0)
-                    {
-                        _authorsByAvatarName[avatarName] = author;
-                    }
-
-                    continue;
-                }
-
-                var switching = Switching.Match(line);
-                if (!switching.Success)
+                if (!unpacking.Success)
                 {
                     continue;
                 }
 
-                var player = switching.Groups["name"].Value.Trim();
-                var avatar = switching.Groups["avatar"].Value.Trim();
-                if (player.Length == 0 || avatar.Length == 0)
+                var avatarName = unpacking.Groups["name"].Value.Trim();
+                var author = unpacking.Groups["author"].Value.Trim();
+                if (avatarName.Length > 0 && author.Length > 0)
                 {
-                    continue;
-                }
-
-                _avatarsByName[player] = avatar;
-                var playerId = _namesById
-                    .FirstOrDefault(pair => string.Equals(pair.Value, player, StringComparison.Ordinal))
-                    .Key;
-                if (!string.IsNullOrWhiteSpace(playerId))
-                {
-                    _avatarsById[playerId] = avatar;
+                    _authorsByAvatarName[avatarName] = author;
                 }
             }
         }
