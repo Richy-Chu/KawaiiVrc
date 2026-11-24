@@ -183,29 +183,61 @@ function Test-OwnerIsGone([int] $owner) {
     return $null -eq (Get-Process -Id $owner -ErrorAction SilentlyContinue)
 }
 
+# A failure has to say the same thing to the run page as to the log: which folder, how long it has
+# been standing, and why it is still there. The age is the note's own where the note has one - that
+# is the age the two-hour rule reads - and the folder's last write otherwise.
+function Get-ScratchFailure([string] $name, [double] $ageHours, [string] $reason) {
+    return [pscustomobject]@{
+        Name = $name
+        AgeHours = [math]::Max(0, $ageHours)
+        Reason = $reason
+    }
+}
+
+function Get-FolderAgeHours([System.IO.DirectoryInfo] $folder) {
+    return ($clock - $folder.LastWriteTimeUtc).TotalHours
+}
+
+function Get-HoursText([double] $hours) {
+    return $hours.ToString("0.#", [System.Globalization.CultureInfo]::InvariantCulture) + " h"
+}
+
+# GitHub reads %, CR and LF as escapes inside an annotation, so they travel encoded.
+function Get-AnnotationText([string] $text) {
+    return ($text -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')
+}
+
+# A pipe or a line break would end a table cell early and shift every column after it.
+function Get-TableCell([string] $text) {
+    return ($text -replace "`r?`n", ' ' -replace '\|', '\|')
+}
+
+# Each failure carries what the run page has to show about it.
 $failed = @()
 $waiting = 0
 foreach ($folder in $leftovers) {
     $owner = 0
     $namedForPid = $folder.Name -match ('^' + [regex]::Escape($runFolder) + '(\d+)$')
     if (-not $namedForPid -or -not [int]::TryParse($Matches[1], [ref] $owner)) {
-        $failed += $folder.Name + " (not a run folder this check can name)"
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) "not a run folder this check can name"
         continue
     }
 
     if (-not (Test-OwnerIsGone $owner)) {
-        $failed += $folder.Name + " (process " + $owner + " is still running)"
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) ("process " + $owner + " is still running")
         continue
     }
 
     $deferral = Get-Deferral $folder $owner
     if ($null -eq $deferral) {
-        $failed += $folder.Name + " (no " + $deferralNote + " naming its own pid)"
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) ("no " + $deferralNote + " naming its own pid")
         continue
     }
 
     if ($null -ne $deferral.Problem) {
-        $failed += $folder.Name + " (" + $deferral.Problem + ")"
+        $age = $deferral.StaleHours
+        if ($age -le 0) { $age = Get-FolderAgeHours $folder }
+        $failed += Get-ScratchFailure $folder.Name $age $deferral.Problem
         continue
     }
 
@@ -217,16 +249,14 @@ foreach ($folder in $leftovers) {
             Remove-Item -LiteralPath $folder.FullName -Recurse -Force -ErrorAction Stop
         }
         catch {
-            $failed += $folder.Name + " (its note is " + $deferral.StaleHours +
-                " hours old and it could not be taken: " + $_.Exception.Message + ")"
+            $failed += Get-ScratchFailure $folder.Name $deferral.StaleHours ("it could not be taken: " + $_.Exception.Message)
             continue
         }
 
         # Remove-Item can report no error and still leave the folder, and a take that quietly
         # skipped would read exactly like one that worked: the folder has to be gone.
         if (Test-Path -LiteralPath $folder.FullName) {
-            $failed += $folder.Name + " (its note is " + $deferral.StaleHours +
-                " hours old and it could not be taken: the folder is still there)"
+            $failed += Get-ScratchFailure $folder.Name $deferral.StaleHours "it could not be taken: the folder is still there"
             continue
         }
 
@@ -248,12 +278,12 @@ foreach ($folder in Get-ScratchLeftover $browserFolder) {
     $owner = 0
     $namedForPid = $folder.Name -match ('^' + [regex]::Escape($browserFolder) + '(\d+)$')
     if (-not $namedForPid -or -not [int]::TryParse($Matches[1], [ref] $owner)) {
-        $failed += $folder.Name + " (not a browser folder this check can name)"
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) "not a browser folder this check can name"
         continue
     }
 
     if (-not (Test-OwnerIsGone $owner)) {
-        $failed += $folder.Name + " (process " + $owner + " is still running)"
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) ("process " + $owner + " is still running")
         continue
     }
 
@@ -262,12 +292,41 @@ foreach ($folder in Get-ScratchLeftover $browserFolder) {
 
 if ($failed.Count -gt 0) {
     Write-Host "The suite left scratch behind in $TempPath :"
-    $failed | ForEach-Object { Write-Host ("  " + $_) }
-    Write-Host ("A run must delete its own folders. A run folder may stand only with a " + $deferralNote +
+    $failed | ForEach-Object {
+        Write-Host ("  " + $_.Name + " (" + (Get-HoursText $_.AgeHours) + " old: " + $_.Reason + ")")
+    }
+
+    $rule = "A run must delete its own folders. A run folder may stand only with a " + $deferralNote +
         " that names its own dead pid, holds nothing but empty .tmp files, and the folder holds" +
         " nothing the note does not name - and this check takes one whose note is older than " +
         $staleAfterHours + " hours, since the sweep never did. A browser profile may stand only" +
-        " while its pid is gone, so that the next run's sweep takes it.")
+        " while its pid is gone, so that the next run's sweep takes it."
+    Write-Host $rule
+
+    # One annotation, not one per folder: a step shows ten and drops the rest, so a run page that
+    # named whatever fitted would be worse than one that names the first folder and points at the
+    # summary, which carries every folder because nothing there is capped.
+    $first = $failed[0]
+    $headline = $first.Name + " (" + (Get-HoursText $first.AgeHours) + " old: " + $first.Reason + ")"
+    if ($failed.Count -gt 1) {
+        $headline += "; " + ($failed.Count - 1) + " more folder(s) in the step summary"
+    }
+
+    Write-Host ("::error title=Scratch left behind::" + (Get-AnnotationText $headline))
+
+    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_STEP_SUMMARY)) {
+        $rows = ($failed | ForEach-Object {
+                "| ``" + (Get-TableCell $_.Name) + "`` | " + (Get-HoursText $_.AgeHours) + " | " +
+                    (Get-TableCell $_.Reason) + " |"
+            }) -join "`n"
+        # [char] 96, because a backtick in the string would escape the quote that ends it.
+        $tick = [char] 96
+        $summaryText = "### Scratch left behind in " + $tick + $TempPath + $tick + "`n`n" +
+            "| Folder | Age | Why it failed |" + "`n" + "| --- | --- | --- |" + "`n" + $rows + "`n`n" +
+            $rule + "`n"
+        Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summaryText
+    }
+
     exit 1
 }
 

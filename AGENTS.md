@@ -79,7 +79,11 @@ the folder, because that folder is evidence rather than litter. A stale folder t
 delete fails too, so a take never turns into a silent skip - including a delete that reports no
 error and leaves the folder where it was. The check ages a note against `-Now` when it is given,
 so the two-hour bound is decided by one pinned clock one minute either side of it, and on it,
-rather than by whatever the machine's clock says while the test runs.
+rather than by whatever the machine's clock says while the test runs. A failure also lands on the
+run page, where a red push is actually read: one `::error` annotation naming the first folder with
+its age and reason, and a step summary table carrying every folder. One annotation rather than
+one per folder, because GitHub renders ten per step and drops the rest while the summary has no
+such cap. A passing run writes neither, and the planted cases assert both channels.
 
 The WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
 open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next

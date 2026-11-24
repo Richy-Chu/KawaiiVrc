@@ -11,6 +11,12 @@
 # The two-hour bound is not planted here. Deciding it needs one clock to reach both the note's
 # writer and this reader, and the writer is C#; DeferralNoteContractTests hands that one clock to
 # both, so the bound is decided there and these cases stay hours away from it.
+#
+# A failure also has to land on the run page, not only in the step log: every failing case must
+# write exactly one ::error naming its folder, its age and its reason, and a step summary that
+# carries the same for each folder, while a passing case writes neither. Each case hands the check
+# its own summary file through GITHUB_STEP_SUMMARY, so a planted failure never writes into this
+# script's own step summary.
 $ErrorActionPreference = "Stop"
 
 $check = Join-Path $PSScriptRoot "assert-temp-clean.ps1"
@@ -175,6 +181,27 @@ $checks = @(
         }
     },
     @{
+        # The step's log scrolls away, so the folder, its age and the reason have to reach the run
+        # page too: the annotation names the first folder, and the summary row carries all three.
+        Name = "a refused stale note reports its age and reason to the run page"
+        Expected = 1
+        Marker = "::error title=Scratch left behind::vrc-companion-tests-$deadPid (3 h old: the note names a locked file that is not a .tmp: settings.json)"
+        Kept = "vrc-companion-tests-$deadPid"
+        Summary = @(
+            "| Folder | Age | Why it failed |",
+            "| ``vrc-companion-tests-$deadPid`` | 3 h | the note names a locked file that is not a .tmp: settings.json |")
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunFile $sandbox "settings.json" 412
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: $stale",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0",
+                "held: settings.json 412")
+        }
+    },
+    @{
         Name = "a stale note whose folder holds a file it does not name still fails and is kept"
         Expected = 1
         Marker = "the folder holds 1 file(s) the note does not: settings.json (412 bytes)"
@@ -241,10 +268,18 @@ $checks = @(
 
 $failures = 0
 New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+# The summary file each case hands the check, and the one this process was started with, so the
+# real step summary is exactly as it was when this script exits.
+$summary = Join-Path $root "summary.md"
+$summaryBefore = $env:GITHUB_STEP_SUMMARY
+
 try {
     foreach ($checkCase in $checks) {
         $sandbox = Get-Sandbox
         & $checkCase.Plant $sandbox
+        Remove-Item -LiteralPath $summary -Force -ErrorAction SilentlyContinue
+        $env:GITHUB_STEP_SUMMARY = $summary
         $result = Invoke-Check $sandbox
         if ($result.ExitCode -ne $checkCase.Expected) {
             Write-Host ("{0}: exited {1}, expected {2}" -f $checkCase.Name, $result.ExitCode, $checkCase.Expected)
@@ -270,11 +305,59 @@ try {
         if ($checkCase.Kept -and -not (Test-Path -LiteralPath (Join-Path $sandbox $checkCase.Kept))) {
             Write-Host ("{0}: took {1}, it had to keep it" -f $checkCase.Name, $checkCase.Kept)
             $failures++
+            continue
+        }
+
+        # One annotation for a failing run, none for a passing one: the run page is part of the
+        # verdict, so a check that stopped writing it fails a case here rather than going quiet.
+        $annotations = ([regex]::Matches($result.Text, "(?m)^::error title=Scratch left behind::")).Count
+        $wanted = 0
+        if ($checkCase.Expected -eq 1) { $wanted = 1 }
+        if ($annotations -ne $wanted) {
+            Write-Host ("{0}: wrote {1} annotation(s), expected {2}" -f $checkCase.Name, $annotations, $wanted)
+            Write-Host $result.Text
+            $failures++
+            continue
+        }
+
+        $summaryText = ""
+        if (Test-Path -LiteralPath $summary -PathType Leaf) {
+            $summaryText = Get-Content -LiteralPath $summary -Raw
+        }
+
+        if ($checkCase.Expected -eq 1 -and [string]::IsNullOrWhiteSpace($summaryText)) {
+            Write-Host ("{0}: reported a failure without writing the step summary" -f $checkCase.Name)
+            $failures++
+            continue
+        }
+
+        if ($checkCase.Expected -eq 0 -and -not [string]::IsNullOrWhiteSpace($summaryText)) {
+            Write-Host ("{0}: wrote a step summary for a passing run" -f $checkCase.Name)
+            Write-Host $summaryText
+            $failures++
+            continue
+        }
+
+        # Contains, not -like: the backtick that makes a folder a code span is the wildcard
+        # escape character, so a pattern built from the expected row would never match it.
+        $missing = @($checkCase.Summary | Where-Object {
+                $_ -and $summaryText.IndexOf($_, [System.StringComparison]::Ordinal) -lt 0
+            })
+        if ($missing.Count -gt 0) {
+            Write-Host ("{0}: the step summary did not carry {1}" -f $checkCase.Name, ($missing -join ' | '))
+            Write-Host $summaryText
+            $failures++
         }
     }
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    if ($null -eq $summaryBefore) {
+        Remove-Item Env:GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:GITHUB_STEP_SUMMARY = $summaryBefore
+    }
 }
 
 if ($failures -gt 0) {

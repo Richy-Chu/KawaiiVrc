@@ -382,13 +382,20 @@ public sealed class DeferralNoteContractTests
         {
             try
             {
-                using var process = Process.Start(new ProcessStartInfo(shell, arguments)
+                var start = new ProcessStartInfo(shell, arguments)
                 {
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true
-                }) ?? throw new InvalidOperationException(shell + " did not start.");
+                };
+
+                // A step hands the check the file for its run-page verdict and this host inherits
+                // that variable, so the child gets one inside the sandbox: without it every
+                // planted failure here would append its table to the job's real step summary.
+                start.Environment["GITHUB_STEP_SUMMARY"] = Path.Combine(temp, "step-summary.md");
+
+                using var process = Process.Start(start) ?? throw new InvalidOperationException(shell + " did not start.");
 
                 var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
                 if (!process.WaitForExit(60_000))
