@@ -2004,6 +2004,9 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Everything below runs on the UI thread at the scan interval, so a freeze here has to
+        // name itself in the stall log rather than leaving a bare gap.
+        using var tick = UiJobTrace.Shared.Begin("chatbox-tick");
         RefreshAfkState();
 
         if (!OscEnabled)
@@ -3426,6 +3429,9 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     private async Task PollIntegrationsAsync()
     {
+        // Spans the pool probes and the UI work that applies them: a stall during either is this
+        // job's, and the line in lifecycle.log should say so.
+        using var poll = UiJobTrace.Shared.Begin("chatbox-integrations");
         try
         {
             var changed = false;

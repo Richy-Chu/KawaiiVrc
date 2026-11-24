@@ -98,6 +98,10 @@ internal static class WpfTestHost
                     };
                     application.InitializeComponent();
 
+                    // A test that trips the real startup path's handler must not stop the suite
+                    // on a modal it cannot answer: the crash log keeps the entry, the dialog goes.
+                    application.ShowFailureDialog = false;
+
                     // The app creates its one window from OnStartup rather than from a
                     // StartupUri, and a test host never runs OnStartup, so nothing opens a
                     // shell window here: tests build and close their own.

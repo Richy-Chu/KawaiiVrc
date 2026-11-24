@@ -99,7 +99,16 @@ public partial class MainWindow : Window
         // respond. Started before the window shows so startup freezes are
         // recorded too, and quiet while minimised where none of it is visible.
         _stallMonitor = new UiStallMonitor(
-            milliseconds => LifecycleLog.Write($"ui stall {milliseconds}ms"),
+            stall =>
+            {
+                // Naming the job in flight is the part of a stall that can be acted on. Without
+                // it the line only says the UI stopped, and the next freeze repeats the mystery.
+                var during = UiJobTrace.Shared.Describe(stall.StartedTicks, stall.EndedTicks);
+                LifecycleLog.Write(
+                    during is null
+                        ? $"ui stall {stall.Milliseconds}ms"
+                        : $"ui stall {stall.Milliseconds}ms across {during}");
+            },
             () => WindowState == WindowState.Minimized);
         _stallMonitor.Start();
 
@@ -879,6 +888,9 @@ public partial class MainWindow : Window
         _lastSettleAt = DateTimeOffset.UtcNow;
         _ = Task.Run(async () =>
         {
+            // The collect and the trim below both touch the whole process, so a stall they cause
+            // has to name them instead of looking like an unexplained freeze.
+            using var job = UiJobTrace.Shared.Begin("settle");
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);

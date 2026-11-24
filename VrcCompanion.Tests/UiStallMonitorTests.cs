@@ -16,20 +16,20 @@ public sealed class UiStallMonitorTests
     [Fact]
     public void AFreezeLongerThanTheThresholdIsReportedWithItsLength()
     {
-        var reported = new List<long>();
+        var reported = new List<UiStall>();
         using var monitor = new UiStallMonitor(reported.Add);
         monitor.Start();
 
         monitor.SampleAt(Stopwatch.GetTimestamp() + (Stopwatch.Frequency * 700 / 1000));
 
         Assert.Single(reported);
-        Assert.InRange(reported[0], 650, 800);
+        Assert.InRange(reported[0].Milliseconds, 650, 800);
     }
 
     [Fact]
     public void NormalTicksAreNotReported()
     {
-        var reported = new List<long>();
+        var reported = new List<UiStall>();
         using var monitor = new UiStallMonitor(reported.Add);
         monitor.Start();
 
@@ -43,7 +43,7 @@ public sealed class UiStallMonitorTests
     [Fact]
     public void AShortGapRightAfterAFreezeIsNotReportedAgain()
     {
-        var reported = new List<long>();
+        var reported = new List<UiStall>();
         using var monitor = new UiStallMonitor(reported.Add);
         monitor.Start();
 
@@ -57,7 +57,7 @@ public sealed class UiStallMonitorTests
     [Fact]
     public void NothingIsReportedWhileTheWindowIsMinimised()
     {
-        var reported = new List<long>();
+        var reported = new List<UiStall>();
         var minimised = true;
         using var monitor = new UiStallMonitor(reported.Add, () => minimised);
         monitor.Start();

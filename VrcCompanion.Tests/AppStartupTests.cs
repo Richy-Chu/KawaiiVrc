@@ -112,6 +112,10 @@ public sealed class AppStartupTests
                 var owns = app.RunStartup(() => startupEvents++);
 
                 Assert.True(owns, "The claim this launch made owns the app, so startup must say so.");
+
+                // The launch installed its global error handlers on the host's application; a
+                // dialog there would hang every later test, so the host must never show one.
+                Assert.False(app.ShowFailureDialog, "A modal in the shared host would hang the suite.");
                 Assert.Equal(1, madeWindows);
                 Assert.Equal(1, startupEvents);
                 Assert.Same(shell, app.MainWindow);

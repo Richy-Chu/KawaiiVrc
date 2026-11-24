@@ -43,6 +43,13 @@ public partial class App : Application
     /// </summary>
     internal Action Stop { get; set; }
 
+    /// <summary>
+    /// Whether an unhandled dispatcher failure shows its dialog. The shipped app shows it; a host
+    /// that runs the real startup path inside another process - the test suite - would stop for a
+    /// modal nobody can answer, so it keeps the crash-log entry and drops the dialog.
+    /// </summary>
+    internal bool ShowFailureDialog { get; set; } = true;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         RunStartup(() => base.OnStartup(e));
@@ -70,8 +77,13 @@ public partial class App : Application
 
         _singleInstance.Listen(BringRunningWindowForward);
 
+        // A host can run a launch more than once; one subscription per handler keeps the crash log
+        // from recording the same failure twice.
+        DispatcherUnhandledException -= OnDispatcherUnhandledException;
         DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException -= OnDomainUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
         SessionEnding += (_, args) => LifecycleLog.Write($"session ending reason={args.ReasonSessionEnding}");
         LifecycleLog.Write("startup");
@@ -122,8 +134,9 @@ public partial class App : Application
 
         // A layout/render error can fire on every measure pass. Showing one
         // dialog per retry buries the app in duplicate windows, so report the
-        // first failure and keep every later one in the crash log.
-        if (_errorDialogShown)
+        // first failure and keep every later one in the crash log. A host that
+        // cannot answer a modal drops the dialog entirely.
+        if (_errorDialogShown || !ShowFailureDialog)
         {
             return;
         }

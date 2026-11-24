@@ -3070,6 +3070,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Named in the stall log if the UI thread stops responding while this poll is out.
+        using var activityPoll = Services.UiJobTrace.Shared.Begin("activity-poll");
         _activityPollBusy = true;
         try
         {
@@ -3217,6 +3219,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        using var bioPoll = Services.UiJobTrace.Shared.Begin("bio-poll");
         _bioPollBusy = true;
         try
         {
@@ -5871,6 +5874,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // This tick reads VRChat's log and queries instance history on the UI thread; the trace is
+        // what lets a stall line say this was the job running across it.
+        using var poll = Services.UiJobTrace.Shared.Begin("instance-history");
         var gameRunning = _logPlayerService.IsGameRunning;
         var snapshot = gameRunning ? _logPlayerService.Poll() : null;
         if (snapshot is not null && LaunchService.IsLocation(snapshot.Location))
