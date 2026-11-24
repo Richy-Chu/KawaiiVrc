@@ -3,7 +3,8 @@
 # note at all, a note naming a locked store file, a note whose .tmp file was not empty. A deferral
 # too old for the sweep to still be coming is taken by the check itself, which is why the cases
 # assert the folder is gone - but only while nothing else is wrong with the note: a stale folder
-# that also names a locked file keeps failing and keeps standing, because that is evidence. Every
+# that also names a locked file keeps failing and keeps standing, because that is evidence, and
+# a note dated hours ahead is held to the same rules before its stamp is even read. Every
 # case is planted in a sandbox and the check is pointed at it, so the machine's own %TEMP% never
 # decides one. Browser profile folders get the same treatment: a dead pid's profile is allowed to
 # wait for the sweep, a name the sweep cannot read and a live pid's folder are not.
@@ -223,6 +224,26 @@ $checks = @(
                 "host pid: $deadPid",
                 "utc: $pastTheGrace",
                 "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
+        # The other half of the future-stamp rule: a note that will never age is due now, but only
+        # once every other rule passes. This one names a locked store file, so it is evidence - the
+        # same leak a stale note may not paper over, from the other side of the clock.
+        Name = "a note dated hours ahead that names a locked store file still fails and is kept"
+        Expected = 1
+        Marker = "::error title=Scratch left behind::vrc-companion-tests-$deadPid (0 h old: the note names a locked file that is not a .tmp: settings.json)"
+        Kept = "vrc-companion-tests-$deadPid"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunFile $sandbox "settings.json" 412
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: $farAhead",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0",
+                "held: settings.json 412")
         }
     },
     @{
