@@ -882,13 +882,12 @@ public partial class MainWindow : Window
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-                // A non-blocking hint leaves the segments committed, so the
-                // process stayed at the high-water mark after a heavy tab was
-                // dropped. A compacting collection hands the empty segments back
-                // to the OS; it runs off the UI thread and at most every 20s.
-                System.Runtime.GCSettings.LargeObjectHeapCompactionMode =
-                    System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
-                GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                // This ran a blocking compacting collection, which stops every thread in the
+                // process for the whole sweep: on a few-hundred-megabyte heap that is a stall
+                // of seconds, whichever thread asked for it. The background trim already made
+                // this mistake and its comment says the same thing, so the collect only hints
+                // here too and the working-set trim below is what gives memory back to Windows.
+                GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
                 GC.WaitForPendingFinalizers();
                 // The evicted page's images are only reachable through the
                 // decode cache now; dropping it costs a re-decode from the disk
