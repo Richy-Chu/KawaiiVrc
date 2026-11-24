@@ -17,6 +17,13 @@
 # folder it could not take. A stale note that names something the note below would refuse is still
 # a failure, and still keeps the folder: that is evidence, not litter.
 #
+# A note dated ahead of this check is the same problem from the other side: its age is negative, so
+# it only ever walks towards the two-hour bound and never reaches it, and the folder stands for as
+# long as the stamp is wrong. Skew between the run's clock and this one is seconds, so a note a few
+# minutes ahead is believed and ages into the past on its own; anything further is a stamp that
+# cannot be an age at all, so the note is due now and the check takes it - once every other rule
+# passes, because a wrong stamp is not a leak.
+#
 # The WebView2 profile is the separate exception: its browser holds it open until the host exits,
 # so it lives in vrc-companion-browser-<pid> and the next run's sweep reclaims it. It is judged
 # all the same - a name this check cannot read is a folder no sweep will ever take, and a pid
@@ -29,9 +36,9 @@ param(
     # How long to give a run whose host fell back to its exit handler. Zero judges at once.
     [int] $WaitSeconds = 20,
 
-    # The moment a deferral is aged against, as an ISO 8601 timestamp in UTC. A test pins it so
-    # the two-hour threshold can be decided one minute either side of it; a run leaves it out and
-    # the check reads the clock.
+    # The moment a deferral is aged against, as an ISO 8601 timestamp in UTC. A test pins it so a
+    # bound - the two-hour threshold or the skew grace - is decided on its exact edge, not at
+    # whatever the machine's clock said; a run leaves it out and the check reads the clock.
     [string] $Now = ""
 )
 $ErrorActionPreference = "Stop"
@@ -42,6 +49,11 @@ $deferralNote = "cleanup-deferred.txt"
 
 # How long a deferral may stand before this check takes it itself.
 $staleAfterHours = 2
+
+# How far ahead of the clock a note may be dated and still be read as a recent deferral: ordinary
+# skew is seconds, so a note within this ages into the past on its own. Past it the age counts up
+# towards zero instead, and the folder would stand until someone deleted it by hand.
+$futureGraceMinutes = 5
 
 # One reading for the whole check, so a deferral's age does not depend on how long a wait took.
 $clock = (Get-Date).ToUniversalTime()
@@ -101,7 +113,14 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
     # it rather than waiting for a sweep that never came. Its age is reported, not judged, because
     # the caller has still to refuse a note with anything else wrong with it - that folder is
     # evidence, and deleting it would hide what the suite got wrong.
+    #
+    # A stamp ahead of the clock is the same folder from the other side: an age that is negative
+    # only counts up towards zero, so the bound above is never reached however wrong the stamp is,
+    # and the folder would stand for good. A note dated further ahead than any skew is one whose
+    # age cannot be believed, so it is due now - and both answers wait for every rule below, since
+    # a wrong stamp is not a leak and this check deletes litter, never evidence.
     $staleHours = 0.0
+    $futureStamp = $null
     if ($null -eq $problem) {
         # Not wrapped in @(): an empty array is not $null, and a note with no such line has to
         # read as one with no line, not as a line that would not parse.
@@ -122,7 +141,14 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
         }
         else {
             $age = ($clock - $when.ToUniversalTime()).TotalHours
-            if ($age -gt $staleAfterHours) { $staleHours = [math]::Floor($age) }
+            if ($age -gt $staleAfterHours) {
+                $staleHours = [math]::Floor($age)
+            }
+            elseif (($when.ToUniversalTime() - $clock) -gt [timespan]::FromMinutes($futureGraceMinutes)) {
+                # Ticks, not hours: a stamp exactly on the grace is one skew can still explain, and
+                # dividing it into hours would decide that edge on a float's last bit.
+                $futureStamp = $stamp
+            }
         }
     }
 
@@ -176,7 +202,12 @@ function Get-Deferral([System.IO.DirectoryInfo] $folder, [int] $owner) {
         }
     }
 
-    return [pscustomobject]@{ Held = $held; Problem = $problem; StaleHours = $staleHours }
+    return [pscustomobject]@{
+        Held = $held
+        Problem = $problem
+        StaleHours = $staleHours
+        FutureStamp = $futureStamp
+    }
 }
 
 function Test-OwnerIsGone([int] $owner) {
@@ -241,10 +272,10 @@ foreach ($folder in $leftovers) {
         continue
     }
 
-    # The note is a good one and old: nothing swept it, so this check does. A folder it cannot
-    # take is a failure in its own right - the point is that nothing stands, not that the report
-    # is quiet.
-    if ($deferral.StaleHours -gt 0) {
+    # The note is a good one and old - or dated so far ahead that it will never age: nothing will
+    # sweep either way, so this check does. A folder it cannot take is a failure in its own right -
+    # the point is that nothing stands, not that the report is quiet.
+    if ($deferral.StaleHours -gt 0 -or $null -ne $deferral.FutureStamp) {
         try {
             Remove-Item -LiteralPath $folder.FullName -Recurse -Force -ErrorAction Stop
         }
@@ -260,8 +291,14 @@ foreach ($folder in $leftovers) {
             continue
         }
 
-        Write-Host ("Took stale deferral " + $folder.Name + ": its note is " + $deferral.StaleHours +
-            " hours old, so the sweep that should have taken it never ran.")
+        $why = "its note is " + $deferral.StaleHours +
+            " hours old, so the sweep that should have taken it never ran."
+        if ($null -ne $deferral.FutureStamp) {
+            $why = "its note is dated " + $deferral.FutureStamp + ", ahead of this check," +
+                " so its age can never reach the " + $staleAfterHours + "-hour bound."
+        }
+
+        Write-Host ("Took stale deferral " + $folder.Name + ": " + $why)
         continue
     }
 
@@ -299,8 +336,9 @@ if ($failed.Count -gt 0) {
     $rule = "A run must delete its own folders. A run folder may stand only with a " + $deferralNote +
         " that names its own dead pid, holds nothing but empty .tmp files, and the folder holds" +
         " nothing the note does not name - and this check takes one whose note is older than " +
-        $staleAfterHours + " hours, since the sweep never did. A browser profile may stand only" +
-        " while its pid is gone, so that the next run's sweep takes it."
+        $staleAfterHours + " hours or dated further ahead than clock skew explains, since neither" +
+        " kind ever ages into a sweep. A browser profile may stand only while its pid is gone, so" +
+        " that the next run's sweep takes it."
     Write-Host $rule
 
     # One annotation, not one per folder: a step shows ten and drops the rest, so a run page that

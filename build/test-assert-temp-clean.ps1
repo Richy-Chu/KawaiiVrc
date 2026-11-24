@@ -12,6 +12,10 @@
 # writer and this reader, and the writer is C#; DeferralNoteContractTests hands that one clock to
 # both, so the bound is decided there and these cases stay hours away from it.
 #
+# The grace for a stamp ahead of the clock is planted here, because only this reader has one: a
+# note exactly on the grace waits, one a second past it is taken, and both pin the clock on the
+# check so that edge is a case rather than a race.
+#
 # A failure also has to land on the run page, not only in the step log: every failing case must
 # write exactly one ::error naming its folder, its age and its reason, and a step summary that
 # carries the same for each folder, while a passing case writes neither. Each case hands the check
@@ -27,9 +31,15 @@ $root = Join-Path ([System.IO.Path]::GetTempPath()) ("kawaiivrc-temp-check-" + [
 $deadPid = 2147483000
 
 # The note's timestamp is what the check ages, so a passing case has to be written now: a fixed
-# date would be a stale deferral by the time anyone runs this.
-$now = (Get-Date).ToUniversalTime().ToString("O")
-$stale = (Get-Date).ToUniversalTime().AddHours(-3).ToString("O")
+# date would be a stale deferral by the time anyone runs this. The cases that age a note against
+# this reading pin it on the check, so a stamp sitting exactly on a bound is decided the same way
+# on a fast machine as on a slow one.
+$clock = (Get-Date).ToUniversalTime()
+$now = $clock.ToString("O")
+$stale = $clock.AddHours(-3).ToString("O")
+$onTheGrace = $clock.AddMinutes(5).ToString("O")
+$pastTheGrace = $clock.AddMinutes(5).AddSeconds(1).ToString("O")
+$farAhead = $clock.AddHours(6).ToString("O")
 
 function Get-Sandbox {
     $sandbox = Join-Path $root ([guid]::NewGuid().ToString("N"))
@@ -57,8 +67,9 @@ function ProfileFolder([string] $sandbox, [string] $owner) {
     return $folder
 }
 
-function Invoke-Check([string] $sandbox) {
+function Invoke-Check([string] $sandbox, [string] $at = "") {
     $arguments = @("-NoProfile", "-File", $check, "-TempPath", $sandbox, "-WaitSeconds", "0")
+    if (-not [string]::IsNullOrWhiteSpace($at)) { $arguments += @("-Now", $at) }
     $output = @(& $shell @arguments 2>&1)
     $code = $LASTEXITCODE
     return [pscustomobject]@{ ExitCode = $code; Text = ($output -join "`n") }
@@ -159,6 +170,58 @@ $checks = @(
             Write-RunNote $sandbox @(
                 "host pid: $deadPid",
                 "utc: $stale",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
+        # Skew is seconds, so a note a few minutes ahead is an honest deferral whose age turns
+        # positive on its own: it still waits for the sweep that may yet come.
+        Name = "a note dated exactly on the skew grace still waits"
+        Expected = 0
+        Marker = "waits for the next run's sweep"
+        Kept = "vrc-companion-tests-$deadPid"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: $onTheGrace",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
+        # The folder nothing reclaims: its age only walks towards zero, so the two-hour bound is
+        # never reached and no sweep is ever due. The note is otherwise sound, so the check takes
+        # it - a wrong stamp is not the leak that has to be kept as evidence.
+        Name = "a note dated hours ahead is taken"
+        Expected = 0
+        Marker = "Took stale deferral vrc-companion-tests-${deadPid}: its note is dated $farAhead, ahead of this check, so its age can never reach the 2-hour bound."
+        Gone = "vrc-companion-tests-$deadPid"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: $farAhead",
+                "held: 11111111-1111-1111-1111-111111111111.tmp 0")
+        }
+    },
+    @{
+        # A second past the grace is past what skew can explain, which pins the grace to the
+        # minute rather than merely somewhere near it.
+        Name = "a note a second past the skew grace is taken"
+        Expected = 0
+        Marker = "Took stale deferral vrc-companion-tests-${deadPid}: its note is dated $pastTheGrace, ahead of this check"
+        Gone = "vrc-companion-tests-$deadPid"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-RunFile $sandbox "11111111-1111-1111-1111-111111111111.tmp" 0
+            Write-RunNote $sandbox @(
+                "host pid: $deadPid",
+                "utc: $pastTheGrace",
                 "held: 11111111-1111-1111-1111-111111111111.tmp 0")
         }
     },
@@ -280,7 +343,7 @@ try {
         & $checkCase.Plant $sandbox
         Remove-Item -LiteralPath $summary -Force -ErrorAction SilentlyContinue
         $env:GITHUB_STEP_SUMMARY = $summary
-        $result = Invoke-Check $sandbox
+        $result = Invoke-Check $sandbox $checkCase.At
         if ($result.ExitCode -ne $checkCase.Expected) {
             Write-Host ("{0}: exited {1}, expected {2}" -f $checkCase.Name, $result.ExitCode, $checkCase.Expected)
             Write-Host $result.Text

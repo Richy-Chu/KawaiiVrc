@@ -73,7 +73,11 @@ cleanup never ran - fails the job, and so does one whose note names a locked sto
 folder still holds a store file the note never mentions. The note's own `utc:` line has to be
 recent too: the sweep takes a deferred folder on the next run's startup, so one older than two
 hours was not swept, and the check takes it itself instead of letting it stand - locally that
-usually just means nobody has run the suite since. Age is the one thing forgiven: a stale note
+usually just means nobody has run the suite since. A note dated ahead of the clock is the same
+folder from the other side: its age is negative and only walks towards the bound, so the folder
+would stand for as long as the stamp is wrong. More than five minutes ahead is not skew any clock
+leaves, so such a note is due now and the check takes it, while a note a few minutes ahead ages
+into the past on its own. Age is the one thing forgiven: a stale note
 that names a locked store file, or sits beside a file it does not name, still fails and keeps
 the folder, because that folder is evidence rather than litter. A stale folder the check cannot
 delete fails too, so a take never turns into a silent skip - including a delete that reports no
@@ -101,7 +105,10 @@ leave standing. It is also the one place the two-hour bound is planted - a minut
 on it, a minute past - because the note and the check have to be aged against the same clock, and
 only here does a clock reach both. `build/test-assert-temp-clean.ps1` therefore plants no case
 near the bound: its notes are written by hand, so an age it chose itself would pin the reader
-while the writer stayed free to disagree with it.
+while the writer stayed free to disagree with it. It does plant the
+skew grace itself - a note exactly five minutes ahead waits for the sweep, one a second past it
+is taken, a note six hours ahead is taken - because that rule lives only in the reader, and each
+case pins the same clock on the check.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this
