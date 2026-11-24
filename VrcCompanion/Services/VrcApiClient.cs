@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -59,18 +58,28 @@ public sealed class VrcApiClient : IDisposable
     private readonly SemaphoreSlim _avatarReadGate = new(4, 4);
     private readonly SemaphoreSlim _avatarMutationGate = new(1, 1);
     private DateTimeOffset _lastAvatarMutationAt = DateTimeOffset.MinValue;
-    private readonly ConcurrentDictionary<string, CacheEntry<VrcWorld>> _worldCache = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, CacheEntry<VrcProfile>> _profileCache = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, CacheEntry<VrcMutuals>> _mutualCache = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, CacheEntry<VrcUser>> _userCache = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, CacheEntry<IReadOnlyList<VrcCosmetic>>> _cosmeticCache = new(StringComparer.Ordinal);
+    // Everything a session browses had a cache with no ceiling, so a long session kept every
+    // profile, world and group it ever saw. These are ceilings, not budgets: the least recently
+    // read response goes when one is reached, and the app stays flat over a day of use.
+    private const int MaxCachedWorlds = 1_000;
+    private const int MaxCachedProfiles = 2_000;
+    private const int MaxCachedMutuals = 1_000;
+    private const int MaxCachedUsers = 2_000;
+    private const int MaxCachedCosmetics = 32;
+    private const int MaxCachedGroupLists = 200;
+
+    private readonly BoundedCache<string, VrcWorld> _worldCache = new(MaxCachedWorlds, StringComparer.Ordinal);
+    private readonly BoundedCache<string, VrcProfile> _profileCache = new(MaxCachedProfiles, StringComparer.Ordinal);
+    private readonly BoundedCache<string, VrcMutuals> _mutualCache = new(MaxCachedMutuals, StringComparer.Ordinal);
+    private readonly BoundedCache<string, VrcUser> _userCache = new(MaxCachedUsers, StringComparer.Ordinal);
+    private readonly BoundedCache<string, IReadOnlyList<VrcCosmetic>> _cosmeticCache = new(MaxCachedCosmetics, StringComparer.Ordinal);
     private CacheEntry<IReadOnlyList<VrcUser>>? _friendsCache;
     private bool _friendsCacheComplete;
     private bool _friendsCacheOnlineOnly;
     private CacheEntry<IReadOnlySet<string>>? _blockedUsersCache;
     private CacheEntry<IReadOnlyList<Group>>? _myGroupsCache;
     private string? _myGroupsCacheUserId;
-    private readonly ConcurrentDictionary<string, CacheEntry<IReadOnlyList<Group>>> _userGroupsCache = new(StringComparer.Ordinal);
+    private readonly BoundedCache<string, IReadOnlyList<Group>> _userGroupsCache = new(MaxCachedGroupLists, StringComparer.Ordinal);
     private DateTimeOffset _lastRequestAt = DateTimeOffset.MinValue;
 
     public VrcApiClient(SessionStore? sessionStore = null)
@@ -3954,8 +3963,6 @@ public sealed class VrcApiClient : IDisposable
             }
         }
     }
-
-    private sealed record CacheEntry<T>(T Value, DateTimeOffset FetchedAt);
 
     private sealed class InstanceShortNameResponse
     {

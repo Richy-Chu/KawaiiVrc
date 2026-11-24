@@ -69,6 +69,15 @@ A command's failure is not a crash and must not reach the dispatcher: `AsyncRela
 it to the lifecycle log, or to the `onFailure` a test hands it, and the button comes back either
 way (`AsyncCommandTests`).
 
+## Long sessions
+
+`VrcApiClient` caches user, profile, mutual, world, group-list and cosmetic responses, and each
+of those caches is a `BoundedCache` with a ceiling: a read refreshes the entry's place in the
+order, and the least recently read entry goes when the cap is reached. Freshness stays the
+caller's rule - an entry carries the moment it was fetched - and `ClearCaches` on sign-out still
+drops everything. No cache in the client is unbounded, because the app is expected to run for
+days; `BoundedCacheTests` decides the cap and the order it evicts by.
+
 ## The scratch sweep
 
 `TestProfile` (`VrcCompanion.Tests/TestProfile.cs`) gives each run a folder of its own and
