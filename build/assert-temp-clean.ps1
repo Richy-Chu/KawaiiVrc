@@ -194,7 +194,7 @@ function Get-ScratchFailure([string] $name, [double] $ageHours, [string] $reason
     }
 }
 
-function Get-FolderAgeHours([System.IO.DirectoryInfo] $folder) {
+function Get-FolderAge([System.IO.DirectoryInfo] $folder) {
     return ($clock - $folder.LastWriteTimeUtc).TotalHours
 }
 
@@ -219,24 +219,24 @@ foreach ($folder in $leftovers) {
     $owner = 0
     $namedForPid = $folder.Name -match ('^' + [regex]::Escape($runFolder) + '(\d+)$')
     if (-not $namedForPid -or -not [int]::TryParse($Matches[1], [ref] $owner)) {
-        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) "not a run folder this check can name"
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAge $folder) "not a run folder this check can name"
         continue
     }
 
     if (-not (Test-OwnerIsGone $owner)) {
-        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) ("process " + $owner + " is still running")
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAge $folder) ("process " + $owner + " is still running")
         continue
     }
 
     $deferral = Get-Deferral $folder $owner
     if ($null -eq $deferral) {
-        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) ("no " + $deferralNote + " naming its own pid")
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAge $folder) ("no " + $deferralNote + " naming its own pid")
         continue
     }
 
     if ($null -ne $deferral.Problem) {
         $age = $deferral.StaleHours
-        if ($age -le 0) { $age = Get-FolderAgeHours $folder }
+        if ($age -le 0) { $age = Get-FolderAge $folder }
         $failed += Get-ScratchFailure $folder.Name $age $deferral.Problem
         continue
     }
@@ -278,12 +278,12 @@ foreach ($folder in Get-ScratchLeftover $browserFolder) {
     $owner = 0
     $namedForPid = $folder.Name -match ('^' + [regex]::Escape($browserFolder) + '(\d+)$')
     if (-not $namedForPid -or -not [int]::TryParse($Matches[1], [ref] $owner)) {
-        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) "not a browser folder this check can name"
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAge $folder) "not a browser folder this check can name"
         continue
     }
 
     if (-not (Test-OwnerIsGone $owner)) {
-        $failed += Get-ScratchFailure $folder.Name (Get-FolderAgeHours $folder) ("process " + $owner + " is still running")
+        $failed += Get-ScratchFailure $folder.Name (Get-FolderAge $folder) ("process " + $owner + " is still running")
         continue
     }
 
