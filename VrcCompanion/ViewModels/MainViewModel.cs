@@ -35,6 +35,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly DispatcherTimer _clockTimer;
     private VrChatLogPlayerService _logPlayerService;
     private readonly VrChatRealtimeService _realtime;
+    private readonly RealtimeEventQueue _realtimeEvents;
     private readonly InstanceHistoryStore _instanceHistoryStore;
     private readonly NotificationPersistenceStore _notificationStore;
     private InviteMessageMemoryStore _inviteMessageMemory = InviteMessageMemoryStore.Shared;
@@ -322,6 +323,29 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         CosmeticCatalog.Changed += OnCosmeticCatalogChanged;
         _logPlayerService = new VrChatLogPlayerService();
         _realtime = new VrChatRealtimeService(_api);
+        _realtimeEvents = new RealtimeEventQueue(
+            ApplyRealtimeBatch,
+            action =>
+            {
+                var dispatcher = Application.Current?.Dispatcher;
+                if (dispatcher is null)
+                {
+                    // No WPF application (tests): apply where the event arrived.
+                    action();
+                    return;
+                }
+
+                try
+                {
+                    // Background, not normal: friend updates must yield to input and to the
+                    // stall monitor's own timer instead of running ahead of them.
+                    dispatcher.BeginInvoke(DispatcherPriority.Background, action);
+                }
+                catch (InvalidOperationException)
+                {
+                    // The window is shutting down; there is no UI left to update.
+                }
+            });
         _realtime.EventReceived += OnRealtimeEvent;
         _realtime.StatusChanged += OnRealtimeStatusChanged;
         _instanceHistoryStore = new InstanceHistoryStore();
@@ -8163,28 +8187,38 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is not null && !dispatcher.CheckAccess())
-        {
-            try
-            {
-                dispatcher.BeginInvoke(new Action(() => OnRealtimeEvent(sender, realtimeEvent)));
-            }
-            catch (InvalidOperationException)
-            {
-                // The window is shutting down; there is no UI left to update.
-            }
-            return;
-        }
+        // Queueing one dispatcher callback per event turned a burst of friend updates into a
+        // burst of normal-priority work that starved input and the stall monitor: the window
+        // recorded five-second freezes with no job in flight to blame. The queue applies a whole
+        // batch per callback, at background priority.
+        _realtimeEvents.Post(realtimeEvent);
+    }
 
-        if (!IsLoggedIn)
+    private void ApplyRealtimeBatch(IReadOnlyList<VrChatRealtimeEvent> batch)
+    {
+        if (_disposed || !IsLoggedIn)
         {
             return;
         }
 
+        // Named in the stall log: a batch that takes long enough to feel says so.
+        using var job = Services.UiJobTrace.Shared.Begin("realtime");
+
+        // Built once per batch rather than once per event: the old path allocated a dictionary
+        // over the whole friend list for every single message.
         var friendsById = Friends
             .GroupBy(friend => friend.Id, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First().User, StringComparer.Ordinal);
+        foreach (var realtimeEvent in batch)
+        {
+            ApplyRealtimeEvent(realtimeEvent, friendsById);
+        }
+    }
+
+    private void ApplyRealtimeEvent(
+        VrChatRealtimeEvent realtimeEvent,
+        IReadOnlyDictionary<string, VrcUser> friendsById)
+    {
         var route = VrChatRealtimeRouter.Route(realtimeEvent, friendsById);
         switch (route.Action)
         {
