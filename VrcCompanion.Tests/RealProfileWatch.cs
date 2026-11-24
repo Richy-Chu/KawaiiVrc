@@ -82,6 +82,13 @@ internal static class RealProfileWatch
     /// <summary>A folder this code names: the project's run id, or a test host's pid.</summary>
     private static readonly Regex RunFolderName = new("^[0-9a-f]{32}$|^[0-9]+$", RegexOptions.Compiled);
 
+    /// <summary>
+    /// How long a finished run's folder is kept, so a failed run's note can still be read from it.
+    /// The post-run check reads this value out of this file instead of keeping a copy, so the day
+    /// it still calls evidence is the one this pruner is about to take.
+    /// </summary>
+    internal static readonly TimeSpan RunRetention = TimeSpan.FromDays(1);
+
     private static ProfileSnapshot? _baseline;
     private static IReadOnlyList<string> _appAtBaseline = Array.Empty<string>();
 
@@ -121,8 +128,8 @@ internal static class RealProfileWatch
     }
 
     /// <summary>
-    /// Every run keeps its own folder, so the record of a run a day old has already been
-    /// read: keep yesterday's for a failure whose note still needs looking at, delete the
+    /// Every run keeps its own folder, so the record of a run past <see cref="RunRetention"/> has
+    /// already been read: keep it for a failure whose note still needs looking at, delete the
     /// rest so the folder does not grow with every run. Only names this code makes are
     /// touched, so a folder handed in from outside is left alone.
     /// </summary>
@@ -147,7 +154,7 @@ internal static class RealProfileWatch
 
                 try
                 {
-                    if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(directory) > TimeSpan.FromDays(1))
+                    if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(directory) > RunRetention)
                     {
                         Directory.Delete(directory, recursive: true);
                     }

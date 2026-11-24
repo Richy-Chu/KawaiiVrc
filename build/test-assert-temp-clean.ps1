@@ -33,11 +33,14 @@
 #
 # The guard's own run folders are planted as well. They sit under VrcCompanionTests\logs\guard, one
 # per run, and the guard keeps each for a day so a failed run's note can still be read before
-# RealProfileWatch.PruneOldRuns takes it at the next run's start. The check holds that same day
-# from the other side: on it the folder still waits, a second past it is taken - no run has started
-# since to prune it - and a name no run makes is refused and kept. The case stamps the age on the
-# folder and pins the clock on the check, so the edge is decided here rather than by how long the
-# script takes to reach it.
+# RealProfileWatch.PruneOldRuns takes it at the next run's start. That day is written once, in
+# RealProfileWatch.RunRetention, and the check reads it out of that source instead of keeping a
+# copy. The cases hold the day from the other side: on it the folder still waits, a second past it
+# is taken - no run has started since to prune it - and a name no run makes is refused and kept. The
+# case stamps the age on the folder and pins the clock on the check, so the edge is decided here
+# rather than by how long the script takes to reach it. The edge is planted at the day the watch
+# names rather than read from it, so a change to that one value reddens these cases instead of
+# moving them with it.
 $ErrorActionPreference = "Stop"
 
 $check = Join-Path $PSScriptRoot "assert-temp-clean.ps1"
@@ -64,9 +67,10 @@ $farAhead = $clock.AddHours(6).ToString("O")
 $insideTheHour = $clock.AddHours(-1)
 $pastTheHour = $clock.AddHours(-1).AddSeconds(-1)
 
-# The day a guard run folder is kept for. It is stamped on the folder itself, which is the last
-# write PruneOldRuns and this check both age it by; exactly on it the folder still belongs to the
-# failed run whose note may need reading.
+# The day a guard run folder is kept for, as RealProfileWatch.RunRetention names it and the check
+# reads it from there. It is stamped on the folder itself, which is the last write the pruner and
+# the check both age it by; exactly on it the folder still belongs to the failed run whose note may
+# need reading, and a value that moved would redden the cases below rather than follow it.
 $onTheGuardDay = $clock.AddDays(-1)
 $pastTheGuardDay = $clock.AddDays(-1).AddSeconds(-1)
 
@@ -449,9 +453,10 @@ $checks = @(
         }
     },
     @{
-        # The day the guard keeps a folder for is PruneOldRuns' retention, read here from the other
-        # side: on it the folder is still the record of a run that may have failed, so it waits.
-        # The note a failure is read from is in this folder, which is why the day is not shortened.
+        # The day the guard keeps a folder for belongs to RealProfileWatch.RunRetention, and the
+        # check reads it out of that source: on it the folder is still the record of a run that may
+        # have failed, so it waits. The note a failure is read from is in this folder, which is why
+        # the day is not shortened.
         Name = "a guard run folder exactly on the day still waits for its note to be read"
         Expected = 0
         Marker = "Guard run folder 0123456789abcdef0123456789abcdef stays for the day a failed run's note is read from: it is 24 h old."

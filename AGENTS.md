@@ -30,11 +30,13 @@ Each run gets its own `<run>` folder, so two suites running at once cannot read 
 baseline and pass a leak. The project makes the folder when it is evaluated and hands the test
 host the path in a generated runsettings file (`VRCC_PROFILE_GUARD_DIR`); a run started without
 the project - the test explorer, a bare `dotnet vstest` - names its folder after its test host's
-pid instead. The guard deletes run folders older than a day, so the folder does not grow with
-every run. The post-run check reads that same day from the other side: a folder still inside it is
-named with its age, so a crashed run's baseline is not lost between the run that left it and the
-next prune, and one past it is taken by the check itself, because no run has started since to
-prune it - which is what a crash after the last run in a job leaves. A name `PruneOldRuns` cannot
+pid instead. `RealProfileWatch.RunRetention` is the one place that day is written: the guard
+deletes run folders past it at the next run's start, so the folder does not grow with every run,
+and the post-run check reads the same value out of `RealProfileWatch.cs` rather than keeping a
+copy. A folder still inside the day is named with its age, so a crashed run's baseline is not lost
+between the run that left it and the next prune, and one past it is taken by the check itself,
+because no run has started since to prune it - which is what a crash after the last run in a job
+leaves. A name `PruneOldRuns` cannot
 read is one it never prunes, so the check refuses that folder and keeps it as evidence.
 
 A run that leaves no baseline at the path MSBuild gave it fails the run
@@ -134,7 +136,9 @@ because both read it: `TestScratchTests` decides the sweep's edge with a handed-
 harness plants the check's on the same edge, one case a second inside it and one a second past,
 for a run folder and for a browser profile. The guard's day is planted in the harness instead: the
 age is stamped on the planted folder, so a case on the day and one a second past decide that edge
-without a second clock, while `PruneOldRuns` keeps the same day with no case of its own.
+without a second clock. Its value is not repeated in the harness either: it is written once, in
+`RealProfileWatch.RunRetention`, the check reads it from that source, and a case that lands on the
+wrong side because the value moved turns red and has to be re-planted on purpose.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this

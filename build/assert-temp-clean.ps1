@@ -37,11 +37,13 @@
 #
 # The guard's own folders are the one thing outside the run's folder: MSBuild reads them after the
 # run, from a process the run's temp redirect never reaches, so they live under
-# %TEMP%\VrcCompanionTests\logs\guard\<run>. Each run makes one and keeps it for a day, so a failed
-# run's note can still be read, and RealProfileWatch's PruneOldRuns takes one older than that when
-# the next run starts. A folder left past that day had no run after it to prune it - the run that
-# made it was the last one in this job, and it crashed or was killed - so this check takes it
-# itself; a name no run makes is one no run will ever prune, so it is refused and kept.
+# %TEMP%\VrcCompanionTests\logs\guard\<run>. Each run makes one and keeps it for the day
+# RealProfileWatch.RunRetention names, so a failed run's note can still be read, and the next run's
+# PruneOldRuns takes one older than that. That day is written only in the watch: this check reads it
+# out of RealProfileWatch.cs rather than keeping a copy, so the folder it still calls evidence is the
+# one the pruner is about to take. A folder left past the day had no run after it to prune it - the
+# run that made it was the last one in this job, and it crashed or was killed - so this check takes
+# it itself; a name no run makes is one no run will ever prune, so it is refused and kept.
 #
 # The path itself is judged before anything inside it: a -TempPath that does not exist, names a
 # file, or cannot be listed is not a folder that held nothing, and "No run folder left" is the one
@@ -74,11 +76,27 @@ $staleAfterHours = 2
 # the sweep that is meant to take it.
 $abandonedAfterHours = 1
 
-# How long a guard run folder is kept before this check takes it, in hours so that it is aged by
-# the same measure as every other folder here. RealProfileWatch.PruneOldRuns deletes one past this
-# day at the next run's start, so a folder within it is still the record a failed run's note is
-# read from; past it, no run has started to prune it.
-$guardKeptHours = 24
+# How long a guard run folder is kept for, in hours so that it is aged by the same measure as
+# every other folder here. It is not written here: RealProfileWatch.RunRetention is the one place
+# the day lives, and it is read out of that source, because a second copy could quietly disagree
+# with the pruner about when a failed run's folder stops being evidence. A source that cannot be
+# read or does not name the day exactly once is an error, never a default.
+$guardWatchSource = Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) "VrcCompanion.Tests") "RealProfileWatch.cs"
+if (-not (Test-Path -LiteralPath $guardWatchSource -PathType Leaf)) {
+    throw ("The guard's retention is read from RealProfileWatch.RunRetention, and " +
+        $guardWatchSource + " is not there.")
+}
+
+$retention = @([regex]::Matches(
+        (Get-Content -LiteralPath $guardWatchSource -Raw),
+        'RunRetention\s*=\s*TimeSpan\.FromDays\((?<days>\d+(?:\.\d+)?)\)'))
+if ($retention.Count -ne 1) {
+    throw ("RealProfileWatch.cs has to name the guard's day once, as " +
+        "RunRetention = TimeSpan.FromDays(<days>); it named it " + $retention.Count +
+        " time(s) in " + $guardWatchSource + ".")
+}
+
+$guardKeptHours = [double] $retention[0].Groups["days"].Value * 24
 
 # How far ahead of the clock a note may be dated and still be read as a recent deferral: ordinary
 # skew is seconds, so a note within this ages into the past on its own. Past it the age counts up
@@ -438,10 +456,11 @@ foreach ($folder in Get-ScratchLeftover $browserFolder) {
 }
 
 # The guard's run folders live under the real temp rather than the run's, because MSBuild reads
-# them after VSTest. Each run keeps its own for a day so a failed run's note can still be read, and
-# PruneOldRuns takes one older than that at the next run's start: a folder inside the day is the
-# record of a run that may have failed and is named, and past it there was no run after it to
-# prune it, so this check does. A name no run makes is a folder no run will ever prune.
+# them after VSTest. Each run keeps its own for the day RealProfileWatch.RunRetention names, so a
+# failed run's note can still be read, and PruneOldRuns takes one past it at the next run's start: a
+# folder inside the day is the record of a run that may have failed and is named, and past it there
+# was no run after it to prune it, so this check does. The day comes from that source above, so
+# there is one number to change. A name no run makes is a folder no run will ever prune.
 $guardRoot = Join-Path $TempPath (Join-Path "VrcCompanionTests" (Join-Path "logs" "guard"))
 $keptGuardRuns = @()
 if (Test-Path -LiteralPath $guardRoot -PathType Container) {
