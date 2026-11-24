@@ -30,6 +30,14 @@
 # The path the check is pointed at is planted too: a folder that is not there and a file where the
 # folder should be both fail with an annotation of their own, because neither is a folder that was
 # looked in and found empty.
+#
+# The guard's own run folders are planted as well. They sit under VrcCompanionTests\logs\guard, one
+# per run, and the guard keeps each for a day so a failed run's note can still be read before
+# RealProfileWatch.PruneOldRuns takes it at the next run's start. The check holds that same day
+# from the other side: on it the folder still waits, a second past it is taken - no run has started
+# since to prune it - and a name no run makes is refused and kept. The case stamps the age on the
+# folder and pins the clock on the check, so the edge is decided here rather than by how long the
+# script takes to reach it.
 $ErrorActionPreference = "Stop"
 
 $check = Join-Path $PSScriptRoot "assert-temp-clean.ps1"
@@ -55,6 +63,12 @@ $farAhead = $clock.AddHours(6).ToString("O")
 # edge belongs to whoever reads it, and the two sides have to retire a reused pid at one moment.
 $insideTheHour = $clock.AddHours(-1)
 $pastTheHour = $clock.AddHours(-1).AddSeconds(-1)
+
+# The day a guard run folder is kept for. It is stamped on the folder itself, which is the last
+# write PruneOldRuns and this check both age it by; exactly on it the folder still belongs to the
+# failed run whose note may need reading.
+$onTheGuardDay = $clock.AddDays(-1)
+$pastTheGuardDay = $clock.AddDays(-1).AddSeconds(-1)
 
 function Get-Sandbox {
     $sandbox = Join-Path $root ([guid]::NewGuid().ToString("N"))
@@ -88,6 +102,16 @@ function ProfileFolder([string] $sandbox, [string] $owner) {
     New-Item -ItemType Directory -Path $folder -Force | Out-Null
     [System.IO.File]::WriteAllBytes((Join-Path $folder "Preferences"), (New-Object byte[] 64))
     return $folder
+}
+
+function Write-GuardRun([string] $sandbox, [string] $name, [datetime] $when) {
+    # The guard's folders are outside the run's folder, because MSBuild reads them after the run.
+    # The baseline is what a run records there; the folder's own last write is the age both the
+    # guard's pruner and the check judge it by, so it is stamped after everything inside.
+    $folder = Join-Path $sandbox ("VrcCompanionTests\logs\guard\" + $name)
+    New-Item -ItemType Directory -Path $folder -Force | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $folder "profile-baseline.txt"), (New-Object byte[] 16))
+    [System.IO.Directory]::SetLastWriteTimeUtc($folder, $when)
 }
 
 function Invoke-Check([string] $sandbox, [string] $at = "") {
@@ -422,6 +446,48 @@ $checks = @(
                 "host pid: $deadPid",
                 "utc: $now",
                 "unlisted: DirectoryNotFoundException: no such path")
+        }
+    },
+    @{
+        # The day the guard keeps a folder for is PruneOldRuns' retention, read here from the other
+        # side: on it the folder is still the record of a run that may have failed, so it waits.
+        # The note a failure is read from is in this folder, which is why the day is not shortened.
+        Name = "a guard run folder exactly on the day still waits for its note to be read"
+        Expected = 0
+        Marker = "Guard run folder 0123456789abcdef0123456789abcdef stays for the day a failed run's note is read from: it is 24 h old."
+        Kept = "VrcCompanionTests\logs\guard\0123456789abcdef0123456789abcdef"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-GuardRun $sandbox "0123456789abcdef0123456789abcdef" $onTheGuardDay
+        }
+    },
+    @{
+        # No run has started since to prune it - the run that made it was the last one, and it
+        # crashed or was killed - so the folder would stand for as long as nothing else runs the
+        # suite. The check takes it, as it takes a stale deferral no sweep came for.
+        Name = "a guard run folder a second past the day is taken by the check"
+        Expected = 0
+        Marker = "Took guard run folder 0123456789abcdef0123456789abcdef: its folder is 24 h old, past the day the next run prunes one by, so no run has started since."
+        Gone = "VrcCompanionTests\logs\guard\0123456789abcdef0123456789abcdef"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-GuardRun $sandbox "0123456789abcdef0123456789abcdef" $pastTheGuardDay
+        }
+    },
+    @{
+        # PruneOldRuns only touches a folder named the way the project and a test host name one, so
+        # a name it cannot read is a folder nothing will ever take. It is evidence rather than
+        # litter: the check refuses it and leaves it where it is - the name rule wins over the age.
+        Name = "a guard folder no run names fails and is kept"
+        Expected = 1
+        Marker = "::error title=Scratch left behind::crashed-run (24 h old: not a guard run folder this check can name)"
+        Kept = "VrcCompanionTests\logs\guard\crashed-run"
+        At = $now
+        Plant = {
+            param($sandbox)
+            Write-GuardRun $sandbox "crashed-run" $pastTheGuardDay
         }
     },
     @{

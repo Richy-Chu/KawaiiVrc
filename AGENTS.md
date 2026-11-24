@@ -31,7 +31,13 @@ baseline and pass a leak. The project makes the folder when it is evaluated and 
 host the path in a generated runsettings file (`VRCC_PROFILE_GUARD_DIR`); a run started without
 the project - the test explorer, a bare `dotnet vstest` - names its folder after its test host's
 pid instead. The guard deletes run folders older than a day, so the folder does not grow with
-every run. A run that leaves no baseline at the path MSBuild gave it fails the run
+every run. The post-run check reads that same day from the other side: a folder still inside it is
+named with its age, so a crashed run's baseline is not lost between the run that left it and the
+next prune, and one past it is taken by the check itself, because no run has started since to
+prune it - which is what a crash after the last run in a job leaves. A name `PruneOldRuns` cannot
+read is one it never prunes, so the check refuses that folder and keeps it as evidence.
+
+A run that leaves no baseline at the path MSBuild gave it fails the run
 (`FailOnMissingGuardBaseline`), so a hand-off that silently stops working cannot pass: without
 it the replay pass would skip and the note would never print. Listing tests is the one run
 exempt, since it never starts the guard.
@@ -106,7 +112,10 @@ them: a profile may wait for the sweep only while its name parses to a pid which
 or which has not touched the folder for the sweep's hour. A name no sweep can read, or a pid still
 alive and still touching the folder when the run is over, fails the job.
 A run therefore leaves nothing but a browser profile and a deferred folder that says why,
-and both are held to the rules above.
+and both are held to the rules above. The guard's own run folders, under
+`%TEMP%\VrcCompanionTests\logs\guard`, are outside the run's temp and are judged by their one
+rule: a folder inside the day the guard keeps one for waits, named with its age, and one past
+that day is taken, since nothing was left to prune it.
 
 `DeferralNoteContractTests` exercises the writer and the reader as a pair by running the real
 script over notes this project wrote, so CI decides the accepting path too. It plants both halves
@@ -123,7 +132,9 @@ is refused and kept - because that rule lives only in the reader, and each case 
 clock on the check. The hour a live pid accounts for a folder is planted on both sides instead,
 because both read it: `TestScratchTests` decides the sweep's edge with a handed-in clock, and the
 harness plants the check's on the same edge, one case a second inside it and one a second past,
-for a run folder and for a browser profile.
+for a run folder and for a browser profile. The guard's day is planted in the harness instead: the
+age is stamped on the planted folder, so a case on the day and one a second past decide that edge
+without a second clock, while `PruneOldRuns` keeps the same day with no case of its own.
 
 The guard's files are the exception: they live under `%TEMP%\VrcCompanionTests\logs` (real
 temp, via `TestProfile.RealTemp`) because MSBuild reads them after the run from outside this

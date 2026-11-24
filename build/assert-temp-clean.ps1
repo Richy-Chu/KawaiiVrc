@@ -35,6 +35,14 @@
 # all the same: a name this check cannot read is a folder no sweep will ever take, and a pid that
 # is still running and has touched it inside the hour is not a finished run's folder.
 #
+# The guard's own folders are the one thing outside the run's folder: MSBuild reads them after the
+# run, from a process the run's temp redirect never reaches, so they live under
+# %TEMP%\VrcCompanionTests\logs\guard\<run>. Each run makes one and keeps it for a day, so a failed
+# run's note can still be read, and RealProfileWatch's PruneOldRuns takes one older than that when
+# the next run starts. A folder left past that day had no run after it to prune it - the run that
+# made it was the last one in this job, and it crashed or was killed - so this check takes it
+# itself; a name no run makes is one no run will ever prune, so it is refused and kept.
+#
 # The path itself is judged before anything inside it: a -TempPath that does not exist, names a
 # file, or cannot be listed is not a folder that held nothing, and "No run folder left" is the one
 # verdict this check may not give about a folder it never saw.
@@ -65,6 +73,12 @@ $staleAfterHours = 2
 # folder on exactly this hour; reading it any other way here would judge a folder differently from
 # the sweep that is meant to take it.
 $abandonedAfterHours = 1
+
+# How long a guard run folder is kept before this check takes it, in hours so that it is aged by
+# the same measure as every other folder here. RealProfileWatch.PruneOldRuns deletes one past this
+# day at the next run's start, so a folder within it is still the record a failed run's note is
+# read from; past it, no run has started to prune it.
+$guardKeptHours = 24
 
 # How far ahead of the clock a note may be dated and still be read as a recent deferral: ordinary
 # skew is seconds, so a note within this ages into the past on its own. Past it the age counts up
@@ -277,7 +291,9 @@ $rule = "A run must delete its own folders. A run folder may stand only with a "
     $staleAfterHours + " hours or dated further ahead than clock skew explains, since neither" +
     " kind ever ages into a sweep. A pid only accounts for a folder it has touched inside the" +
     " hour, since Windows hands a finished run's pid to another process, and a browser profile" +
-    " may stand only while no pid accounts for it, so that the next run's sweep takes it."
+    " may stand only while no pid accounts for it, so that the next run's sweep takes it. A guard" +
+    " run folder may stand only for the day the next run prunes one by, since a failed run's note" +
+    " may still need reading in it."
 
 # A path this check cannot list has not been seen to hold nothing, and a -TempPath that is missing,
 # names a file, or may not be read would otherwise pass as "No run folder left" - the one verdict
@@ -421,6 +437,56 @@ foreach ($folder in Get-ScratchLeftover $browserFolder) {
     }
 }
 
+# The guard's run folders live under the real temp rather than the run's, because MSBuild reads
+# them after VSTest. Each run keeps its own for a day so a failed run's note can still be read, and
+# PruneOldRuns takes one older than that at the next run's start: a folder inside the day is the
+# record of a run that may have failed and is named, and past it there was no run after it to
+# prune it, so this check does. A name no run makes is a folder no run will ever prune.
+$guardRoot = Join-Path $TempPath (Join-Path "VrcCompanionTests" (Join-Path "logs" "guard"))
+$keptGuardRuns = @()
+if (Test-Path -LiteralPath $guardRoot -PathType Container) {
+    $guardRuns = @()
+    try {
+        $guardRuns = @(Get-ChildItem -LiteralPath $guardRoot -Directory -Force -ErrorAction Stop)
+    }
+    catch {
+        # Nothing inside was judged, which is not the same as finding nothing there: a folder that
+        # may hold a crashed run's baseline is reported, never passed over as an empty one.
+        $failed += Get-ScratchFailure $guardRoot 0 ("the guard's folder cannot be listed (" +
+            $_.Exception.GetType().Name + ": " + $_.Exception.Message + ")")
+    }
+
+    foreach ($folder in $guardRuns) {
+        if ($folder.Name -notmatch '^[0-9a-f]{32}$|^\d+$') {
+            $failed += Get-ScratchFailure $folder.Name (Get-FolderAge $folder) "not a guard run folder this check can name"
+            continue
+        }
+
+        $age = Get-FolderAge $folder
+        if ($age -le $guardKeptHours) {
+            $keptGuardRuns += $folder
+            continue
+        }
+
+        try {
+            Remove-Item -LiteralPath $folder.FullName -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            $failed += Get-ScratchFailure $folder.Name $age ("it could not be taken: " + $_.Exception.Message)
+            continue
+        }
+
+        # A delete that reports no error and leaves the folder would read like one that worked.
+        if (Test-Path -LiteralPath $folder.FullName) {
+            $failed += Get-ScratchFailure $folder.Name $age "it could not be taken: the folder is still there"
+            continue
+        }
+
+        Write-Host ("Took guard run folder " + $folder.Name + ": its folder is " + (Get-HoursText $age) +
+            " old, past the day the next run prunes one by, so no run has started since.")
+    }
+}
+
 if ($failed.Count -gt 0) {
     Write-Host "The suite left scratch behind in $TempPath :"
     $failed | ForEach-Object {
@@ -467,6 +533,13 @@ foreach ($kept in $acceptedProfiles) {
     }
 
     Write-Host $line
+}
+
+# A guard folder inside its day is the record of a run that may have failed: named, with its age,
+# so a crashed run's baseline is not lost between the run that left it and the next one's prune.
+foreach ($folder in $keptGuardRuns) {
+    Write-Host ("Guard run folder " + $folder.Name + " stays for the day a failed run's note is read" +
+        " from: it is " + (Get-HoursText (Get-FolderAge $folder)) + " old.")
 }
 
 if ($waiting -eq 0) {
