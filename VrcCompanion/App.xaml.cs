@@ -52,7 +52,19 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        RunStartup(() => base.OnStartup(e));
+        // Program.Main claims the instance and hands it over before Run, so a launch that gets
+        // here has a gate. An application built without one - the WPF test host - never came
+        // through the entry point: claiming the user's real instance there would find their
+        // installed copy holding it, hand off to it, and shut this application down before its
+        // first window could show. That is what left every window test after the first one
+        // failing with "The Application object is being shut down" while the app was running.
+        if (LaunchGate is not null)
+        {
+            RunStartup(() => base.OnStartup(e));
+            return;
+        }
+
+        base.OnStartup(e);
     }
 
     /// <summary>
