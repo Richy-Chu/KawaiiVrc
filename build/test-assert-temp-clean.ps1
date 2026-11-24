@@ -22,6 +22,10 @@
 # carries the same for each folder, while a passing case writes neither. Each case hands the check
 # its own summary file through GITHUB_STEP_SUMMARY, so a planted failure never writes into this
 # script's own step summary.
+#
+# The path the check is pointed at is planted too: a folder that is not there and a file where the
+# folder should be both fail with an annotation of their own, because neither is a folder that was
+# looked in and found empty.
 $ErrorActionPreference = "Stop"
 
 $check = Join-Path $PSScriptRoot "assert-temp-clean.ps1"
@@ -347,6 +351,31 @@ $checks = @(
                 "utc: $now",
                 "unlisted: DirectoryNotFoundException: no such path")
         }
+    },
+    @{
+        # "No run folder left" is the one verdict this check may not give about a folder it never
+        # saw: a path that is not there has to fail instead of reading as an empty one.
+        Name = "a temp path that does not exist fails instead of passing as clean"
+        Expected = 1
+        Path = "no-such-folder"
+        Marker = "::error title=Scratch could not be checked::Scratch could not be checked: the path does not exist"
+        Summary = @(
+            "| Path | Why nothing was judged |",
+            "| the path does not exist |")
+        Plant = {}
+    },
+    @{
+        # A file is not a folder, and Test-Path alone would not say so: only a check that asks for a
+        # folder decides this one.
+        Name = "a temp path that is a file fails"
+        Expected = 1
+        Path = "not-a-folder"
+        Marker = "::error title=Scratch could not be checked::Scratch could not be checked: the path is a file, not a folder"
+        Summary = @("| the path is a file, not a folder |")
+        Plant = {
+            param($sandbox)
+            [System.IO.File]::WriteAllBytes((Join-Path $sandbox "not-a-folder"), (New-Object byte[] 8))
+        }
     }
 )
 
@@ -362,9 +391,14 @@ try {
     foreach ($checkCase in $checks) {
         $sandbox = Get-Sandbox
         & $checkCase.Plant $sandbox
+        # A case about the path itself points the check at something other than the sandbox.
+        $target = $sandbox
+        if (-not [string]::IsNullOrWhiteSpace($checkCase.Path)) {
+            $target = Join-Path $sandbox $checkCase.Path
+        }
         Remove-Item -LiteralPath $summary -Force -ErrorAction SilentlyContinue
         $env:GITHUB_STEP_SUMMARY = $summary
-        $result = Invoke-Check $sandbox $checkCase.At
+        $result = Invoke-Check $target $checkCase.At
         if ($result.ExitCode -ne $checkCase.Expected) {
             Write-Host ("{0}: exited {1}, expected {2}" -f $checkCase.Name, $result.ExitCode, $checkCase.Expected)
             Write-Host $result.Text
@@ -394,7 +428,9 @@ try {
 
         # One annotation for a failing run, none for a passing one: the run page is part of the
         # verdict, so a check that stopped writing it fails a case here rather than going quiet.
-        $annotations = ([regex]::Matches($result.Text, "(?m)^::error title=Scratch left behind::")).Count
+        # The title is not fixed - a path it could not judge is not a folder left behind - so a case
+        # whose wording matters pins the whole annotation line through Marker.
+        $annotations = ([regex]::Matches($result.Text, "(?m)^::error ")).Count
         $wanted = 0
         if ($checkCase.Expected -eq 1) { $wanted = 1 }
         if ($annotations -ne $wanted) {

@@ -28,6 +28,10 @@
 # so it lives in vrc-companion-browser-<pid> and the next run's sweep reclaims it. It is judged
 # all the same - a name this check cannot read is a folder no sweep will ever take, and a pid
 # still running means it is not a finished run's folder.
+#
+# The path itself is judged before anything inside it: a -TempPath that does not exist, names a
+# file, or cannot be listed is not a folder that held nothing, and "No run folder left" is the one
+# verdict this check may not give about a folder it never saw.
 param(
     # The folder the run's scratch lives in; the workflow uses the process temp. A test points
     # this at a sandbox so the machine's own leftovers never decide a case.
@@ -243,6 +247,61 @@ function Get-TableCell([string] $text) {
     return ($text -replace "`r?`n", ' ' -replace '\|', '\|')
 }
 
+# The rule in one place: a path this check cannot judge and a folder it refuses are both red on
+# the run page, and both have to say what a folder was allowed to be.
+$rule = "A run must delete its own folders. A run folder may stand only with a " + $deferralNote +
+    " that names its own dead pid, holds nothing but empty .tmp files, and the folder holds" +
+    " nothing the note does not name - and this check takes one whose note is older than " +
+    $staleAfterHours + " hours or dated further ahead than clock skew explains, since neither" +
+    " kind ever ages into a sweep. A browser profile may stand only while its pid is gone, so" +
+    " that the next run's sweep takes it."
+
+# A path this check cannot list has not been seen to hold nothing, and a -TempPath that is missing,
+# names a file, or may not be read would otherwise pass as "No run folder left" - the one verdict
+# this check may only give about a folder it looked in. It is reported as a failure of its own
+# rather than as a folder's, because no folder was left behind: none could be found.
+$pathProblem = $null
+if ([string]::IsNullOrWhiteSpace($TempPath)) {
+    $pathProblem = "the path is empty"
+}
+elseif (-not (Test-Path -LiteralPath $TempPath -PathType Container)) {
+    if (Test-Path -LiteralPath $TempPath) {
+        $pathProblem = "the path is a file, not a folder"
+    }
+    else {
+        $pathProblem = "the path does not exist"
+    }
+}
+else {
+    try {
+        Get-ChildItem -LiteralPath $TempPath -Directory -Force -ErrorAction Stop | Out-Null
+    }
+    catch {
+        $pathProblem = "the folder cannot be listed (" + $_.Exception.GetType().Name + ": " +
+            $_.Exception.Message + ")"
+    }
+}
+
+if ($null -ne $pathProblem) {
+    $verdict = "Scratch could not be checked: " + $pathProblem + " (" + $TempPath + ")."
+    Write-Host $verdict
+    Write-Host $rule
+
+    Write-Host ("::error title=Scratch could not be checked::" + (Get-AnnotationText $verdict))
+
+    # A red step is the only one anybody opens, so the path lands on the run page too.
+    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_STEP_SUMMARY)) {
+        $tick = [char] 96
+        $summaryText = "### Scratch could not be checked" + "`n`n" +
+            "| Path | Why nothing was judged |" + "`n" + "| --- | --- |" + "`n" +
+            "| " + $tick + (Get-TableCell $TempPath) + $tick + " | " +
+            (Get-TableCell $pathProblem) + " |" + "`n`n" + $rule + "`n"
+        Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summaryText
+    }
+
+    exit 1
+}
+
 # Each failure carries what the run page has to show about it.
 $failed = @()
 $waiting = 0
@@ -333,12 +392,6 @@ if ($failed.Count -gt 0) {
         Write-Host ("  " + $_.Name + " (" + (Get-HoursText $_.AgeHours) + " old: " + $_.Reason + ")")
     }
 
-    $rule = "A run must delete its own folders. A run folder may stand only with a " + $deferralNote +
-        " that names its own dead pid, holds nothing but empty .tmp files, and the folder holds" +
-        " nothing the note does not name - and this check takes one whose note is older than " +
-        $staleAfterHours + " hours or dated further ahead than clock skew explains, since neither" +
-        " kind ever ages into a sweep. A browser profile may stand only while its pid is gone, so" +
-        " that the next run's sweep takes it."
     Write-Host $rule
 
     # One annotation, not one per folder: a step shows ten and drops the rest, so a run page that

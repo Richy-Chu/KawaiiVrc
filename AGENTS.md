@@ -87,7 +87,10 @@ rather than by whatever the machine's clock says while the test runs. A failure 
 run page, where a red push is actually read: one `::error` annotation naming the first folder with
 its age and reason, and a step summary table carrying every folder. One annotation rather than
 one per folder, because GitHub renders ten per step and drops the rest while the summary has no
-such cap. A passing run writes neither, and the planted cases assert both channels.
+such cap. A passing run writes neither, and the planted cases assert both channels. A path the
+check cannot list fails the job in its own right: a missing `%TEMP%`, or a file where the folder
+should be, is not an empty folder, so it is reported as `Scratch could not be checked` - one
+annotation and one summary row naming the path and why nothing was judged - instead of passing.
 
 The WebView2 profile is the one thing that never lives in the run's folder: its browser holds it
 open for the host's whole life, so it gets `%TEMP%\vrc-companion-browser-<pid>` and the next
@@ -144,7 +147,8 @@ suite rather than a filtered set - everything after the hang never ran - and it 
 bound, so the re-run cannot hang either. The sequence files ride along in the artifact. The job finishes with
 `build/assert-temp-clean.ps1`, which fails it when a `vrc-companion-tests-*` folder is still in
 `%TEMP%` without a `cleanup-deferred.txt` naming that folder's own pid - the only litter a run
-can leave, and the only folder allowed to wait for the next run's sweep. The step runs even when
+can leave, and the only folder allowed to wait for the next run's sweep. A `%TEMP%` it cannot list
+- missing, unreadable, or a file - fails the step before any folder is judged. The step runs even when
 the tests fail, so a red run still reports what it left. Run the script by hand after a local run
 to get the same verdict.
 
