@@ -108,11 +108,14 @@ public partial class MainWindow : Window
             {
                 // Naming the job in flight is the part of a stall that can be acted on. Without
                 // it the line only says the UI stopped, and the next freeze repeats the mystery.
+                // The thread's own processor time says whether it was burning CPU or waiting,
+                // which tells the next investigation where to look before anything is guessed.
                 var during = UiJobTrace.Shared.Describe(stall.StartedTicks, stall.EndedTicks);
+                var cpu = UiStallMonitor.DescribeCpu(stall.Milliseconds, stall.CpuMilliseconds);
                 LifecycleLog.Write(
                     during is null
-                        ? $"ui stall {stall.Milliseconds}ms"
-                        : $"ui stall {stall.Milliseconds}ms across {during}");
+                        ? $"ui stall {stall.Milliseconds}ms {cpu}"
+                        : $"ui stall {stall.Milliseconds}ms {cpu} across {during}");
             },
             () => WindowState == WindowState.Minimized);
         _stallMonitor.Start();
