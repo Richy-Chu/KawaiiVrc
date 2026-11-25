@@ -1032,11 +1032,46 @@
                 <Grid Grid.Row="1">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
+                    <!-- Clearing asks once: the cleared ids do not come back. -->
+                    <Border Grid.Row="0"
+                            Background="{StaticResource InputBrush}"
+                            BorderBrush="{StaticResource SoftBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="10"
+                            Padding="12,8"
+                            Margin="0,0,0,10"
+                            Visibility="{Binding IsClearConfirmationOpen, Converter={StaticResource BoolToVis}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding ClearConfirmationText}"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap"
+                                       FontSize="12"
+                                       Foreground="{StaticResource TextBrush}" />
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
+                                        VerticalAlignment="Center"
+                                        Margin="10,0,0,0">
+                                <Button Style="{StaticResource SmallButton}"
+                                        Content="Cancel"
+                                        Margin="0,0,6,0"
+                                        Command="{Binding CancelClearConfirmationCommand}" />
+                                <Button Style="{StaticResource SmallButton}"
+                                        Content="Clear"
+                                        Command="{Binding ConfirmClearConfirmationCommand}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
                     <!-- Notification filters -->
-                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                    <Grid Grid.Row="1" Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -1087,7 +1122,7 @@
                     </Grid>
 
                     <!-- Notification list + detail -->
-                    <Grid Grid.Row="1">
+                    <Grid Grid.Row="2">
 
                     <!-- Notification list -->
                     <Border

@@ -12,7 +12,7 @@ newer SDK may be the local default: to check SDK 8 compatibility, write a `globa
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.96**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.97**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -129,6 +129,11 @@ file inline and never freed it.
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
 
+### What 1.0.97 changed
+
+- **A bulk clear confirms before it removes anything.** `ClearAllNotifications`/`ClearFilteredNotifications` now only open `IsClearConfirmationOpen` with a `ClearConfirmationText` naming the count; `ConfirmClearConfirmationCommand` runs `PerformClearAllNotifications`/`PerformClearFilteredNotifications`, `CancelClearConfirmationCommand` closes the panel. A single row's Clear stays one click. Changing the filter closes the panel, because a pending "this filter" clear belongs to the filter it was opened on.
+- **The filter commands follow the selected filter.** `UpdateNotificationFilterState` raises `ClearFilteredNotificationsCommand` and `MarkFilteredNotificationsReadCommand`, so picking a filter re-evaluates its buttons instead of leaving them disabled until the next clear.
+
 ### Do not undo these
 
 1. **No `DropShadowEffect`.** If a panel now reads as too flat, give it a baked edge - a second
@@ -182,7 +187,7 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
 
 16. **Stored location metadata is cached per account.** `ReadLocationsCached` hands out one shared dictionary; nothing may mutate it. Any path that inserts, updates or deletes a `gamelog_location` row must bump `_locationVersion` (the continuity importers only read the table, and the `COUNT(*)`/`MAX(last_updated_at)` check covers a store from elsewhere), or a rename will keep showing the old world name. `ARefreshDoesNotReReadEveryStoredLocation` pins both the allocation bound and the rename-after-warm accuracy.
 
-17. **Clearing a notification is local and persistent.** `ClearNotification`/`ClearAllNotifications` add the ids to `_clearedNotificationIds`, remove the rows and call `PersistNotifications`; they do not call VRChat. Decline (`DeclineNotificationAsync`) is the one that hides or answers on the server, and Accept/reply are unchanged. Do not clear `_clearedNotificationIds` on a refresh - that is what stops a cleared invite from coming back until a new notification with a new id arrives. The per-filter versions (`ClearFilteredNotifications`, `MarkFilteredNotificationsReadAsync`) read `_notificationsView` rather than `Notifications`; do not switch them to the full collection, or the buttons would repeat the header's Clear all. `NotificationPersistenceTests.MarkingOneFilterReadOnlyMarksWhatItShows` and `ClearingOneFilterLeavesTheOtherFiltersAlone` pin both rules.
+17. **Clearing a notification is local and persistent.** `ClearNotification`/`ClearAllNotifications` add the ids to `_clearedNotificationIds`, remove the rows and call `PersistNotifications`; they do not call VRChat. Decline (`DeclineNotificationAsync`) is the one that hides or answers on the server, and Accept/reply are unchanged. Do not clear `_clearedNotificationIds` on a refresh - that is what stops a cleared invite from coming back until a new notification with a new id arrives. The per-filter versions (`ClearFilteredNotifications`, `MarkFilteredNotificationsReadAsync`) read `_notificationsView` rather than `Notifications`; do not switch them to the full collection, or the buttons would repeat the header's Clear all. `NotificationPersistenceTests.MarkingOneFilterReadOnlyMarksWhatItShows` and `ClearingOneFilterLeavesTheOtherFiltersAlone` pin both rules. The bulk clears go through `ConfirmClearConfirmationCommand`; do not call the `Perform*` methods from a button, or the confirmation is bypassed.
 
 ### Virtualization: what is real and what is not
 

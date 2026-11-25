@@ -551,6 +551,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         MarkFilteredNotificationsReadCommand = Track(new AsyncRelayCommand(
             MarkFilteredNotificationsReadAsync,
             () => IsLoggedIn && !IsBusy && HasUnreadVisibleNotifications));
+        ConfirmClearConfirmationCommand = Track(new RelayCommand(ConfirmClearConfirmation));
+        CancelClearConfirmationCommand = Track(new RelayCommand(CloseClearConfirmation));
         MarkNotificationSeenCommand = Track(new AsyncRelayCommand<NotificationItem>(
             MarkNotificationSeenAsync,
             item => item is { Seen: false } && IsLoggedIn && !IsBusy));
@@ -1968,6 +1970,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             if (value is not null && SetProperty(ref _selectedNotificationFilter, value))
             {
+                // A pending "clear this filter" belongs to the filter it was
+                // opened on, so changing the filter cancels it.
+                CloseClearConfirmation();
                 RefreshNotificationsView();
             }
         }
@@ -2567,6 +2572,25 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand ClearAllNotificationsCommand { get; }
     public RelayCommand ClearFilteredNotificationsCommand { get; }
     public AsyncRelayCommand MarkFilteredNotificationsReadCommand { get; }
+    public RelayCommand ConfirmClearConfirmationCommand { get; }
+    public RelayCommand CancelClearConfirmationCommand { get; }
+
+    private bool _isClearConfirmationOpen;
+    private bool _clearConfirmationClearsAll;
+    private string _clearConfirmationText = string.Empty;
+
+    /// <summary>True while a bulk clear is waiting for its confirmation.</summary>
+    public bool IsClearConfirmationOpen
+    {
+        get => _isClearConfirmationOpen;
+        private set => SetProperty(ref _isClearConfirmationOpen, value);
+    }
+
+    public string ClearConfirmationText
+    {
+        get => _clearConfirmationText;
+        private set => SetProperty(ref _clearConfirmationText, value);
+    }
 
     /// <summary>True while the selected filter shows at least one notification.</summary>
     public bool HasVisibleNotifications => !HasNoVisibleNotifications;
@@ -7516,6 +7540,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        OpenClearConfirmation(clearsAll: true, Notifications.Count);
+    }
+
+    private void PerformClearAllNotifications()
+    {
+        if (IsBusy || Notifications.Count == 0)
+        {
+            return;
+        }
+
         var cleared = Notifications.Count;
         foreach (var notification in Notifications)
         {
@@ -7544,6 +7578,22 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        var visible = _notificationsView.Cast<NotificationItem>().Count();
+        if (visible == 0)
+        {
+            return;
+        }
+
+        OpenClearConfirmation(clearsAll: false, visible);
+    }
+
+    private void PerformClearFilteredNotifications()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
         var visible = _notificationsView.Cast<NotificationItem>().ToList();
         if (visible.Count == 0)
         {
@@ -7566,6 +7616,45 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ShowInfo(visible.Count == 1
             ? "Notification cleared."
             : $"Cleared {visible.Count} notifications in this filter.");
+    }
+
+    /// <summary>
+    /// A bulk clear cannot be undone - the ids stay cleared - so it asks once
+    /// before removing anything.
+    /// </summary>
+    private void OpenClearConfirmation(bool clearsAll, int count)
+    {
+        _clearConfirmationClearsAll = clearsAll;
+        var plural = count == 1 ? string.Empty : "s";
+        ClearConfirmationText = clearsAll
+            ? $"Clear all {count} notification{plural}? Cleared notifications do not come back."
+            : $"Clear the {count} notification{plural} showing in this filter? Cleared notifications do not come back.";
+        IsClearConfirmationOpen = true;
+    }
+
+    private void CloseClearConfirmation()
+    {
+        IsClearConfirmationOpen = false;
+        ClearConfirmationText = string.Empty;
+    }
+
+    private void ConfirmClearConfirmation()
+    {
+        if (!IsClearConfirmationOpen)
+        {
+            return;
+        }
+
+        var clearsAll = _clearConfirmationClearsAll;
+        CloseClearConfirmation();
+        if (clearsAll)
+        {
+            PerformClearAllNotifications();
+        }
+        else
+        {
+            PerformClearFilteredNotifications();
+        }
     }
 
     private void ClearPersistentNotification(NotificationItem item)
@@ -9501,6 +9590,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(HasNoVisibleNotifications));
         OnPropertyChanged(nameof(HasVisibleNotifications));
         OnPropertyChanged(nameof(HasUnreadVisibleNotifications));
+        // The filter buttons' availability follows the filter, not just a clear.
+        ClearFilteredNotificationsCommand.RaiseCanExecuteChanged();
+        MarkFilteredNotificationsReadCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(NotificationsEmptyMessage));
     }
 

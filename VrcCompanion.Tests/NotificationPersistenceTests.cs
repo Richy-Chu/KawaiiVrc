@@ -737,6 +737,12 @@ public class NotificationPersistenceTests : IDisposable
         Assert.Equal(new[] { "not_a", "not_c" }, shell.Notifications.Select(item => item.Id));
 
         shell.ClearAllNotificationsCommand.Execute(null);
+        Assert.True(shell.IsClearConfirmationOpen);
+        Assert.Contains("Clear all 2 notifications", shell.ClearConfirmationText, StringComparison.Ordinal);
+        Assert.Equal(2, shell.Notifications.Count);
+
+        shell.ConfirmClearConfirmationCommand.Execute(null);
+        Assert.False(shell.IsClearConfirmationOpen);
         Assert.Empty(shell.Notifications);
         Assert.Contains("2 notifications", shell.InfoMessage, StringComparison.OrdinalIgnoreCase);
 
@@ -817,13 +823,40 @@ public class NotificationPersistenceTests : IDisposable
             option.Key == "world-invites");
         Assert.True(shell.HasVisibleNotifications);
 
+        var raised = 0;
+        shell.ClearFilteredNotificationsCommand.CanExecuteChanged += (_, _) => raised++;
+
         shell.ClearFilteredNotificationsCommand.Execute(null);
+        Assert.True(shell.IsClearConfirmationOpen);
+        Assert.Contains("in this filter", shell.ClearConfirmationText, StringComparison.Ordinal);
+        Assert.Equal(4, shell.Notifications.Count);
+
+        shell.ConfirmClearConfirmationCommand.Execute(null);
+        Assert.False(shell.IsClearConfirmationOpen);
+        Assert.Equal(
+            new[] { "not_request", "not_boop" },
+            shell.Notifications.Select(item => item.Id));
+
+        // Switching filters must re-enable the filter buttons on its own: before,
+        // the command state was only refreshed by a clear.
+        raised = 0;
+        shell.SelectedNotificationFilter = shell.NotificationFilters.Single(option =>
+            option.Key == "invite-requests");
+        Assert.True(raised > 0, "Changing the filter should refresh the filter commands.");
+        Assert.True(shell.HasVisibleNotifications);
+        Assert.True(shell.ClearFilteredNotificationsCommand.CanExecute(null));
+
+        shell.ClearFilteredNotificationsCommand.Execute(null);
+        Assert.True(shell.IsClearConfirmationOpen);
+        shell.CancelClearConfirmationCommand.Execute(null);
+        Assert.False(shell.IsClearConfirmationOpen);
         Assert.Equal(
             new[] { "not_request", "not_boop" },
             shell.Notifications.Select(item => item.Id));
 
         // The header's Clear all is untouched and still means every row.
         shell.ClearAllNotificationsCommand.Execute(null);
+        shell.ConfirmClearConfirmationCommand.Execute(null);
         Assert.Empty(shell.Notifications);
 
         var saved = new NotificationPersistenceStore(path).Load("usr_me");
