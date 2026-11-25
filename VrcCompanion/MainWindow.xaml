@@ -11360,7 +11360,8 @@
         <!-- ========================================================= -->
         <!-- Friend-list changes popup                                 -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="24"
+        <Grid x:Name="FriendChangesOverlay"
+              Panel.ZIndex="24"
               Visibility="{Binding IsFriendChangesOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CloseFriendChangesCommand}"
                     Focusable="False" Cursor="Arrow" ToolTip="Close">
