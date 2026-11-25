@@ -1020,8 +1020,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         switch (key)
         {
             case "media":
-                MediaViewModel.ReleaseData();
-                break;
+                return MediaViewModel.ReleaseData();
             case "groups":
                 GroupViewModel?.ReleaseData();
                 break;

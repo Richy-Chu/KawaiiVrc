@@ -59,7 +59,7 @@ public class AvatarTabSwitchTests
             TestHooks.SetLoggedIn(shell);
             SeedLibrary(shell);
             var window = CreateWindow(shell);
-            window.AvatarReleaseRetryDelay = TimeSpan.FromMilliseconds(80);
+            window.SectionReleaseRetryDelay = TimeSpan.FromMilliseconds(80);
             window.Show();
 
             Select(shell, window, "avatars");
@@ -701,7 +701,7 @@ public class AvatarTabSwitchTests
                $"rows={shell.AvatarViewModel!.Avatars.Count} " +
                $"busy={shell.AvatarViewModel.IsBusy} " +
                $"loaded={shell.AvatarViewModel.HasLoaded} " +
-               $"pending=[{keys}] delay={window.AvatarReleaseRetryDelay}";
+               $"pending=[{keys}] delay={window.SectionReleaseRetryDelay}";
     }
 
     /// <summary>

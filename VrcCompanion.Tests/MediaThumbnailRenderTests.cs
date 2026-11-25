@@ -73,9 +73,6 @@ public class MediaThumbnailRenderTests
                 Assert.Equal(LastPageCount, images.Count);
                 AssertThumbnailsRendered(images, expectedColors);
                 AssertCacheLimit();
-                var cachedImages = images.ToDictionary(
-                    image => Assert.IsType<string>(image.SourceUrl),
-                    image => image.LoadedImage!);
 
                 // Media stays cached in MainWindow; leaving it hides the section.
                 itemsControl.Visibility = Visibility.Collapsed;
@@ -86,12 +83,10 @@ public class MediaThumbnailRenderTests
                 WaitForThumbnails(itemsControl);
                 var reenteredImages = FindThumbnails(itemsControl, expectedColors);
                 Assert.Equal(LastPageCount, reenteredImages.Count);
+                // The pictures must draw again. Their BitmapImage instance is not
+                // pinned: a tab switch settles the heap and drops the shared decode
+                // cache, so a re-shown card is allowed to decode its file again.
                 AssertThumbnailsRendered(reenteredImages, expectedColors);
-                foreach (var image in reenteredImages)
-                {
-                    var path = Assert.IsType<string>(image.SourceUrl);
-                    Assert.Same(cachedImages[path], image.LoadedImage);
-                }
 
                 AssertCacheLimit();
             }
@@ -138,6 +133,50 @@ public class MediaThumbnailRenderTests
                 Assert.Equal(LastPageCount, images.Count);
                 AssertThumbnailsRendered(images, expectedColors);
                 AssertCacheLimit();
+            }
+            finally
+            {
+                window?.Close();
+                DeleteRoot(root);
+            }
+        });
+    }
+
+    [Fact]
+    public void LeavingTheMediaSectionHandsItsLibraryBackStraightAway()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var root = CreateRoot();
+            Window? window = null;
+
+            try
+            {
+                CreatePage20Images(root);
+                var media = CreatePage20ViewModel(root);
+                var shell = new MainViewModel(media);
+                window = new MainWindow(shell, initializeOnLoad: false);
+                window.Show();
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "media");
+                Settle.Until(
+                    () => !media.IsBusy && media.PictureCount == PictureCount,
+                    PumpDispatcher,
+                    "Timed out waiting for the Media section to load.");
+                Assert.True(media.HasLoadedPictures);
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "friends");
+
+                // The 90 second grace period must not apply to the picture
+                // library: its rows and cards are hundreds of megabytes on a
+                // full library.
+                Settle.Until(
+                    () => media.TotalPictureCount == 0,
+                    PumpDispatcher,
+                    "the Media tab kept its rows after the section was left");
+                Assert.False(media.HasLoadedPictures);
+                Assert.Equal(0, media.PictureCount);
+                Assert.All(media.PageCards, card => Assert.Null(card.Item));
             }
             finally
             {

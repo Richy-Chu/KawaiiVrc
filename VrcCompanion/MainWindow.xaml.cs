@@ -42,10 +42,18 @@ public partial class MainWindow : Window
     /// </summary>
     private static readonly TimeSpan AvatarDataGrace = TimeSpan.Zero;
 
+    /// <summary>
+    /// The picture library is the other heavy tab: the scan's rows, the metadata
+    /// read out of every file and the viewer's full-size decode came to ~600 MB
+    /// on a large library, and the scan's 256 KB/512 KB buffers are the garbage
+    /// a tab switch has to give back. The index is cached on disk, so returning
+    /// still paints immediately.
+    /// </summary>
+    private static readonly TimeSpan MediaDataGrace = TimeSpan.Zero;
+
     private string _shownSectionKey = string.Empty;
     private readonly Dictionary<string, CancellationTokenSource> _pendingReleases = new(StringComparer.Ordinal);
     private bool _settleScheduled;
-    private DateTimeOffset _lastSettleAt = DateTimeOffset.MinValue;
     private readonly List<string> _sectionOrder = new();
     private readonly HashSet<string> _themeBrushKeys = new();
     // Every cached section view keeps its whole visual tree, item containers
@@ -675,7 +683,7 @@ public partial class MainWindow : Window
     private void ShowSelectedSection()
     {
         var key = _viewModel.SelectedSection.Key;
-        ReleaseAvatarDataOnLeave(key);
+        ReleaseDataOnLeave(key);
         _shownSectionKey = key;
         if (!_sectionViews.TryGetValue(key, out var view))
         {
@@ -743,14 +751,14 @@ public partial class MainWindow : Window
             {
                 if (!string.Equals(cachedKey, key, StringComparison.Ordinal))
                 {
-                    ReleaseAvatarData(cachedKey);
+                    ReleaseSectionDataNow(cachedKey);
                 }
             }
         }
     }
 
     /// <summary>How long to wait before retrying a release that was refused.</summary>
-    internal TimeSpan AvatarReleaseRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
+    internal TimeSpan SectionReleaseRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
     private static bool IsAvatarSectionKey(string key)
         => string.Equals(key, "avatars", StringComparison.Ordinal) ||
@@ -769,25 +777,45 @@ public partial class MainWindow : Window
             .ToList();
     }
 
-    private void ReleaseAvatarDataOnLeave(string key)
+    /// <summary>
+    /// The weight a section may keep after its page is left. Most tabs keep their
+    /// rows for the grace period so hopping back is free; the avatar library and
+    /// the picture library are the two that cost hundreds of megabytes, so they
+    /// are handed back the moment they leave the screen.
+    /// </summary>
+    private static TimeSpan DataGraceFor(string key) => key switch
     {
-        if (AvatarDataGrace > TimeSpan.Zero ||
-            string.IsNullOrEmpty(_shownSectionKey) ||
+        "media" => MediaDataGrace,
+        _ when IsAvatarSectionKey(key) => AvatarDataGrace,
+        _ => SectionDataGrace
+    };
+
+    private void ReleaseDataOnLeave(string key)
+    {
+        if (string.IsNullOrEmpty(_shownSectionKey) ||
             string.Equals(_shownSectionKey, key, StringComparison.Ordinal))
         {
             return;
         }
 
         var left = _shownSectionKey;
-        if (!IsAvatarSectionKey(left) || IsAvatarSectionKey(key))
+
+        // Avatars and Avatar Search draw the same library, so moving between
+        // them is not leaving it.
+        if (IsAvatarSectionKey(left) && IsAvatarSectionKey(key))
         {
             return;
         }
 
-        ReleaseAvatarData(left);
+        if (DataGraceFor(left) > TimeSpan.Zero)
+        {
+            return;
+        }
+
+        ReleaseSectionDataNow(left);
     }
 
-    private void ReleaseAvatarData(string key)
+    private void ReleaseSectionDataNow(string key)
     {
         CancelDataRelease(key);
         // The section being released never counts as live, even if the selected
@@ -798,17 +826,19 @@ public partial class MainWindow : Window
         var released = _viewModel.ReleaseSectionData(key, liveKeys);
         if (LifecycleLog.Verbose)
         {
+            var avatar = IsAvatarSectionKey(key)
+                ? $" busy={_viewModel.AvatarViewModel?.IsBusy}" +
+                  $" rows={_viewModel.AvatarViewModel?.Avatars.Count}"
+                : string.Empty;
             LifecycleLog.Write(
-                $"avatar-release: {key} released={released} " +
-                $"busy={_viewModel.AvatarViewModel?.IsBusy} " +
-                $"rows={_viewModel.AvatarViewModel?.Avatars.Count} " +
+                $"section-release: {key} released={released}{avatar} " +
                 $"selected={_viewModel.SelectedSection.Key} live=[{string.Join(",", liveKeys)}] " +
                 $"cached=[{string.Join(",", _sectionViews.Keys)}]");
         }
         if (!released)
         {
             // The library was still arriving; hand it back once it has landed.
-            ScheduleDataRelease(key, AvatarReleaseRetryDelay);
+            ScheduleDataRelease(key, SectionReleaseRetryDelay);
             return;
         }
 
@@ -886,7 +916,7 @@ public partial class MainWindow : Window
                 {
                     // A retry can land while the library is still busy. Keeping
                     // the retry armed is what makes the release eventually happen.
-                    ScheduleDataRelease(key, AvatarReleaseRetryDelay);
+                    ScheduleDataRelease(key, SectionReleaseRetryDelay);
                 }
 
                 ScheduleSettle();
@@ -905,9 +935,13 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Dropping a section view releases its visual tree, but the objects it held
-    /// are only returned once a collection runs, and the pages stay resident
-    /// until the working set is trimmed. Visiting a heavy tab used to leave a
-    /// permanently higher footprint; this settles it back down shortly after.
+    /// are only returned once a collection runs. Visiting a heavy tab used to
+    /// leave a permanently higher footprint because the settle only sent a
+    /// non-blocking hint, which is allowed to do nothing - and did. This now
+    /// collects for real, including the large object heap, and logs what it took
+    /// back. Every switch settles once: the flag coalesces a burst of hops into
+    /// the one collection at the end, instead of skipping switches inside a
+    /// time window.
     /// </summary>
     private void ScheduleSettle()
     {
@@ -916,37 +950,31 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (DateTimeOffset.UtcNow - _lastSettleAt < TimeSpan.FromSeconds(20))
-        {
-            return;
-        }
-
         _settleScheduled = true;
-        _lastSettleAt = DateTimeOffset.UtcNow;
         _ = Task.Run(async () =>
         {
             try
             {
+                // Let the new page lay out first: a collect suspends every thread, so it
+                // must not land in the middle of the paint that follows a switch.
                 await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
                 // Timed from here, after the settle's own deliberate second: timing the whole
                 // method made every run report a second of "slow work" that was this delay.
                 // The collect below touches the whole process, so a stall it caused has to name
                 // it instead of looking like an unexplained freeze.
                 using var job = UiJobTrace.Shared.Begin("settle");
-                // Only hint, never sweep: a blocking collect stops every thread in the process
-                // for the whole pass, which on a few-hundred-megabyte heap is a stall of seconds.
-                GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
-                // The evicted page's images are only reachable through the
-                // decode cache now; dropping it costs a re-decode from the disk
-                // cache and frees up to 24 MB.
-                ImageLoader.Shared.TrimMemory();
+                // The evicted page's images are only reachable through the decode
+                // cache now; dropping it costs a re-decode from the disk cache and
+                // frees up to 24 MB of the heap the collect is about to walk.
+                var result = MemorySettle.Run(ImageLoader.Shared.TrimMemory);
+                LifecycleLog.Write(
+                    $"memory: settled in {result.Milliseconds}ms " +
+                    $"freed={result.FreedBytes / (1024 * 1024)}MB");
 
-                // The working set used to be emptied here, and that was the freeze: private
-                // memory sits around 500 MB, so handing every page back to the pagefile left a
-                // window that faulted all of it back in on the next paint - seconds of a dead UI
-                // (the stall log showed every job "across" a 5-second gap, which is a whole
-                // process that stopped, not one job). Windows trims idle pages itself; the image
-                // cache is the part worth dropping, and that is above.
+                // The working set is deliberately not emptied: handing every page back to
+                // the pagefile left a window that faulted half a gigabyte back in on the next
+                // paint, seconds of a dead UI. Compacting the heap is what actually returns the
+                // memory the tab's garbage was holding.
                 LogMemory("after-evict");
             }
             catch (Exception ex)

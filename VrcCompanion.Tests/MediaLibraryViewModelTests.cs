@@ -90,6 +90,42 @@ public class MediaLibraryViewModelTests
     }
 
     [Fact]
+    public async Task ReleasingTheLibraryDropsTheRowsTheCardsAndTheViewer()
+    {
+        var item = new MediaItem(Path.Combine(_root, "a.png"), "VRChat", new DateTime(2025, 6, 1));
+        var viewModel = new MediaLibraryViewModel(
+            _root,
+            (_, _) => new[]
+            {
+                new MediaGroup(
+                    "VRChat · June 2025",
+                    "VRChat",
+                    new DateTime(2025, 6, 1),
+                    new[] { item })
+            },
+            _ => { },
+            CachePath);
+
+        await viewModel.LoadAsync(force: true);
+        viewModel.OpenViewer(item);
+
+        Assert.True(viewModel.HasLoadedPictures);
+        Assert.Equal(1, viewModel.TotalPictureCount);
+        Assert.NotNull(viewModel.PageCards[0].Item);
+
+        Assert.True(viewModel.ReleaseData());
+
+        // The reusable cards are what used to keep every row reachable after
+        // the page was gone.
+        Assert.False(viewModel.HasLoadedPictures);
+        Assert.Equal(0, viewModel.TotalPictureCount);
+        Assert.Equal(0, viewModel.PictureCount);
+        Assert.All(viewModel.PageCards, card => Assert.Null(card.Item));
+        Assert.False(viewModel.IsViewerOpen);
+        Assert.Null(viewModel.ViewerImage);
+    }
+
+    [Fact]
     public void OpenFolder_CreatesAMissingFolderAndOpensIt()
     {
         var missing = Path.Combine(_root, "VRChat");

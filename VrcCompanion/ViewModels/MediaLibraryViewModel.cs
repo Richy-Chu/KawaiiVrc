@@ -1356,19 +1356,38 @@ public sealed class MediaLibraryViewModel : ViewModelBase
     private DateTimeOffset _lastScanAt;
 
     /// <summary>
-    /// Drops the scanned library once its page is gone. The rows and their
-    /// group objects would otherwise live for the whole session, so a look at
-    /// the pictures tab raised memory for good. EnsureLoadedAsync re-scans on
-    /// the next visit because <see cref="_loaded"/> goes back to false.
+    /// Drops the scanned library once its page is gone. The rows, their group
+    /// objects, the reusable cards and the open viewer's full-size decode would
+    /// otherwise live for the whole session, and the metadata pass would keep
+    /// reading files for a tab nobody has open. EnsureLoadedAsync re-scans on
+    /// the next visit because <see cref="_loaded"/> goes back to false; the disk
+    /// index still paints the grid in the meantime.
     /// </summary>
-    public void ReleaseData()
+    /// <returns>False while a scan is running, so the caller can retry after it lands.</returns>
+    public bool ReleaseData()
     {
         if (IsBusy)
         {
-            return;
+            return false;
         }
 
+        // The background pass reads every picture; left running it would rebuild
+        // the filters and re-read the whole folder after the page is gone.
+        _photoContextCancellation?.Cancel();
+        _photoContextCancellation?.Dispose();
+        _photoContextCancellation = null;
+
+        CloseViewer();
+        _allItems = new List<MediaItem>();
+        _itemsByFolder = new Dictionary<string, List<MediaItem>>(StringComparer.OrdinalIgnoreCase);
+        _photoCache = null;
+        _photoCacheDirty = false;
+        _worldFilterKey = string.Empty;
+        _personFilterKey = string.Empty;
         Groups.Clear();
+        // The reusable cards keep their item until the page is rebuilt, so the
+        // rows would stay reachable through the cards.
+        RebuildPage();
         WorldFilters.Clear();
         PeopleFilters.Clear();
         WorldFilterOptions.Clear();
@@ -1377,6 +1396,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
         _loaded = false;
         _lastScanAt = default;
         PhotoContextsTask = Task.CompletedTask;
+        OnPropertyChanged(nameof(HasLoadedPictures));
+        return true;
     }
 
     public async Task EnsureLoadedAsync()
