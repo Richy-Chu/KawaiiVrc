@@ -2091,18 +2091,49 @@ public sealed class ChatboxViewModel : ViewModelBase, IDisposable
 
     internal void CycleStatusForTest() => CycleToNextStatus();
 
+    private static readonly TimeSpan VrModeCheckInterval = TimeSpan.FromSeconds(15);
+
+    private bool _pollingVrMode;
+    private DateTime _lastVrModeCheck = DateTime.MinValue;
+
     private void RefreshOutputMode()
     {
-        var running = VrModeDetector.IsVrRunning();
-        if (running == _isVrRunning)
+        // Enumerating processes for SteamVR/OVRServer costs hundreds of milliseconds
+        // on a busy machine, and this used to run inside the UI-thread tick - the
+        // "chatbox-tick" line in lifecycle.log. Probe on the pool and apply here.
+        if (_pollingVrMode || DateTime.UtcNow - _lastVrModeCheck < VrModeCheckInterval)
         {
             return;
         }
 
-        _isVrRunning = running;
-        OnPropertyChanged(nameof(IsVrRunning));
-        OnPropertyChanged(nameof(OutputModeText));
-        RefreshPreview();
+        _lastVrModeCheck = DateTime.UtcNow;
+        _pollingVrMode = true;
+        _ = ApplyVrModeAsync();
+    }
+
+    private async Task ApplyVrModeAsync()
+    {
+        try
+        {
+            var running = await Task.Run(VrModeDetector.IsVrRunning).ConfigureAwait(true);
+            if (_disposed || running == _isVrRunning)
+            {
+                return;
+            }
+
+            _isVrRunning = running;
+            OnPropertyChanged(nameof(IsVrRunning));
+            OnPropertyChanged(nameof(OutputModeText));
+            RefreshPreview();
+        }
+        catch
+        {
+            // A probe that fails keeps the last known mode; the next tick retries.
+        }
+        finally
+        {
+            _pollingVrMode = false;
+        }
     }
 
     internal void RefreshForTest() => Tick();

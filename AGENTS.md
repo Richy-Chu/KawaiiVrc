@@ -12,8 +12,8 @@ newer SDK may be the local default: to check SDK 8 compatibility, write a `globa
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.85**
-(`48f2219`), and every release from 1.0.78 on has been performance work: on a weak machine the
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.87**,
+and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
 touching polling, image decoding, popups, the section cache or a list's panel.
@@ -56,8 +56,13 @@ touching polling, image decoding, popups, the section cache or a list's panel.
 - **Polling intervals slowed.** Activity poll 10 s → 30 s (lite 30 s → 60 s), bio poll 10 s → 30 s, instance history 5 s → 15 s, clock 20 s → 60 s. The clock skips updates while minimized; instance history and activity/bio polls already return early when minimized. Realtime websocket remains the primary path; polls are safety nets.
 - **Theme brushes no longer leak.** `MainWindow.ApplyKawaiiTheme` tracks created brush keys, removes old brushes from `Resources` before adding replacements, and freezes all brushes. Previously each accent change leaked `SolidColorBrush`/`LinearGradientBrush` objects into the resource dictionary.
 - **FriendAvatarStore caches parsed JSON.** `LoadFile()` keeps the deserialized `StoredFile` in memory with a last-write-time check, re-reading from disk only when the file changes. `WriteFile()` updates the cache in sync. Avoids re-parsing the entire friend-avatar JSON on every poll.
-- **WebView2 suspends sooner.** `EmbeddedBrowser.SuspendDelayMilliseconds` dropped 7000 ms → 3000 ms. Losing focus lowers the renderer's memory target, and `OnWindowDeactivated` calls `ReleaseForMemory()` only when the page is hidden. Do not call it unconditionally: it disposes the WebView, and `_pendingUrl` is already cleared once a page has navigated, so releasing a visible page would leave its section blank on the next focus.
+- **WebView2 suspends sooner.** `EmbeddedBrowser.SuspendDelayMilliseconds` dropped 7000 ms → 3000 ms. Losing focus only lowers the renderer's memory target, and `OnWindowActivated` restores it. Nothing is disposed on focus loss. `ReleaseForMemory` disposes the WebView, and `_pendingUrl` is already cleared once a page has navigated, so calling it there leaves a blank page on the next focus - 1.0.86 did this for a hidden cached section, and the visible-page version of it was caught before shipping. Section eviction is the only thing that releases a browser.
 - **Timers pause when minimized.** Clock timer skips `OnPropertyChanged` while minimized; instance history poll returns early when minimized.
+
+### What 1.0.87 changed
+
+- **Alt-tab no longer costs the page.** `EmbeddedBrowser.OnWindowDeactivated` called `ReleaseForMemory()` for any page that was not visible, which disposes the WebView of a cached section, so returning to that section came back blank. `MainWindow.OnWindowDeactivated` also cleared the decoded-image cache on every focus loss, so the next focus re-decoded every picture on screen. Focus loss now only lowers the WebView's memory target, and `OnWindowActivated` restores it. Disposal stays with section eviction.
+- **The chatbox tick stopped enumerating processes on the UI thread.** `ChatboxViewModel.RefreshOutputMode` called `VrModeDetector.IsVrRunning`, which walks the process list for `vrmonitor` and `OVRServer_x64`, inside the UI-thread scan tick. The 1.0.86 log named it: `ui stall 828ms cpu=687ms of 828ms burning cpu across chatbox-tick`. It now probes on the pool (at most every 15 s) and applies the answer on the dispatcher, the same shape as `PollNowPlayingAsync`.
 
 ### Do not undo these
 

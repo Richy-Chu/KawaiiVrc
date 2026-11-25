@@ -367,6 +367,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             {
                 _window.Closed += OnWindowClosed;
                 _window.StateChanged += OnWindowStateChanged;
+                _window.Activated += OnWindowActivated;
                 _window.Deactivated += OnWindowDeactivated;
             }
         }
@@ -402,6 +403,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         {
             _window.Closed -= OnWindowClosed;
             _window.StateChanged -= OnWindowStateChanged;
+            _window.Activated -= OnWindowActivated;
             _window.Deactivated -= OnWindowDeactivated;
             _window = null;
         }
@@ -412,18 +414,16 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     private void OnWindowStateChanged(object? sender, EventArgs e)
         => UpdateMemoryTargetLevel();
 
+    // Alt-tabbing away is not the same as leaving the page: the browser keeps its
+    // page, its scroll position and its session, and only drops to the low memory
+    // target until the window is activated again. Nothing is disposed here - a
+    // disposed WebView comes back blank, because _pendingUrl is already cleared
+    // once a page has navigated, and a cached section would reload from scratch.
+    private void OnWindowActivated(object? sender, EventArgs e)
+        => UpdateMemoryTargetLevel();
+
     private void OnWindowDeactivated(object? sender, EventArgs e)
-    {
-        // Losing focus lowers the renderer's target. Only a page nobody can see
-        // is disposed: ReleaseForMemory tears the WebView down, and _pendingUrl
-        // is already cleared once a page has navigated, so releasing a visible
-        // page would leave its section blank on the next focus.
-        UpdateMemoryTargetLevel();
-        if (!IsVisible)
-        {
-            ReleaseForMemory();
-        }
-    }
+        => UpdateMemoryTargetLevel();
 
     private void OnBrowserNavigationRequested(string url)
     {
@@ -692,9 +692,13 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
         try
         {
+            // An inactive window is not rendered, so Chromium may give its memory
+            // back; activation restores the normal target. Suspension stays tied to
+            // a page being off screen, so an alt-tab never suspends what you were
+            // reading and never has to resume it on the way back.
             var hidden = !IsVisible || _window?.WindowState == WindowState.Minimized;
             core.MemoryUsageTargetLevel = ShouldUseLowMemoryTarget(
-                hidden,
+                hidden || _window is { IsActive: false },
                 HasActiveDownloads,
                 IsDocumentPlayingAudio)
                 ? CoreWebView2MemoryUsageTargetLevel.Low
