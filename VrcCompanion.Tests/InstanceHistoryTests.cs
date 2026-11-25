@@ -553,6 +553,44 @@ public sealed class InstanceHistoryTests : IDisposable
     }
 
     [Fact]
+    public void ALateRowStampedInsideASessionDoesNotSplitIt()
+    {
+        // Rows are grouped in timestamp order, but a row recorded later can
+        // carry an older timestamp: an imported history, or a log line replayed.
+        // Stamped inside a finished session, it used to end that session's run,
+        // so the session's own leave started a second row at the same location -
+        // five hundred sessions plus one late row came back as 502 rows that the
+        // detail view then merged into 498.
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "late-row.db"));
+        var joined = new DateTimeOffset(2026, 11, 20, 18, 0, 0, TimeSpan.Zero);
+
+        var first = InstanceHistoryStore.NewFromLog(Me, LocationA, joined)!;
+        SetWorldMetadata(first);
+        first.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+        first.GetOrAddPlayer(Friend, "Juicy_Drink").StartVisit(joined);
+        first.Close(joined.AddMinutes(1));
+        store.Add(first);
+
+        var late = InstanceHistoryStore.NewFromLog(Me, LocationB, joined.AddSeconds(30))!;
+        SetWorldMetadata(late);
+        late.GetOrAddPlayer(Me, "Me").StartVisit(joined.AddSeconds(30));
+        late.Close(joined.AddSeconds(45));
+        store.Add(late);
+
+        var rows = store.ForAccount(Me);
+        Assert.Equal(2, rows.Count);
+
+        var session = Assert.Single(rows, row => row.Location == LocationA);
+        Assert.Equal(joined, session.JoinedAt);
+        Assert.Equal(joined.AddMinutes(1), session.LeftAt);
+        Assert.Equal(2, session.Players.Count);
+
+        var other = Assert.Single(rows, row => row.Location == LocationB);
+        Assert.Equal(joined.AddSeconds(30), other.JoinedAt);
+        Assert.Equal(joined.AddSeconds(45), other.LeftAt);
+    }
+
+    [Fact]
     public void ANewHistoryRowReusesTheRowsThatDidNotChange()
     {
         var store = new InstanceHistoryStore(Path.Combine(_directory, "reuse-rows.db"));
@@ -833,7 +871,11 @@ public sealed class InstanceHistoryTests : IDisposable
 
         Assert.Equal(2, viewModel.Entries.Count);
         var merged = Assert.Single(viewModel.Entries, item => item.Entry.Location == LocationA);
-        Assert.Equal(3, merged.Entry.SourceEntryIds.Count);
+        // Two visits, so two stored sessions. This row used to carry three: the
+        // other instance's visit was stamped between the second visit's join and
+        // its leave, which ended the run and started a leave-only row (the bug
+        // pinned by ALateRowStampedInsideASessionDoesNotSplitIt).
+        Assert.Equal(2, merged.Entry.SourceEntryIds.Count);
         Assert.Equal(3, merged.PlayerCount);
         Assert.Contains(merged.Players, player => player.UserId == Friend);
         Assert.Contains(merged.Players, player => player.UserId == Other);

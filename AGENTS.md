@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 962 tests and takes about 2 minutes 45 seconds. CI builds with SDK 8, while a
+A full run is 963 tests and takes about 2 minutes 45 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.100**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.101**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,13 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.101 changed
+
+- **A session is grouped by account and location, not by "the previous row".** Rows are read in timestamp order (`ORDER BY created_at_ts, id`), but a row recorded later can carry an older timestamp - an import, a replay, two writes a minute apart. Landing between a session's join and its leave, it used to end the run, so the session's leave started a second row at the same location (a leave-only row whose start and end are the same moment). With 500 stored sessions plus one such row, the store returned 502 rows with two repeated locations and the popup showed 498. `GroupAll`/`AppendGroups` now keep the open `GroupState` per `(account, location)` in `EventRowCache.OpenGroups` and hand a row to its own session wherever it sorted; `AddRowInTimeOrder` keeps a group's rows in timestamp order because `BuildEntry` reads `Rows[0]` and `Rows[^1]`.
+- **The cap was not the cause.** `MaximumEntries = 500` takes the newest groups in reverse order and never splits one. Do not "fix" a short list by raising it.
+- **`ALateRowStampedInsideASessionDoesNotSplitIt`** pins the two-row result and each row's real times. `ViewModelCollapsesRepeatedVisitsToTheSameInstanceButKeepsOtherInstances` used to expect three source sessions for two visits; that expectation was the bug written down, and it is two now.
+- **Do not go back to grouping by `groups[^1]`.** The 1-hour tolerance and the self-left rule stay in `StartsNewGroup`; only *which* group a row is offered to changed.
 
 ### What 1.0.100 changed
 

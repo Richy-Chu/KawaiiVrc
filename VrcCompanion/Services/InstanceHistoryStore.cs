@@ -1132,14 +1132,16 @@ public sealed class InstanceHistoryStore
     {
         if (cache is null)
         {
-            return GroupAll(events);
+            return GroupAll(events, out _);
         }
 
         if (cache.Groups is null ||
+            cache.OpenGroups is null ||
             !ReferenceEquals(cache.GroupedRows, events) ||
             events.Count < cache.GroupedCount)
         {
-            cache.Groups = GroupAll(events);
+            cache.Groups = GroupAll(events, out var openGroups);
+            cache.OpenGroups = openGroups;
             cache.GroupedRows = events;
             cache.GroupedCount = events.Count;
             return cache.Groups;
@@ -1147,58 +1149,83 @@ public sealed class InstanceHistoryStore
 
         if (events.Count > cache.GroupedCount)
         {
-            AppendGroups(cache.Groups, events, cache.GroupedCount);
+            AppendGroups(cache.Groups, cache.OpenGroups, events, cache.GroupedCount);
             cache.GroupedCount = events.Count;
         }
 
         return cache.Groups;
     }
 
-    private static List<GroupState> GroupAll(List<EventRow> events)
+    private static List<GroupState> GroupAll(
+        List<EventRow> events,
+        out Dictionary<(string Account, string Location), GroupState> openGroups)
     {
         var groups = new List<GroupState>();
+        openGroups = new Dictionary<(string, string), GroupState>();
         foreach (var row in events)
         {
-            var current = groups.Count == 0 ? null : groups[^1];
-            if (current is null || StartsNewGroup(current.Rows, row))
-            {
-                groups.Add(new GroupState(row));
-                continue;
-            }
-
-            current.Rows.Add(row);
+            Join(groups, openGroups, row);
         }
 
         return groups;
     }
 
-    private static void AppendGroups(IList<GroupState> groups, List<EventRow> events, int start)
+    private static void AppendGroups(
+        List<GroupState> groups,
+        Dictionary<(string Account, string Location), GroupState> openGroups,
+        List<EventRow> events,
+        int start)
     {
         for (var index = start; index < events.Count; index++)
         {
-            var row = events[index];
-            var current = groups.Count == 0 ? null : groups[^1];
-            if (current is null || StartsNewGroup(current.Rows, row))
-            {
-                groups.Add(new GroupState(row));
-
-                // A newer group for the same account means the previous one is
-                // no longer the open session, so its built row is out of date.
-                if (current is not null &&
-                    string.Equals(current.AccountUserId, row.AccountUserId, StringComparison.Ordinal))
-                {
-                    current.Entry = null;
-                    current.EntryLocation = null;
-                }
-
-                continue;
-            }
-
-            // The last group just grew, so its built row no longer matches.
-            current!.Rows.Add(row);
-            current.Entry = null;
-            current.EntryLocation = null;
+            Join(groups, openGroups, events[index]);
         }
+    }
+
+    /// <summary>
+    /// Adds one row to the session it belongs to. Rows are read in timestamp
+    /// order, but a row recorded later can carry an older timestamp - an
+    /// imported history, or a log line replayed - and it used to land between a
+    /// session's join and its leave. That intervening row ended the run, so the
+    /// leave started a second session at the same location: one visit became two
+    /// rows. The open session is looked up by account and location instead, so a
+    /// row rejoins its own session wherever it sorted.
+    /// </summary>
+    private static void Join(
+        List<GroupState> groups,
+        Dictionary<(string Account, string Location), GroupState> openGroups,
+        EventRow row)
+    {
+        var key = (row.AccountUserId, row.Location);
+        if (openGroups.TryGetValue(key, out var current) && !StartsNewGroup(current.Rows, row))
+        {
+            AddRowInTimeOrder(current, row);
+            return;
+        }
+
+        var group = new GroupState(row);
+        groups.Add(group);
+        openGroups[key] = group;
+    }
+
+    /// <summary>
+    /// Keeps a group's rows in timestamp order: a late row can sort before the
+    /// group's own end, and <see cref="BuildEntry"/> reads the first and last row.
+    /// </summary>
+    private static void AddRowInTimeOrder(GroupState group, EventRow row)
+    {
+        var rows = group.Rows;
+        var index = rows.Count;
+        while (index > 0 && rows[index - 1].CreatedAtTs > row.CreatedAtTs)
+        {
+            index--;
+        }
+
+        rows.Insert(index, row);
+
+        // The group grew, so its built row no longer matches.
+        group.Entry = null;
+        group.EntryLocation = null;
     }
 
     private static bool StartsNewGroup(IReadOnlyList<EventRow> group, EventRow row)
@@ -1576,6 +1603,13 @@ public sealed class InstanceHistoryStore
 
         /// <summary>The sequential grouping the cached rows were cut into.</summary>
         public List<GroupState>? Groups { get; set; }
+
+        /// <summary>
+        /// The group each account's session at a location is still running in,
+        /// so a row recorded later with an older timestamp (an imported history)
+        /// rejoins its own session instead of cutting it in two.
+        /// </summary>
+        public Dictionary<(string Account, string Location), GroupState>? OpenGroups { get; set; }
 
         /// <summary>The row list those groups were built from.</summary>
         public List<EventRow>? GroupedRows { get; set; }
