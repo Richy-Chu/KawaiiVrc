@@ -24,9 +24,16 @@ internal static class FriendSignature
         {
             var hash = 14695981039346656037UL;
             hash = Mix(hash, friend.Id);
+            // A rename changes the row's text without touching its status.
+            hash = Mix(hash, friend.DisplayName);
+            hash = Mix(hash, friend.Username);
             hash = Mix(hash, friend.Location);
             hash = Mix(hash, friend.Status);
             hash = Mix(hash, friend.StatusDescription);
+            // The avatar id and its picture are separate signals: the friend API
+            // can keep the id while the image changes, and the feed reports an
+            // avatar switch from the id.
+            hash = Mix(hash, friend.CurrentAvatar);
             hash = Mix(hash, friend.CurrentAvatarImageUrl);
             sum += hash;
         }

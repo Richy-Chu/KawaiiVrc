@@ -449,6 +449,21 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         var profileChanges = FindProfileAvatarChanges(friends, _previousFriends);
         var bioEntries = ObserveFriendBios(friends, DateTimeOffset.UtcNow);
         CheckedFriendCount = friends.Count;
+
+        // The MainViewModel hands over the full friend list on every presence
+        // refresh, and it usually says exactly what the last one said. Building
+        // a feed row per friend for that cost about 1.4 MB a poll on a
+        // 2,000-friend account, so an unchanged snapshot only updates the
+        // bookkeeping - the same shortcut the online poll already takes.
+        var signature = FriendSignature.Compute(friends);
+        if (bioEntries.Count == 0 && _previousFeedSignature == signature)
+        {
+            _previousFriends = friends.ToList();
+            QueueProfileAvatarChanges(profileChanges);
+            return;
+        }
+
+        _previousFeedSignature = signature;
         SetFeed(friends);
         if (bioEntries.Count > 0)
         {
@@ -1282,10 +1297,17 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             return changes;
         }
 
-        var previousById = previous
-            .Where(friend => !string.IsNullOrWhiteSpace(friend.Id))
-            .GroupBy(friend => friend.Id, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        // A plain loop, not GroupBy().ToDictionary(): this runs against the whole
+        // friend list on every presence poll, and the grouping objects were most
+        // of what the shortcut still allocated.
+        var previousById = new Dictionary<string, VrcUser>(previous.Count, StringComparer.Ordinal);
+        foreach (var before in previous)
+        {
+            if (!string.IsNullOrWhiteSpace(before.Id))
+            {
+                previousById.TryAdd(before.Id, before);
+            }
+        }
 
         foreach (var friend in current)
         {

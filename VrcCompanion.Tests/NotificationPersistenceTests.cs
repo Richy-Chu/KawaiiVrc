@@ -39,6 +39,53 @@ public class NotificationPersistenceTests : IDisposable
     }
 
     [Fact]
+    public void AnUnchangedNotificationSaveLeavesTheFileAlone()
+    {
+        // The notification refresh saves on every cycle. With 300 persisted
+        // boops that meant reading, parsing and rewriting the file each time
+        // for data that had not changed.
+        using var details = JsonDocument.Parse("{}");
+        var path = PathFor("notifications.json");
+        var store = new NotificationPersistenceStore(path);
+        var sentAt = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var notifications = Enumerable.Range(0, 300).Select(index => new VrcNotification
+        {
+            Id = $"not_{index}",
+            Type = "boop",
+            Message = "booped you",
+            Details = details.RootElement.Clone(),
+            SenderUserId = "usr_sender",
+            SenderDisplayName = "Sender",
+            CreatedAt = sentAt.AddMinutes(-index)
+        }).ToList();
+        var cleared = Enumerable.Range(0, 400).Select(index => $"not_old_{index}").ToList();
+
+        store.Save("usr_me", notifications, cleared);
+        var stamp = File.GetLastWriteTimeUtc(path);
+        var length = new FileInfo(path).Length;
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        store.Save("usr_me", notifications, cleared);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(stamp, File.GetLastWriteTimeUtc(path));
+        Assert.Equal(length, new FileInfo(path).Length);
+        Assert.True(
+            allocated < 200 * 1024,
+            $"An unchanged notification save allocated {allocated:N0} B for a file it did not change.");
+
+        // A real change still reaches the file, and the file still reads back.
+        notifications[0].Seen = true;
+        store.Save("usr_me", notifications, cleared);
+        Assert.NotEqual(stamp, File.GetLastWriteTimeUtc(path));
+
+        var reloaded = new NotificationPersistenceStore(path).Load("usr_me");
+        Assert.Equal(300, reloaded.Notifications.Count);
+        Assert.True(reloaded.Notifications.Single(item => item.Id == "not_0").Seen);
+        Assert.Equal(400, reloaded.ClearedIds.Count);
+    }
+
+    [Fact]
     public void WorldInvitesAndInviteRequestsSurviveARestart()
     {
         var path = PathFor("notifications.json");

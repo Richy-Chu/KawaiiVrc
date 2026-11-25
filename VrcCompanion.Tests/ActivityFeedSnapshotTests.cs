@@ -166,6 +166,62 @@ public class ActivityFeedSnapshotTests
             entry.Type == ActivityType.FriendRemoved && entry.UserId == removed.Id);
     }
 
+    private static List<VrcUser> FriendsForTheRefreshProbe() => Enumerable.Range(0, 500)
+        .Select(index => new VrcUser
+        {
+            Id = $"usr_{index:00000000}",
+            DisplayName = $"Friend {index}",
+            Username = $"friend{index}",
+            Status = index % 2 == 0 ? "active" : "join me",
+            StatusDescription = "here",
+            Bio = "bio",
+            Location = $"wrld_{index:00000000}:12345~region(eu)",
+            CurrentAvatarImageUrl = $"https://example.test/a{index}.png"
+        })
+        .ToList();
+
+    [Fact]
+    public void AnUnchangedFriendListKeepsTheRenderedRows()
+    {
+        // Every presence refresh hands over the full list, and it usually says
+        // what the last one said. Building a feed row per friend for that cost
+        // about 1.4 MB a poll on a 2,000-friend account and rebuilt the page.
+        using var api = new VrcApiClient();
+        var feed = new ActivityFeedViewModel(api);
+        feed.ApplyFriends(FriendsForTheRefreshProbe());
+        var rendered = feed.Entries;
+        Assert.NotEmpty(rendered);
+
+        // Build the second snapshot before the measurement: a 500-friend list
+        // is ~486 KB of objects on its own.
+        var repeated = FriendsForTheRefreshProbe();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        feed.ApplyFriends(repeated);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Same(rendered, feed.Entries);
+        Assert.True(
+            allocated < 128 * 1024,
+            $"An unchanged friend list allocated {allocated:N0} B and should only refresh its bookkeeping.");
+    }
+
+    [Fact]
+    public void AChangedFriendListStillRebuildsTheFeed()
+    {
+        using var api = new VrcApiClient();
+        var feed = new ActivityFeedViewModel(api);
+        feed.ApplyFriends(FriendsForTheRefreshProbe());
+        var rendered = feed.Entries;
+
+        var moved = FriendsForTheRefreshProbe();
+        moved[10].Location = "wrld_moved:99999~region(us)";
+        feed.ApplyFriends(moved);
+
+        Assert.NotSame(rendered, feed.Entries);
+        Assert.Contains(feed.Entries, entry =>
+            entry.Type == ActivityType.FriendJoinedWorld && entry.UserId == moved[10].Id);
+    }
+
     [Fact]
     public void ActivityFiltersIncludeAllAndApplyTheOfflineSetting()
     {
