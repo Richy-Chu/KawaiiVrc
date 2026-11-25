@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -73,17 +74,7 @@ public class SignOutConfirmationTests
         {
             using var shell = new MainViewModel(IsolatedApi());
             TestHooks.SetLoggedIn(shell);
-            var window = new MainWindow(shell, initializeOnLoad: false)
-            {
-                Width = 1100,
-                Height = 720,
-                WindowStyle = WindowStyle.None,
-                ShowInTaskbar = false,
-                ShowActivated = false,
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                Left = 100,
-                Top = 100
-            };
+            var window = CreateWindow(shell);
             window.Show();
             try
             {
@@ -103,6 +94,59 @@ public class SignOutConfirmationTests
             }
         });
     }
+
+    [Fact]
+    public void EscapeCancelsTheConfirmationAndNeverSignsOut()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var overlay = FindByName(window, "SignOutConfirmationOverlay");
+                shell.LogoutCommand.Execute(null);
+                window.UpdateLayout();
+                Assert.True(shell.IsLogoutConfirmationOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window)!,
+                    0,
+                    Key.Escape)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent
+                };
+                window.RaiseEvent(escape);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the sign-out card.");
+                Assert.False(shell.IsLogoutConfirmationOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+                Assert.True(shell.IsLoggedIn, "Escape must never sign out.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    private static MainWindow CreateWindow(MainViewModel shell)
+        => new(shell, initializeOnLoad: false)
+        {
+            Width = 1100,
+            Height = 720,
+            WindowStyle = WindowStyle.None,
+            ShowInTaskbar = false,
+            ShowActivated = false,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = 100,
+            Top = 100
+        };
 
     /// <summary>A session file this test owns; never the signed-in user's.</summary>
     private static VrcApiClient IsolatedApi()

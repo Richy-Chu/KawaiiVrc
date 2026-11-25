@@ -215,6 +215,15 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Escape)
         {
+            // The sign-out card is the topmost overlay; Escape cancels it and
+            // never signs out. `ConfirmLogoutCommand` is the only sign-out.
+            if (_viewModel.IsLogoutConfirmationOpen)
+            {
+                _viewModel.CancelLogoutCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (_viewModel.IsInviteComposerOpen)
             {
                 _viewModel.CancelInviteComposerCommand.Execute(null);

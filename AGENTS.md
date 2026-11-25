@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 979 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 980 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.106**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.107**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,15 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.107 changed
+
+- **Escape closes the sign-out card and never signs out.** `OnPreviewKeyDown` already answered Escape
+  for the composers, the world dialog, the friend detail and browser focus, but not for the card
+  1.0.106 added, so the press fell through to the window behind it. The `IsLogoutConfirmationOpen`
+  branch is now first in the chain (the card is the topmost overlay); it runs `CancelLogoutCommand`
+  and marks the event handled. `EscapeCancelsTheConfirmationAndNeverSignsOut` raises a preview
+  `Key.Escape` on a real window and pins the handled flag, the collapsed card and `IsLoggedIn`.
 
 ### What 1.0.106 changed
 
@@ -277,8 +286,10 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    `ConfirmLogoutCommand` calls `LogoutAsync`. Do not bind a Sign out button straight to `LogoutAsync`
    or to a new command that signs out, and do not remove the `SignOutLocally` close: the saved
    cookie is deleted with no backup, so an accidental click is unrecoverable. The expiry paths
-   (`SignOutLocally` from auth failures) must stay prompt-free. `SignOutConfirmationTests` pins all
-   of it.
+   (`SignOutLocally` from auth failures) must stay prompt-free. Escape must cancel the card through
+   `CancelLogoutCommand` and never reach `LogoutAsync`; keep its branch first in
+   `OnPreviewKeyDown` so it runs before the overlays underneath. `SignOutConfirmationTests` pins all
+   of it, including `EscapeCancelsTheConfirmationAndNeverSignsOut`.
 
 
 ### Virtualization: what is real and what is not
