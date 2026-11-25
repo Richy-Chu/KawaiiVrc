@@ -132,6 +132,16 @@ public sealed class InstanceHistoryStore
     private const int MaximumCachedEventAccounts = 2;
 
     /// <summary>
+    /// The stored world metadata, read once per refresh and shared with every
+    /// session at that location. Reading it was the largest allocation left once
+    /// the grouping was cached, and the rows change only through this store's
+    /// writes, so a version bumped by those plus a cheap (count, last-updated)
+    /// check keep the cached dictionary honest.
+    /// </summary>
+    private readonly Dictionary<string, LocationCache> _locationCaches = new(StringComparer.Ordinal);
+    private long _locationVersion;
+
+    /// <summary>
     /// Drops parsed rows after a write that edits them in place. Appends do not
     /// need this: the row count and highest id tell ReadEvents what is new.
     /// </summary>
@@ -213,6 +223,7 @@ public sealed class InstanceHistoryStore
             UpsertLocation(connection, transaction, entry);
             WriteEntryEvents(connection, transaction, entry);
             transaction.Commit();
+            _locationVersion++;
             InvalidateCache();
 
             return BuildEntries(connection, entry.AccountUserId)
@@ -242,6 +253,7 @@ public sealed class InstanceHistoryStore
             }
 
                             transaction.Commit();
+            _locationVersion++;
             InvalidateCache();
             return usable.Count;
         }
@@ -304,6 +316,7 @@ public sealed class InstanceHistoryStore
             }
 
             transaction.Commit();
+            _locationVersion++;
             return true;
         }
     }
@@ -543,6 +556,7 @@ public sealed class InstanceHistoryStore
             }
 
             transaction.Commit();
+            _locationVersion++;
             return entries.Count;
         }
     }
@@ -706,6 +720,7 @@ public sealed class InstanceHistoryStore
             using var transaction = connection.BeginTransaction();
             UpsertLocation(connection, transaction, entry);
             transaction.Commit();
+            _locationVersion++;
         }
     }
 
@@ -1041,7 +1056,7 @@ public sealed class InstanceHistoryStore
         SqliteConnection connection,
         string? accountUserId)
     {
-        var locations = ReadLocations(connection, accountUserId);
+        var locations = ReadLocationsCached(connection, accountUserId);
         var events = ReadEvents(connection, accountUserId);
         if (events.Count == 0)
         {
@@ -1303,6 +1318,60 @@ public sealed class InstanceHistoryStore
         }
     }
 
+    private Dictionary<(string Account, string Location), LocationRow> ReadLocationsCached(
+        SqliteConnection connection,
+        string? accountUserId)
+    {
+        var key = accountUserId ?? string.Empty;
+        var (count, updated) = ReadLocationStats(connection, accountUserId);
+        if (_locationCaches.TryGetValue(key, out var cached) &&
+            cached.Version == _locationVersion &&
+            cached.Count == count &&
+            string.Equals(cached.Updated, updated, StringComparison.Ordinal))
+        {
+            return cached.Rows;
+        }
+
+        var rows = ReadLocations(connection, accountUserId);
+        if (_locationCaches.Count >= MaximumCachedEventAccounts)
+        {
+            _locationCaches.Clear();
+        }
+
+        _locationCaches[key] = new LocationCache
+        {
+            Version = _locationVersion,
+            Count = count,
+            Updated = updated,
+            Rows = rows
+        };
+        return rows;
+    }
+
+    /// <summary>
+    /// A cheap proof that the location table still matches the cached rows: a
+    /// write from this store also bumps the version, and this catches a write
+    /// from anywhere else (an importer's own store on the same database).
+    /// </summary>
+    private static (int Count, string Updated) ReadLocationStats(
+        SqliteConnection connection,
+        string? accountUserId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = accountUserId is null
+            ? "SELECT COUNT(*), COALESCE(MAX(last_updated_at), '') FROM gamelog_location"
+            : "SELECT COUNT(*), COALESCE(MAX(last_updated_at), '') FROM gamelog_location WHERE account_user_id = $account";
+        if (accountUserId is not null)
+        {
+            command.Parameters.AddWithValue("$account", accountUserId);
+        }
+
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? ((int)reader.GetInt64(0), reader.GetString(1))
+            : (0, string.Empty);
+    }
+
     private static Dictionary<(string Account, string Location), LocationRow> ReadLocations(
         SqliteConnection connection,
         string? accountUserId)
@@ -1511,6 +1580,21 @@ public sealed class InstanceHistoryStore
 
         /// <summary>The stored world metadata that row was built from.</summary>
         public LocationRow? EntryLocation { get; set; }
+    }
+
+    /// <summary>
+    /// One account's stored world metadata, kept until a location write changes
+    /// it. The dictionary is shared with every caller and never mutated.
+    /// </summary>
+    private sealed class LocationCache
+    {
+        public long Version { get; init; }
+
+        public int Count { get; init; }
+
+        public string Updated { get; init; } = string.Empty;
+
+        public Dictionary<(string Account, string Location), LocationRow> Rows { get; init; } = new();
     }
 
     private sealed record LocationRow(

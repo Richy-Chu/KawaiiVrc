@@ -201,6 +201,36 @@ internal static class TestHooks
             ?.Invoke(viewModel, new object[] { busy });
     }
 
+    /// <summary>Points the shell's notification persistence at a test file.</summary>
+    public static void UseNotificationStore(
+        MainViewModel shell,
+        NotificationPersistenceStore store,
+        string accountId)
+    {
+        var field = typeof(MainViewModel).GetField(
+            "_notificationStore",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("MainViewModel._notificationStore not found.");
+        field.SetValue(shell, store);
+
+        var account = typeof(MainViewModel).GetField(
+            "_notificationsAccountId",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("MainViewModel._notificationsAccountId not found.");
+        account.SetValue(shell, accountId);
+    }
+
+    /// <summary>Publishes notifications on the shell without a network refresh.</summary>
+    public static void SeedNotifications(
+        MainViewModel shell,
+        IEnumerable<NotificationItem> notifications)
+    {
+        foreach (var notification in notifications)
+        {
+            shell.Notifications.Add(notification);
+        }
+    }
+
     public static void SetLoggedIn(MainViewModel shell)
     {
         var setter = typeof(MainViewModel)

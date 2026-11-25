@@ -508,6 +508,51 @@ public sealed class InstanceHistoryTests : IDisposable
     }
 
     [Fact]
+    public void ARefreshDoesNotReReadEveryStoredLocation()
+    {
+        var path = Path.Combine(_directory, "locations.db");
+        var store = new InstanceHistoryStore(path);
+        var start = DateTimeOffset.Now.AddHours(-10);
+        for (var index = 0; index < 300; index++)
+        {
+            var joined = start.AddMinutes(index * 2);
+            var world = $"wrld_{index:00000000}-1111-1111-1111-111111111111";
+            var entry = InstanceHistoryStore.NewFromLog(Me, world + ":12345~region(eu)", joined)!;
+            entry.WorldName = $"World {index}";
+            entry.WorldThumbnailUrl = $"https://example.test/thumb-{index}.png";
+            entry.WorldAuthorName = $"Author {index}";
+            entry.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+            entry.Close(joined.AddMinutes(1));
+            store.Add(entry);
+        }
+
+        store.ForAccount(Me);
+        store.RecordPlayerEvent(Me, LocationA, Other, "Someone", string.Empty, joined: true, DateTimeOffset.Now);
+        var measureStart = GC.GetAllocatedBytesForCurrentThread();
+        var rows = store.ForAccount(Me);
+        var cost = GC.GetAllocatedBytesForCurrentThread() - measureStart;
+
+        Assert.Equal(301, rows.Count);
+        // Measured here: 18,824 B against 249,768 B when every stored location
+        // row was read again on each refresh.
+        Assert.True(
+            cost * 4 < 249_768,
+            $"Refresh with 300 stored locations allocated {cost:N0} B.");
+
+        // Metadata enriched after the cache is warm must still show up: the
+        // stored timestamp does not move here, so only the write path's version
+        // bump can invalidate the cached rows.
+        var target = rows.Single(row => row.WorldName == "World 5");
+        var update = InstanceHistoryStore.NewFromLog(Me, target.Location, target.JoinedAt)!;
+        update.WorldName = "Renamed World";
+        store.UpsertMetadata(update);
+
+        var refreshed = store.ForAccount(Me).Single(row => row.Id == target.Id);
+        Assert.Equal("Renamed World", refreshed.WorldName);
+        Assert.Equal("Author 5", refreshed.WorldAuthorName);
+    }
+
+    [Fact]
     public void SameLocationHoursApartIsStoredAsTwoVisits()
     {
         var store = new InstanceHistoryStore(Path.Combine(_directory, "grouping.db"));

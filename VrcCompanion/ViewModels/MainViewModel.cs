@@ -539,6 +539,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         MarkAllReadCommand = Track(new AsyncRelayCommand(
             MarkAllReadAsync,
             () => IsLoggedIn && !IsBusy && UnreadNotificationCount > 0));
+        ClearNotificationCommand = Track(new RelayCommand<NotificationItem>(
+            ClearNotification,
+            item => item is not null && !IsBusy));
+        ClearAllNotificationsCommand = Track(new RelayCommand(
+            ClearAllNotifications,
+            () => Notifications.Count > 0 && !IsBusy));
         MarkNotificationSeenCommand = Track(new AsyncRelayCommand<NotificationItem>(
             MarkNotificationSeenAsync,
             item => item is { Seen: false } && IsLoggedIn && !IsBusy));
@@ -2551,6 +2557,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand UseRecoveryCodeCommand { get; }
     public AsyncRelayCommand SaveStatusCommand { get; }
     public AsyncRelayCommand MarkAllReadCommand { get; }
+    public RelayCommand<NotificationItem> ClearNotificationCommand { get; }
+    public RelayCommand ClearAllNotificationsCommand { get; }
     public AsyncRelayCommand<NotificationItem> MarkNotificationSeenCommand { get; }
     public RelayCommand<NotificationItem> OpenBoopPreviewCommand { get; }
     public RelayCommand<NotificationItem> OpenNotificationGroupCommand { get; }
@@ -7417,6 +7425,46 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         => error.StatusCode == 404 &&
            (error.Message?.Contains("notification not found", StringComparison.OrdinalIgnoreCase) ?? false);
 
+    /// <summary>Drops one notification from the list, whatever its type.</summary>
+    private void ClearNotification(NotificationItem? item)
+    {
+        if (item is null || IsBusy)
+        {
+            return;
+        }
+
+        ClearPersistentNotification(item);
+        ShowInfo("Notification cleared.");
+    }
+
+    /// <summary>
+    /// Clears the whole list at once. The ids join the cleared set, so the next
+    /// refresh does not bring back rows the user just dismissed.
+    /// </summary>
+    private void ClearAllNotifications()
+    {
+        if (IsBusy || Notifications.Count == 0)
+        {
+            return;
+        }
+
+        var cleared = Notifications.Count;
+        foreach (var notification in Notifications)
+        {
+            _clearedNotificationIds.Add(notification.Id);
+        }
+
+        Notifications.Clear();
+        if (_selectedNotification is not null)
+        {
+            ClearNotificationSelection();
+        }
+
+        UpdateUnreadState();
+        PersistNotifications();
+        ShowInfo(cleared == 1 ? "Notification cleared." : $"Cleared {cleared} notifications.");
+    }
+
     private void ClearPersistentNotification(NotificationItem item)
     {
         _clearedNotificationIds.Add(item.Id);
@@ -9693,6 +9741,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(HasNoNotifications));
         RefreshNotificationsView();
         MarkAllReadCommand.RaiseCanExecuteChanged();
+        ClearAllNotificationsCommand.RaiseCanExecuteChanged();
     }
 
     private void ConfigureTwoFactor(IReadOnlyList<string> methods)

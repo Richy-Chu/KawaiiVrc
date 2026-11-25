@@ -1016,11 +1016,17 @@
                     <TextBlock Text="{Binding NotificationsSummary}"
                                Style="{StaticResource MutedText}"
                                VerticalAlignment="Center" />
-                    <Button Grid.Column="1"
-                            Style="{StaticResource SmallButton}"
-                            Content="Mark all read"
-                            Command="{Binding MarkAllReadCommand}"
-                            Visibility="{Binding HasUnreadNotifications, Converter={StaticResource BoolToVis}}" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Button Style="{StaticResource SmallButton}"
+                                Content="Mark all read"
+                                Margin="0,0,6,0"
+                                Command="{Binding MarkAllReadCommand}"
+                                Visibility="{Binding HasUnreadNotifications, Converter={StaticResource BoolToVis}}" />
+                        <Button Style="{StaticResource SmallButton}"
+                                Content="Clear all"
+                                ToolTip="Clear every notification from your list"
+                                Command="{Binding ClearAllNotificationsCommand}" />
+                    </StackPanel>
                 </Grid>
 
                 <Grid Grid.Row="1">
@@ -1239,6 +1245,12 @@
                                                             Command="{Binding DataContext.MarkNotificationSeenCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                             CommandParameter="{Binding}"
                                                             Visibility="{Binding IsUnseen, Converter={StaticResource BoolToVis}}" />
+                                                    <Button Style="{StaticResource SmallButton}"
+                                                            Content="Clear"
+                                                            Margin="6,0,0,0"
+                                                            ToolTip="Remove this notification from your list"
+                                                            Command="{Binding DataContext.ClearNotificationCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}" />
                                                 </WrapPanel>
                                             </Grid>
                                         </Border>

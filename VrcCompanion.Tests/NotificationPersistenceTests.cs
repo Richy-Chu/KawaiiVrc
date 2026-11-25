@@ -716,6 +716,39 @@ public class NotificationPersistenceTests : IDisposable
     }
 
     [Fact]
+    public void ClearingOneNotificationOrAllOfThemSurvivesAReload()
+    {
+        var path = PathFor("notifications-clear.json");
+        var store = new NotificationPersistenceStore(path);
+        var handler = new CaptureHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.UseNotificationStore(shell, store, "usr_me");
+        TestHooks.SeedNotifications(
+            shell,
+            new[]
+            {
+                new NotificationItem(Notification("not_a", "invite")),
+                new NotificationItem(Notification("not_b", "requestInvite")),
+                new NotificationItem(Notification("not_c", "boop"))
+            });
+
+        shell.ClearNotificationCommand.Execute(shell.Notifications[1]);
+        Assert.Equal(new[] { "not_a", "not_c" }, shell.Notifications.Select(item => item.Id));
+
+        shell.ClearAllNotificationsCommand.Execute(null);
+        Assert.Empty(shell.Notifications);
+        Assert.Contains("2 notifications", shell.InfoMessage, StringComparison.OrdinalIgnoreCase);
+
+        // The cleared ids persist, so a relaunch does not bring the rows back.
+        var saved = new NotificationPersistenceStore(path).Load("usr_me");
+        Assert.Empty(saved.Notifications);
+        Assert.Equal(
+            new[] { "not_a", "not_b", "not_c" },
+            saved.ClearedIds.OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task DeclineWithMessageDropsAnInviteVrChatHasExpired()
     {
         var handler = new CaptureHandler

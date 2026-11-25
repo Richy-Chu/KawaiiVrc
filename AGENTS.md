@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 950 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
+A full run is 952 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.94**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.95**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -119,6 +119,11 @@ file inline and never freed it.
 - **The reuse is checked, not assumed.** `RefreshingHistoryReusesFinishedGroupsAndRebuildsOnlyTheOpenOne` asserts the finished rows come back as the same objects while the open one is rebuilt; `AppendingAcrossGroupBoundariesProducesTheSameHistoryAsAFreshRead` compares nine appends (a self leave, a world change, two accounts) with a fresh store, players and visits included. Deletes, in-place edits and out-of-order imports still replace the rows and rebuild every group.
 - **An invite VRChat has expired says so.** Invites and invite requests are persisted between launches, but VRChat only accepts a reply to recent notifications; an older one answers 404 "Notification not found" even though the row is still listed, and no client can send that reply. `MainViewModel.NotificationHasExpired` recognises exactly that answer: the reply composer closes with an explanation and the stale row is removed, and a plain Decline of the same row removes it quietly instead of showing the raw server text.
 
+### What 1.0.95 changed
+
+- **Location metadata is read once, not on every refresh.** With the grouping cached, `ReadLocations` was the biggest allocation left in a history refresh: it built a dictionary of every visited world (name, thumbnail, creator, owner) on every poll. Measured in `InstanceHistoryTests` with 300 stored locations: 249,768 B per one-event refresh, against 18,824 B now. `ReadLocationsCached` keeps the dictionary per account and validates it with `_locationVersion` (bumped by every write that touches `gamelog_location`) plus a `COUNT(*)`/`MAX(last_updated_at)` check for another store on the same database. The dictionary is shared and never mutated.
+- **Clear notifications one by one or all at once.** `ClearNotificationCommand` drops one row; `ClearAllNotificationsCommand` drops the list. Both add the ids to `_clearedNotificationIds` and persist, so a refresh does not re-add what the user cleared. Clearing is local: it does not hide or answer anything on VRChat.
+
 ### Do not undo these
 
 1. **No `DropShadowEffect`.** If a panel now reads as too flat, give it a baked edge - a second
@@ -169,6 +174,10 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
 14. **Instance history rows are parsed once and appended to.** `InstanceHistoryStore.ReadEvents` keeps the parsed `EventRow`s per account in `_eventCaches` and trusts them only when `COUNT(*)` and `MAX(id)` still match; a live append reads just the rows above the cached id. That removed the second-biggest allocation in the 1.0.91 trace. Anything that edits rows in place (`AssignPlayerUserId`) or removes them must call `InvalidateEventRows()`; appends must not clear the cache, because that is the whole saving. `InstanceHistoryTests` pins the allocation bound, append-versus-fresh accuracy and the out-of-order import fallback. 1.0.94 keeps the grouping and the finished entries on that same cache entry (`GroupRows`, `GroupState`), so a refresh regroups only the appended rows and rebuilds only the open group; a cached entry is reused only while its `LocationRow` is unchanged.
 
 15. **Invite replies only work on recent notifications.** `POST invite/{id}/response` is the documented route for both `invite` and `requestInvite`, but VRChat drops old notifications from the set it will answer and replies with 404 "Notification not found". Invites are persisted on purpose, so a row can outlive that set. Treat the 404 as expiry (`NotificationHasExpired`): explain it, remove the row, and never report it as a successful decline. Do not "fix" it by trying another endpoint; there is nothing left on the server to answer.
+
+16. **Stored location metadata is cached per account.** `ReadLocationsCached` hands out one shared dictionary; nothing may mutate it. Any path that inserts, updates or deletes a `gamelog_location` row must bump `_locationVersion` (the continuity importers only read the table, and the `COUNT(*)`/`MAX(last_updated_at)` check covers a store from elsewhere), or a rename will keep showing the old world name. `ARefreshDoesNotReReadEveryStoredLocation` pins both the allocation bound and the rename-after-warm accuracy.
+
+17. **Clearing a notification is local and persistent.** `ClearNotification`/`ClearAllNotifications` add the ids to `_clearedNotificationIds`, remove the rows and call `PersistNotifications`; they do not call VRChat. Decline (`DeclineNotificationAsync`) is the one that hides or answers on the server, and Accept/reply are unchanged. Do not clear `_clearedNotificationIds` on a refresh - that is what stops a cleared invite from coming back until a new notification with a new id arrives.
 
 ### Virtualization: what is real and what is not
 
