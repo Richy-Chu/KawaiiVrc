@@ -553,6 +553,117 @@ public sealed class InstanceHistoryTests : IDisposable
     }
 
     [Fact]
+    public void ANewHistoryRowReusesTheRowsThatDidNotChange()
+    {
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "reuse-rows.db"));
+        var start = DateTimeOffset.Now.AddHours(-12);
+        for (var index = 0; index < 200; index++)
+        {
+            var joined = start.AddMinutes(index * 2);
+            var location = $"wrld_{index:00000000}-1111-1111-1111-111111111111:12345~region(eu)";
+            var entry = InstanceHistoryStore.NewFromLog(Me, location, joined)!;
+            entry.WorldName = $"World {index}";
+            entry.WorldThumbnailUrl = $"https://example.test/{index}.png";
+            entry.WorldAuthorName = "Author";
+            entry.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+            for (var player = 0; player < 4; player++)
+            {
+                entry.GetOrAddPlayer(
+                    $"usr_{player}{index:00000000}-1111-1111-1111-111111111111",
+                    $"Player {player}").StartVisit(joined);
+            }
+
+            entry.Close(joined.AddMinutes(1));
+            store.Add(entry);
+        }
+
+        using var api = new VrcApiClient();
+        using var viewModel = new InstanceHistoryViewModel(api, store);
+        viewModel.SetAccount(new VrcUser { Id = Me, DisplayName = "Me" });
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+        Assert.Equal(200, viewModel.Entries.Count);
+        var shown = viewModel.Entries.ToArray();
+
+        // The live log path: the account joined a world that is not in history.
+        var addedAt = DateTimeOffset.Now.AddMinutes(-20);
+        store.RecordPlayerEvent(
+            Me,
+            "wrld_99999999-1111-1111-1111-111111111111:55555~region(us)",
+            Me,
+            "Me",
+            string.Empty,
+            joined: true,
+            addedAt);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(201, viewModel.Entries.Count);
+        foreach (var item in shown)
+        {
+            Assert.Contains(item, viewModel.Entries);
+        }
+
+        // Measured with reuse disabled: 1,354,840 B for the same refresh.
+        Assert.True(
+            allocated < 400 * 1024,
+            $"A refresh that added one row allocated {allocated:N0} B; " +
+            "the finished rows it did not change should be reused.");
+    }
+
+    [Fact]
+    public void ARenamedHistoryRowIsRebuiltAndTheRestAreReused()
+    {
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "reuse-rename.db"));
+        var joined = DateTimeOffset.Now.AddHours(-3);
+        var first = InstanceHistoryStore.NewFromLog(Me, LocationA, joined)!;
+        first.WorldName = "Old name";
+        first.WorldThumbnailUrl = "https://example.test/first.png";
+        first.WorldAuthorName = "Author";
+        first.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+        first.Close(joined.AddMinutes(10));
+        store.Add(first);
+
+        var second = InstanceHistoryStore.NewFromLog(Me, LocationB, joined.AddHours(-1))!;
+        second.WorldName = "Second world";
+        second.WorldThumbnailUrl = "https://example.test/second.png";
+        second.WorldAuthorName = "Author";
+        second.GetOrAddPlayer(Me, "Me").StartVisit(joined.AddHours(-1));
+        second.Close(joined.AddHours(-1).AddMinutes(5));
+        store.Add(second);
+
+        using var api = new VrcApiClient();
+        using var viewModel = new InstanceHistoryViewModel(api, store);
+        viewModel.SetAccount(new VrcUser { Id = Me, DisplayName = "Me" });
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+
+        var renamed = Assert.Single(viewModel.Entries, item => item.Entry.Location == LocationA);
+        var untouched = Assert.Single(viewModel.Entries, item => item.Entry.Location == LocationB);
+
+        store.UpsertMetadata(new InstanceHistoryEntry
+        {
+            Id = first.Id,
+            AccountUserId = Me,
+            Location = LocationA,
+            WorldId = first.WorldId,
+            InstanceId = first.InstanceId,
+            WorldName = "New name",
+            WorldThumbnailUrl = first.WorldThumbnailUrl,
+            WorldAuthorName = "Author"
+        });
+
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+
+        var rebuilt = Assert.Single(viewModel.Entries, item => item.Entry.Location == LocationA);
+        Assert.NotSame(renamed, rebuilt);
+        Assert.Equal("New name", rebuilt.Entry.WorldName);
+
+        // The row that did not change keeps its players and commands.
+        Assert.Contains(untouched, viewModel.Entries);
+    }
+
+    [Fact]
     public void AHistoryPollWithNothingNewKeepsItsRows()
     {
         // Close() clears the collection, so everything stays on this thread.

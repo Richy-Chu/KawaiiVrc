@@ -413,6 +413,97 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
         OnEntryStateChanged();
     }
 
+    private bool SameItems(IReadOnlyList<InstanceHistoryItem> items)
+    {
+        if (items.Count != _entries.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (!ReferenceEquals(items[index], _entries[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// True when a completed row says exactly what the item already shows. The
+    /// open row is never reused: its duration and its players' open visits move
+    /// with every poll.
+    /// </summary>
+    private static bool SameFinishedEntry(InstanceHistoryEntry shown, InstanceHistoryEntry current)
+    {
+        if (shown.LeftAt is null || current.LeftAt is null)
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(shown, current))
+        {
+            return true;
+        }
+
+        if (!string.Equals(shown.Id, current.Id, StringComparison.Ordinal) ||
+            !string.Equals(shown.Location, current.Location, StringComparison.Ordinal) ||
+            !string.Equals(shown.WorldId, current.WorldId, StringComparison.Ordinal) ||
+            !string.Equals(shown.InstanceId, current.InstanceId, StringComparison.Ordinal) ||
+            !string.Equals(shown.WorldName, current.WorldName, StringComparison.Ordinal) ||
+            !string.Equals(shown.WorldThumbnailUrl, current.WorldThumbnailUrl, StringComparison.Ordinal) ||
+            !string.Equals(shown.WorldAuthorName, current.WorldAuthorName, StringComparison.Ordinal) ||
+            !string.Equals(shown.OwnerId, current.OwnerId, StringComparison.Ordinal) ||
+            !string.Equals(shown.OwnerName, current.OwnerName, StringComparison.Ordinal) ||
+            shown.JoinedAt != current.JoinedAt ||
+            shown.LeftAt != current.LeftAt ||
+            shown.IsPhotoSnapshot != current.IsPhotoSnapshot ||
+            shown.SourceEntryIds.Count != current.SourceEntryIds.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < shown.SourceEntryIds.Count; index++)
+        {
+            if (!string.Equals(shown.SourceEntryIds[index], current.SourceEntryIds[index], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        if (shown.Players.Count != current.Players.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < shown.Players.Count; index++)
+        {
+            var before = shown.Players[index];
+            var now = current.Players[index];
+            if (!string.Equals(before.Key, now.Key, StringComparison.Ordinal) ||
+                !string.Equals(before.DisplayName, now.DisplayName, StringComparison.Ordinal) ||
+                !string.Equals(before.AvatarUrl, now.AvatarUrl, StringComparison.Ordinal) ||
+                before.Visits.Count != now.Visits.Count)
+            {
+                return false;
+            }
+
+            for (var visit = 0; visit < before.Visits.Count; visit++)
+            {
+                if (before.Visits[visit].JoinedAt != now.Visits[visit].JoinedAt ||
+                    before.Visits[visit].LeftAt != now.Visits[visit].LeftAt ||
+                    before.Visits[visit].LastSeenAt != now.Visits[visit].LastSeenAt)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     private void RefreshOpenDurations()
     {
         var now = DateTimeOffset.Now;
@@ -447,20 +538,34 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
         try
         {
             var rows = _store.ForAccount(_accountUserId);
+
+            // One new event must not rebuild the other 499 rows: their players,
+            // timelines and commands are exactly what they already were. Only
+            // the open row and the rows whose entry changed are made again.
+            var shownByLocation = new Dictionary<string, InstanceHistoryItem>(StringComparer.Ordinal);
+            foreach (var existing in _entries)
+            {
+                shownByLocation.TryAdd(existing.Entry.Location, existing);
+            }
+
             var items = rows
                 .GroupBy(entry => entry.Location, StringComparer.Ordinal)
                 .Select(group => MergeEntries(group.ToList()))
                 .OrderByDescending(entry => entry.JoinedAt)
-                .Select(entry => new InstanceHistoryItem(
-                    entry,
-                    _accountUserId,
-                    LaunchRequested,
-                    OpenInGameRequested,
-                    SelfInviteAsync,
-                    CopyInstanceId,
-                    DeleteEntry,
-                    OpenEntry,
-                    PlayerProfileRequested))
+                .Select(entry =>
+                    shownByLocation.TryGetValue(entry.Location, out var shown) &&
+                    SameFinishedEntry(shown.Entry, entry)
+                        ? shown
+                        : new InstanceHistoryItem(
+                            entry,
+                            _accountUserId,
+                            LaunchRequested,
+                            OpenInGameRequested,
+                            SelfInviteAsync,
+                            CopyInstanceId,
+                            DeleteEntry,
+                            OpenEntry,
+                            PlayerProfileRequested))
                 .ToList();
 
             if (version != _refreshVersion)
@@ -468,13 +573,17 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            _entries.Clear();
-            foreach (var item in items)
+            if (!SameItems(items))
             {
-                _entries.Add(item);
+                _entries.Clear();
+                foreach (var item in items)
+                {
+                    _entries.Add(item);
+                }
+
+                OnEntryStateChanged();
             }
 
-            OnEntryStateChanged();
             await HydrateWorldsAsync(items, version);
         }
         finally
