@@ -168,7 +168,8 @@ public sealed class ImageLoader : IDisposable
         }
 
         var normalized = url.Trim();
-        var key = $"{Math.Max(32, decodeWidth)}|{normalized}";
+        decodeWidth = ClampDecodeWidth(decodeWidth);
+        var key = $"{decodeWidth}|{normalized}";
         if (_memory.TryGetValue(key, out var cached))
         {
             cached.UsedAt = DateTimeOffset.UtcNow;
@@ -179,7 +180,7 @@ public sealed class ImageLoader : IDisposable
         // individual caller stop waiting if its row scrolled away.
         var task = _inflight.GetOrAdd(
             key,
-            _ => LoadCoreAsync(normalized, Math.Max(32, decodeWidth), key));
+            _ => LoadCoreAsync(normalized, decodeWidth, key));
 
         try
         {
@@ -207,7 +208,8 @@ public sealed class ImageLoader : IDisposable
         }
 
         var normalized = url.Trim();
-        var key = $"anim|{Math.Max(32, decodeWidth)}|{normalized}";
+        decodeWidth = ClampDecodeWidth(decodeWidth);
+        var key = $"anim|{decodeWidth}|{normalized}";
         if (_animations.TryGetValue(key, out var cached))
         {
             cached.UsedAt = DateTimeOffset.UtcNow;
@@ -216,7 +218,7 @@ public sealed class ImageLoader : IDisposable
 
         var task = _animationInflight.GetOrAdd(
             key,
-            _ => LoadAnimationCoreAsync(normalized, Math.Max(32, decodeWidth), key));
+            _ => LoadAnimationCoreAsync(normalized, decodeWidth, key));
 
         try
         {
@@ -759,6 +761,20 @@ public sealed class ImageLoader : IDisposable
     /// Drops decoded artwork while the app is in the background. The disk cache
     /// keeps the next visit fast without holding native WPF surfaces resident.
     /// </summary>
+    /// <summary>
+    /// Lite mode caps every decode at the size a row can actually show. Nothing in the UI draws
+    /// a thumbnail wider than a few hundred pixels, so a 1024 px source is work and resident
+    /// memory the window never gets back - multiplied by every media card, friend row and
+    /// decoration on the page.
+    /// </summary>
+    internal const int LiteDecodeWidth = 256;
+
+    internal static int ClampDecodeWidth(int decodeWidth)
+    {
+        var width = Math.Max(32, decodeWidth);
+        return AppPerformance.LiteMode ? Math.Min(width, LiteDecodeWidth) : width;
+    }
+
     public void TrimMemory()
     {
         lock (_memoryGate)

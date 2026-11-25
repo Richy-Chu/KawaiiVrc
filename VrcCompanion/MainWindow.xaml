@@ -1296,9 +1296,6 @@
                                 BorderThickness="1"
                                 CornerRadius="16"
                                 Padding="20,18,18,22">
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
-                            </Border.Effect>
                             <ScrollViewer VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled"
                                           DataContext="{Binding NotificationDetail}">
@@ -1689,9 +1686,6 @@
                                 CornerRadius="16"
                                 Padding="18"
                                 DataContext="{Binding BoopPreview}">
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
-                            </Border.Effect>
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -2181,13 +2175,13 @@
                             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                                 <StackPanel>
                                     <TextBlock Text="Performance" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="Lite mode keeps the app light on older PCs: the animated background is drawn once instead of repainting, and pictures appear without fading. GIF backdrops and decorations still play. Nothing is removed or disabled."
+                                    <TextBlock Text="Lite mode keeps the app light on older PCs: the animated background is drawn once instead of repainting, pictures appear without fading and decode at thumbnail size instead of full resolution, the friend safety-net poll runs every 30 seconds instead of every 10, and only the page you are on is kept in memory. Nothing is removed or disabled."
                                                Style="{StaticResource MutedText}"
                                                TextWrapping="Wrap"
                                                Margin="0,3,0,12" />
                                     <CheckBox Style="{StaticResource FriendlyCheckBox}"
                                               Content="Use lite mode on this PC"
-                                              IsChecked="{Binding LiteMode}" />
+                                              IsChecked="{Binding LiteMode, Mode=TwoWay}" />
                                     <TextBlock Text="{Binding LiteModeDescription}"
                                                Style="{StaticResource MutedText}"
                                                TextWrapping="Wrap"
@@ -3529,9 +3523,6 @@
                             BorderThickness="1"
                             CornerRadius="16"
                             DataContext="{Binding GroupViewModel.SelectedGroup}">
-                        <Border.Effect>
-                            <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
-                        </Border.Effect>
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -5674,7 +5665,17 @@
                                TextWrapping="Wrap"
                                Margin="2,4,2,12"
                                Visibility="{Binding ActivityFeedViewModel.HasNoEntries, Converter={StaticResource BoolToVis}}" />
-                    <ItemsControl ItemsSource="{Binding ActivityFeedViewModel.Entries}">
+                    <!-- Routed through a virtualizing panel: it lays rows out exactly like the
+                         default stack, so nothing moves, and a bounded scroll host around this
+                         list would then only realize the rows on screen. -->
+                    <ItemsControl ItemsSource="{Binding ActivityFeedViewModel.Entries}"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <VirtualizingStackPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Style="{StaticResource ActivityRow}">
@@ -9424,9 +9425,6 @@
                                 BorderBrush="{Binding SelectedFriendDetail.ProfileButtonBrush}"
                                 BorderThickness="1"
                                 CornerRadius="16">
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="12" ShadowDepth="0" Opacity="0.45" Color="#000000" />
-                            </Border.Effect>
                             <Grid>
                                 <Border CornerRadius="15" ClipToBounds="True"
                                         Visibility="{Binding HasProfileBackdrop, Converter={StaticResource BoolToVis}}">

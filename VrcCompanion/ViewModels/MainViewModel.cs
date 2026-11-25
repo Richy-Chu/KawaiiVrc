@@ -849,8 +849,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     public string LiteModeDescription => AppPerformance.LiteMode
-        ? "Lite mode is on: the animated background is drawn once and pictures appear without fading. GIF backdrops and decorations still animate."
-        : "Lite mode is off: the background animates and images fade in. Turn it on if this PC feels slow.";
+        ? "Lite mode is on: the background is drawn once, pictures fade in without animation and decode at thumbnail size, the friend poll runs every 30 seconds, and only the page you are on stays in memory. GIF decorations still animate."
+        : "Lite mode is off: the background animates, images fade in at full resolution, friends refresh every 10 seconds, and two pages stay cached. Turn it on if this PC feels slow.";
 
     public bool EnableTextSelection
     {
@@ -2752,6 +2752,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         };
         _activityPollTimer.Tick += OnActivityPollTick;
         _activityPollTimer.Start();
+        ApplyPerformanceProfile();
+        AppPerformance.Changed += OnPerformanceChanged;
 
         _bioPollTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -3199,6 +3201,36 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             _activityPollBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Lite mode is picked for a weak machine, so the safety-net poll it pays for is
+    /// cheaper: three times fewer full friend fetches, without the feed ever going stale
+    /// for long. The interval is changed on the dispatcher the timer belongs to.
+    /// </summary>
+    private void ApplyPerformanceProfile()
+    {
+        if (_activityPollTimer is not { } timer)
+        {
+            return;
+        }
+
+        var interval = TimeSpan.FromSeconds(AppPerformance.LiteMode ? 30 : 10);
+        if (timer.Interval != interval)
+        {
+            timer.Interval = interval;
+        }
+    }
+
+    private void OnPerformanceChanged()
+    {
+        if (_activityPollTimer?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(ApplyPerformanceProfile));
+            return;
+        }
+
+        ApplyPerformanceProfile();
     }
 
     /// <summary>
@@ -8867,7 +8899,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// friends that are absent from this batch, which is used while the offline
     /// pages are still loading.
     /// </summary>
-    private string? _friendsSignature;
+    private long? _friendsSignature;
 
     private void UpdateFriends(IReadOnlyList<VrcUser> users, bool keepMissing = false)
     {
@@ -8918,9 +8950,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // screen. Re-sorting, re-syncing the collection and refreshing the view
         // for that made large friend lists tick every few seconds, so stop here
         // when nothing visible changed.
-        var signature = string.Concat(desired.Select(friend =>
-            $"{friend.Id}|{friend.DisplayName}|{friend.Location}|{friend.AvatarUrl}|{friend.StatusRank}|{friend.PresenceSortRank}|{friend.IsFavorite}\n"));
-        if (string.Equals(signature, _friendsSignature, StringComparison.Ordinal))
+        var signature = FriendsSignature(desired);
+        if (signature == _friendsSignature)
         {
             return;
         }
@@ -8948,6 +8979,42 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         RestoreSelection(keepSelected, keepDetail);
         InstanceViewModel?.ApplyFriends(Friends.ToList());
         PublishFriendDirectory();
+    }
+
+    /// <summary>
+    /// A hash of everything the friend list shows, in place of the concatenated string this
+    /// used to build. A thousand-friend account allocated a six-figure string every ten seconds
+    /// just to decide that nothing had changed; the hash walks the same fields and allocates
+    /// nothing, which is one less garbage collection on the thread that draws.
+    /// </summary>
+    private static long FriendsSignature(IReadOnlyList<FriendItem> friends)
+    {
+        var hash = 1469598103934665603L;
+        foreach (var friend in friends)
+        {
+            hash = Mix(hash, friend.Id);
+            hash = Mix(hash, friend.DisplayName);
+            hash = Mix(hash, friend.Location);
+            hash = Mix(hash, friend.AvatarUrl);
+            hash = (hash ^ friend.StatusRank) * 1099511628211L;
+            hash = (hash ^ friend.PresenceSortRank) * 1099511628211L;
+            hash = (hash ^ (friend.IsFavorite ? 1 : 0)) * 1099511628211L;
+        }
+
+        return hash;
+    }
+
+    private static long Mix(long hash, string? value)
+    {
+        if (!string.IsNullOrEmpty(value))
+        {
+            foreach (var character in value)
+            {
+                hash = (hash ^ character) * 1099511628211L;
+            }
+        }
+
+        return (hash ^ '\n') * 1099511628211L;
     }
 
     /// <summary>
@@ -9872,6 +9939,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _friendDetailCancellation?.Dispose();
         _worldDialogCancellation?.Cancel();
         _worldDialogCancellation?.Dispose();
+        AppPerformance.Changed -= OnPerformanceChanged;
         _instanceHistoryTimer?.Stop();
         _activityPollTimer?.Stop();
         _bioPollTimer?.Stop();

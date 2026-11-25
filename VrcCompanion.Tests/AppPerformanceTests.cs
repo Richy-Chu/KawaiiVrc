@@ -37,6 +37,27 @@ public sealed class AppPerformanceTests
     }
 
     [Fact]
+    public void LiteModeDecodesPicturesAtAWidthARowCanShow()
+    {
+        try
+        {
+            AppPerformance.Set(false);
+            Assert.Equal(1024, ImageLoader.ClampDecodeWidth(1024));
+
+            // The cap only bites above it: a row that asked for less keeps what it asked for,
+            // and the floor of 32 still applies.
+            AppPerformance.Set(true);
+            Assert.Equal(ImageLoader.LiteDecodeWidth, ImageLoader.ClampDecodeWidth(1024));
+            Assert.Equal(64, ImageLoader.ClampDecodeWidth(64));
+            Assert.Equal(32, ImageLoader.ClampDecodeWidth(8));
+        }
+        finally
+        {
+            AppPerformance.Set(false);
+        }
+    }
+
+    [Fact]
     public void LiteModeSurvivesASettingsRoundTrip()
     {
         var path = System.IO.Path.Combine(

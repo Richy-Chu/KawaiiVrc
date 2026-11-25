@@ -50,7 +50,11 @@ public partial class MainWindow : Window
     // Every cached section view keeps its whole visual tree, item containers
     // and decoded images alive. Two is enough to keep back-and-forth snappy
     // without paying for tabs visited long ago.
-    private const int MaxCachedSectionViews = 2;
+    /// <summary>
+    /// One page is enough on a machine that chose lite mode, where the point is to hold as
+    /// little as possible; the normal limit keeps two so stepping back and forth stays instant.
+    /// </summary>
+    private static int MaxCachedSectionViews => AppPerformance.LiteMode ? 1 : 2;
     private bool _isClosed;
 
     public MainWindow()
@@ -84,6 +88,7 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromSeconds(15)
         };
         _backgroundTrimTimer.Tick += OnBackgroundTrimTick;
+        AppPerformance.Changed += OnPerformanceChanged;
 
         Loaded += OnLoaded;
         SourceInitialized += OnSourceInitialized;
@@ -1140,8 +1145,41 @@ public partial class MainWindow : Window
 
     internal bool IsBackgroundTrimScheduledForTest => _backgroundTrimTimer.IsEnabled;
 
+    /// <summary>
+    /// A mode change while the window is up has to take effect without a restart: turning
+    /// lite mode on drops cached pages down to the new limit straight away, and turning it
+    /// off costs nothing until the next section switch.
+    /// </summary>
+    private void OnPerformanceChanged()
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(OnPerformanceChanged));
+            return;
+        }
+
+        while (_sectionOrder.Count > MaxCachedSectionViews)
+        {
+            var oldest = _sectionOrder.FirstOrDefault(candidate =>
+                !string.Equals(candidate, _shownSectionKey, StringComparison.Ordinal) &&
+                !ShouldKeepSectionView(candidate));
+            if (oldest is null)
+            {
+                break;
+            }
+
+            EvictSectionView(oldest);
+        }
+    }
+
     private void OnWindowClosed(object? sender, EventArgs e)
     {
+        AppPerformance.Changed -= OnPerformanceChanged;
         _isClosed = true;
         _refreshTimer.Stop();
         _backgroundTrimTimer.Stop();
