@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 917 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
+A full run is 925 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.88**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.89**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -68,6 +68,18 @@ touching polling, image decoding, popups, the section cache or a list's panel.
 
 - **A section switch no longer reloads Discord.** `ShouldKeepSectionView` never named `discord`, so the LRU loop - or the lite-mode limit of one cached view - evicted the Discord section, `ReleaseBrowsers` disposed its WebView, and coming back loaded the page from scratch, which drops a voice call. The method's own comment already promised Discord stayed cached; the predicate enforces it now, because a call is not always audible and `IsDocumentPlayingAudio` cannot stand in for it.
 
+### What 1.0.89 changed
+
+- **A backdrop is never decoded above its source, and an animation has a frame budget.** Measured on
+the running 1.0.88: 756 MB private memory, of which only ~196 MB was the managed heap (169 MB of it
+large object heap), so guessing at caches would have missed it. The custom backdrop was a 280x275,
+66-frame GIF and `ImageBackdrop` asked for 1280 px; WPF upscales, so it decoded 1280x1257, and
+WpfAnimatedGif holds every frame decoded at once - about 405 MB for a 0.9 MB file. `ImageBackdrop`
+now reads the frame count and source size from the header (`ReadImageInfo`, no pixels decoded) and
+decodes at most the source width; `AnimatedBackdropWidth` additionally caps the whole animation at
+`AnimatedBackdropFrameBudgetBytes` (96 MB), and returns 0 - still frame - when even 320 px wide
+cannot fit. The profile backdrop had the same shape and the same saving.
+
 ### Do not undo these
 
 1. **No `DropShadowEffect`.** If a panel now reads as too flat, give it a baked edge - a second
@@ -94,7 +106,12 @@ touching polling, image decoding, popups, the section cache or a list's panel.
    above the limit, because evicting a browser view disposes its WebView and the reload that follows
    drops a Discord voice call. `SectionCacheTests` pins that predicate; do not narrow it back to the
    cache limit alone.
-8. **WebView2 suspension already exists.** `Controls/EmbeddedBrowser` suspends a hidden page with
+8. **A backdrop decode never exceeds the source width.** `ImageBackdrop.ClampBackdropWidth` exists
+because `DecodePixelWidth` above the file's own width upscales it (WPF really produces that size),
+and an animated GIF pays for it on every frame; `BackdropDecodeTests` pins the no-upscale rule, the
+frame budget and the still fallback. Do not raise the budget without measuring the frame set: 66
+frames at 1280 px was 405 MB, not a few tens of megabytes.
+9. **WebView2 suspension already exists.** `Controls/EmbeddedBrowser` suspends a hidden page with
    `TrySuspendAsync` after 7 seconds (now 3), sets a low memory target while hidden, and releases the
    whole WebView when the section is evicted. Do not add a second suspension mechanism.
 
@@ -383,7 +400,7 @@ has gone untouched for the hour, which is how a reused pid stops keeping litter.
 `build/test-profile-guard-red.ps1`, which requires one filtered run to exit 1 on a fabricated
 baseline.
 
-`test-suite.yml` runs on every push and is the only job that runs all 917 tests. When a test
+`test-suite.yml` runs on every push and is the only job that runs all 925 tests. When a test
 fails, `build/retry-failed-tests.ps1` re-runs only the failed tests once: it plans the filter
 from the run's `trx`, reports what passed on retry as a warning and in the step summary, and the
 job stays green - a flaky test must not redden an otherwise good commit, but it must not be

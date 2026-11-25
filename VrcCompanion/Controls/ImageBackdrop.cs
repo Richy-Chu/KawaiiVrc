@@ -21,6 +21,13 @@ public sealed class ImageBackdrop : Image
     // Animated GIFs keep every frame in memory. Decode them at a smaller size
     // than a still wallpaper; motion hides the difference and the saving is large.
     private const int MaxAnimatedBackdropDecodeWidth = 1280;
+    // A decorative wallpaper is drawn inside the window, so asking for more pixels than the file
+    // has only upscales it: WPF decoded a 280x275 GIF at 1280x1257 when told 1280, and
+    // WpfAnimatedGif holds every frame of an animation decoded at once, so that one 0.9 MB file
+    // was about 405 MB of the process. The decode stops at the source width now, and a long
+    // animation is held to a total frame budget as well.
+    private const int MinAnimatedBackdropDecodeWidth = 320;
+    internal const long AnimatedBackdropFrameBudgetBytes = 96L * 1024 * 1024;
     private const double AnimationSpeedRatio = 0.75;
 
     private Window? _window;
@@ -100,8 +107,21 @@ public sealed class ImageBackdrop : Image
         try
         {
             var isGif = string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase);
+            var info = ReadImageInfo(path);
 
-            if (isGif && Animate)
+            var animationWidth = isGif && Animate
+                ? info is { } gif
+                    ? AnimatedBackdropWidth(
+                        MaxAnimatedBackdropDecodeWidth,
+                        gif.Width,
+                        gif.Height,
+                        gif.Frames)
+                    : MaxAnimatedBackdropDecodeWidth
+                : 0;
+
+            // A GIF too long to hold inside the budget is drawn as its first frame instead;
+            // animating it would cost hundreds of megabytes for a background.
+            if (isGif && Animate && animationWidth > 0)
             {
                 // WPF's BitmapImage alone renders only the first GIF frame.
                 // ImageBehavior drives the frames; 75% keeps the motion close to
@@ -112,7 +132,7 @@ public sealed class ImageBackdrop : Image
                 animation.CacheOption = BitmapCacheOption.OnLoad;
                 animation.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
                 animation.UriSource = new Uri(path, UriKind.Absolute);
-                animation.DecodePixelWidth = AnimatedBackdropDecodeWidth;
+                animation.DecodePixelWidth = animationWidth;
                 animation.EndInit();
                 ImageBehavior.SetAnimatedSource(this, animation);
                 _loadedPath = path;
@@ -130,8 +150,11 @@ public sealed class ImageBackdrop : Image
             image.UriSource = new Uri(path, UriKind.Absolute);
             // Do not decode a 4K wallpaper at full size just to draw it behind
             // a 1080p/1440p window. This is the largest single VRAM saving for
-            // custom backgrounds while staying above normal window widths.
-            image.DecodePixelWidth = BackdropDecodeWidth;
+            // custom backgrounds while staying above normal window widths, and
+            // the source width keeps a small picture from being upscaled to it.
+            image.DecodePixelWidth = info is { } still
+                ? ClampBackdropWidth(BackdropDecodeWidth, still.Width)
+                : BackdropDecodeWidth;
             image.EndInit();
 
             // A frozen bitmap only ever shows the first frame.
@@ -178,8 +201,96 @@ public sealed class ImageBackdrop : Image
             1280,
             MaxBackdropDecodeWidth);
 
-    private static int AnimatedBackdropDecodeWidth
-        => Math.Min(BackdropDecodeWidth, MaxAnimatedBackdropDecodeWidth);
+    /// <summary>
+    /// A wallpaper is never drawn wider than the window, so asking for more pixels than the file
+    /// has only upscales it into memory; WPF's stretch does that scaling at paint time for free.
+    /// </summary>
+    internal static int ClampBackdropWidth(int requestedWidth, int sourceWidth)
+        => sourceWidth > 0 ? Math.Min(requestedWidth, sourceWidth) : requestedWidth;
+
+    /// <summary>Resident bytes of one decoded animation, at the size WPF will decode it to.</summary>
+    internal static long FrameMemoryBytes(
+        int width,
+        int sourceWidth,
+        int sourceHeight,
+        int frameCount)
+    {
+        if (width <= 0 || sourceWidth <= 0 || sourceHeight <= 0 || frameCount <= 0)
+        {
+            return 0;
+        }
+
+        var height = Math.Max(1, (int)Math.Floor(sourceHeight * (width / (double)sourceWidth)));
+        return (long)frameCount * width * height * 4;
+    }
+
+    /// <summary>
+    /// The width an animated backdrop is decoded at, or 0 when the animation cannot fit the frame
+    /// budget even at the smallest useful width - such a GIF is shown as a still. WpfAnimatedGif
+    /// keeps every frame decoded at once, so what a long GIF costs grows with its frame count and
+    /// its decoded size, not with the size it is drawn at.
+    /// </summary>
+    internal static int AnimatedBackdropWidth(
+        int requestedWidth,
+        int sourceWidth,
+        int sourceHeight,
+        int frameCount)
+    {
+        var width = ClampBackdropWidth(requestedWidth, sourceWidth);
+        if (frameCount <= 1 || sourceWidth <= 0 || sourceHeight <= 0)
+        {
+            return width;
+        }
+
+        if (Fits(width))
+        {
+            return width;
+        }
+
+        // Solve for the width whose frame set fits the budget, then step down for the rounding.
+        var area = AnimatedBackdropFrameBudgetBytes / (4.0 * frameCount);
+        var budgetWidth = (int)Math.Floor(Math.Sqrt(area * sourceWidth / sourceHeight));
+        width = Math.Max(MinAnimatedBackdropDecodeWidth, Math.Min(width, budgetWidth));
+
+        while (width > MinAnimatedBackdropDecodeWidth && !Fits(width))
+        {
+            width--;
+        }
+
+        return Fits(width) ? width : 0;
+
+        bool Fits(int candidate) =>
+            FrameMemoryBytes(candidate, sourceWidth, sourceHeight, frameCount)
+                <= AnimatedBackdropFrameBudgetBytes;
+    }
+
+    /// <summary>
+    /// The frame count and source size from the file's header, without decoding pixels. Null when
+    /// the format cannot be read that way, in which case the old requested width still applies.
+    /// </summary>
+    private static (int Width, int Height, int Frames)? ReadImageInfo(string path)
+    {
+        try
+        {
+            var decoder = BitmapDecoder.Create(
+                new Uri(path, UriKind.Absolute),
+                BitmapCreateOptions.DelayCreation,
+                BitmapCacheOption.None);
+            if (decoder.Frames.Count == 0)
+            {
+                return null;
+            }
+
+            var frame = decoder.Frames[0];
+            return frame.PixelWidth > 0 && frame.PixelHeight > 0
+                ? (frame.PixelWidth, frame.PixelHeight, decoder.Frames.Count)
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
