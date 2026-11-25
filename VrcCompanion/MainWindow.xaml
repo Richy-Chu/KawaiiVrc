@@ -10810,6 +10810,53 @@
                         </Border>
                     </Grid>
         <!-- ========================================================= -->
+        <!-- Sign out confirmation                                     -->
+        <!-- ========================================================= -->
+        <Grid x:Name="SignOutConfirmationOverlay"
+              Panel.ZIndex="30"
+              Visibility="{Binding IsLogoutConfirmationOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+            <Button Command="{Binding CancelLogoutCommand}"
+                    Focusable="False"
+                    Cursor="Arrow"
+                    ToolTip="Keep me signed in">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="#C4060810" />
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+
+            <Border Width="410"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="16"
+                    Padding="22,18">
+                <StackPanel>
+                    <TextBlock Text="Sign out of VRChat?"
+                               FontSize="17"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource TextBrush}" />
+                    <TextBlock Text="The saved session is removed from this PC. You will need to sign in again, with your password and any code your account asks for."
+                               Style="{StaticResource MutedText}"
+                               TextWrapping="Wrap"
+                               Margin="0,6,0,18" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Content="Cancel"
+                                Style="{StaticResource SecondaryButton}"
+                                Margin="0,0,8,0"
+                                Command="{Binding CancelLogoutCommand}" />
+                        <Button Content="Sign out"
+                                Style="{StaticResource PrimaryButton}"
+                                Command="{Binding ConfirmLogoutCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ========================================================= -->
         <!-- Friend locations popup                                    -->
         <!-- ========================================================= -->
         <Grid Panel.ZIndex="23"

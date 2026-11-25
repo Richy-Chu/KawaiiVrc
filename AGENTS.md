@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 975 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 979 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.105**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.106**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,18 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.106 changed
+
+- **Sign out asks first.** `LogoutCommand` used to sign out on the click, and it sits beside Refresh in
+  the top bar and inside the Settings account card. It now only opens `IsLogoutConfirmationOpen`,
+  which shows a bordered card over the window; `ConfirmLogoutCommand` is the one path to
+  `LogoutAsync` and `CancelLogoutCommand`/the backdrop close it. `SignOutLocally` closes the card too,
+  so a session that expires while it is open does not leave it up. The expiry and two-factor-cancel
+  paths still sign out (or cancel) without asking, because there is no signed-in session to protect.
+- **The overlay is `Panel.ZIndex="30"`**, above the friend-locations (23) and recent-players (25)
+  popups, so it cannot be clicked through. `SignOutConfirmationTests` pins the commands and finds
+  `SignOutConfirmationOverlay` in a real window, hidden before and visible after.
 
 ### What 1.0.105 changed
 
@@ -259,7 +271,15 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    grid on return. `LeavingTheMediaSectionHandsItsLibraryBackStraightAway` and
    `ReleasingTheLibraryDropsTheRowsTheCardsAndTheViewer` pin it.
 
-19. **A decode width stays within twice the drawn width.** `ImageDecodeBudgetTests` fails the suite for any `AsyncImage` whose `DecodeWidth` exceeds 2x the nearest ancestor `Width` (96 px floor). It skips a picture with no sized ancestor - a full-width hero or lightbox - so those still need a look by eye. When adding an `AsyncImage`, copy the width from the box it sits in rather than inventing one.
+19. **A decode width stays within twice the drawn width.** `ImageDecodeBudgetTests` fails the suite for any `AsyncImage` whose `DecodeWidth` exceeds 2x the nearest ancestor `Width` (96 px floor). It skips a picture with no sized ancestor - a full-width hero or lightbox - so those still need a look by eye. When adding an `AsyncImage`, copy    the width from the box it sits in rather than inventing one.
+
+20. **Sign out goes through its confirmation.** `LogoutCommand` opens the card; only
+   `ConfirmLogoutCommand` calls `LogoutAsync`. Do not bind a Sign out button straight to `LogoutAsync`
+   or to a new command that signs out, and do not remove the `SignOutLocally` close: the saved
+   cookie is deleted with no backup, so an accidental click is unrecoverable. The expiry paths
+   (`SignOutLocally` from auth failures) must stay prompt-free. `SignOutConfirmationTests` pins all
+   of it.
+
 
 ### Virtualization: what is real and what is not
 

@@ -519,7 +519,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         ClearErrorCommand = Track(new RelayCommand(ClearError));
         RefreshCommand = Track(new AsyncRelayCommand(RefreshAsync, () => IsLoggedIn && !IsBusy));
-        LogoutCommand = Track(new AsyncRelayCommand(LogoutAsync, () => IsLoggedIn && !IsBusy));
+        LogoutCommand = Track(new RelayCommand(OpenLogoutConfirmation, () => IsLoggedIn && !IsBusy));
+        ConfirmLogoutCommand = Track(new AsyncRelayCommand(
+            LogoutAsync,
+            () => IsLogoutConfirmationOpen && IsLoggedIn && !IsBusy));
+        CancelLogoutCommand = Track(new RelayCommand(CloseLogoutConfirmation));
         VerifyTwoFactorCommand = Track(new AsyncRelayCommand(
             VerifyTwoFactorAsync,
             () => IsTwoFactorRequired && !IsBusy && !string.IsNullOrWhiteSpace(TwoFactorCode)));
@@ -2559,7 +2563,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public RelayCommand ClearErrorCommand { get; }
     public AsyncRelayCommand RefreshCommand { get; }
-    public AsyncRelayCommand LogoutCommand { get; }
+    /// <summary>Opens the confirmation; it does not sign out on its own.</summary>
+    public RelayCommand LogoutCommand { get; }
+    public AsyncRelayCommand ConfirmLogoutCommand { get; }
+    public RelayCommand CancelLogoutCommand { get; }
     public AsyncRelayCommand VerifyTwoFactorCommand { get; }
     public AsyncRelayCommand CancelTwoFactorCommand { get; }
     public RelayCommand UseEmailCodeCommand { get; }
@@ -2577,6 +2584,19 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _isClearConfirmationOpen;
     private bool _clearConfirmationClearsAll;
     private string _clearConfirmationText = string.Empty;
+
+    private bool _isLogoutConfirmationOpen;
+
+    /// <summary>
+    /// True while Sign out is waiting for its confirmation. Both Sign out
+    /// buttons sit next to everyday controls, so one click must not drop the
+    /// session; the dialog is the only path to <see cref="LogoutAsync"/>.
+    /// </summary>
+    public bool IsLogoutConfirmationOpen
+    {
+        get => _isLogoutConfirmationOpen;
+        private set => SetProperty(ref _isLogoutConfirmationOpen, value);
+    }
 
     /// <summary>True while a bulk clear is waiting for its confirmation.</summary>
     public bool IsClearConfirmationOpen
@@ -3955,8 +3975,33 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(HasNoFriendChanges));
     }
 
-    private async Task LogoutAsync()
+    private void OpenLogoutConfirmation()
     {
+        if (!IsLoggedIn || IsBusy)
+        {
+            return;
+        }
+
+        IsLogoutConfirmationOpen = true;
+        RaiseCommandStates();
+    }
+
+    private void CloseLogoutConfirmation()
+    {
+        if (!IsLogoutConfirmationOpen)
+        {
+            return;
+        }
+
+        IsLogoutConfirmationOpen = false;
+        RaiseCommandStates();
+    }
+
+    internal async Task LogoutAsync()
+    {
+        // The dialog closes either way: confirming, or the session expiring
+        // while it is open.
+        CloseLogoutConfirmation();
         PushBusy("Signing out…");
         try
         {
@@ -9987,6 +10032,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private void SignOutLocally(string? message)
     {
+        CloseLogoutConfirmation();
         _realtime.Stop();
         CurrentUser = null;
         IsLoggedIn = false;
