@@ -7274,6 +7274,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ClearPersistentNotification(item);
             ShowInfo(item.IsInvite ? "Invite declined." : "Invite request declined.");
         }
+        catch (VrcApiException ex) when (NotificationHasExpired(ex))
+        {
+            // VRChat already dropped it, so declining it is just removing the
+            // stale row this app kept for the next launch.
+            ClearPersistentNotification(item);
+            ShowInfo("That notification had already expired on VRChat, so it was removed from your list.");
+        }
         catch (VrcApiException ex)
         {
             ShowError(ex.Message);
@@ -7368,6 +7375,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 ? $"Reply sent to {item.SenderName}. VRChat's reply slots are cooling down, so the default reply was used."
                 : $"Reply sent to {item.SenderName}.");
         }
+        catch (VrcApiException ex) when (NotificationHasExpired(ex))
+        {
+            // VRChat keeps only recent notifications replyable. This row is
+            // still listed because invites are kept between launches, but the
+            // server no longer has it, so nothing was sent and retrying cannot
+            // work. Drop it instead of leaving a reply button that always fails.
+            CloseResponseComposer();
+            ClearPersistentNotification(item);
+            ShowError(
+                "VRChat has expired that invite - it only accepts replies to recent notifications, " +
+                "so your message was not sent. The invite was removed from your list.");
+        }
         catch (VrcApiException ex)
         {
             ComposerError = ex.StatusCode == 429
@@ -7388,6 +7407,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             PopBusy();
         }
     }
+
+    /// <summary>
+    /// VRChat answers "Notification not found" once a notification has dropped
+    /// out of the list it still accepts replies to. Invites are kept locally
+    /// until the user clears them, so a row can outlive what VRChat will act on.
+    /// </summary>
+    private static bool NotificationHasExpired(VrcApiException error)
+        => error.StatusCode == 404 &&
+           (error.Message?.Contains("notification not found", StringComparison.OrdinalIgnoreCase) ?? false);
 
     private void ClearPersistentNotification(NotificationItem item)
     {

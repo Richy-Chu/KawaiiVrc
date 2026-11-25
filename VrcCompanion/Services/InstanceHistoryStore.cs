@@ -1048,115 +1048,205 @@ public sealed class InstanceHistoryStore
             return Array.Empty<InstanceHistoryEntry>();
         }
 
-        var groups = new List<List<EventRow>>();
-        foreach (var row in events)
-        {
-            var current = groups.LastOrDefault();
-            var startsNew = current is null ||
-                            !string.Equals(current[^1].AccountUserId, row.AccountUserId, StringComparison.Ordinal) ||
-                            !string.Equals(current[^1].Location, row.Location, StringComparison.Ordinal);
-            if (!startsNew)
-            {
-                var group = current!;
-                var hasSelfEvent = group.Any(item =>
-                    string.Equals(item.UserId, row.AccountUserId, StringComparison.Ordinal));
-                if (hasSelfEvent)
-                {
-                    // A self session stays together across quiet hours. It only
-                    // ends when the log reports that the local player left; the
-                    // next event belongs to the next instance.
-                    var selfLeftTs = group
-                        .Where(item =>
-                            string.Equals(item.UserId, row.AccountUserId, StringComparison.Ordinal) &&
-                            item.EventType == LeftEvent)
-                        .Select(item => item.CreatedAtTs)
-                        .DefaultIfEmpty(long.MinValue)
-                        .Max();
-                    startsNew = (selfLeftTs != long.MinValue &&
-                                 (row.EventType == JoinedEvent ||
-                                  row.CreatedAtTs - selfLeftTs > GroupingToleranceMilliseconds)) ||
-                        (string.Equals(row.UserId, row.AccountUserId, StringComparison.Ordinal) &&
-                         row.EventType == JoinedEvent &&
-                         row.CreatedAtTs - group[^1].CreatedAtTs > GroupingToleranceMilliseconds);
-                }
-                else
-                {
-                    startsNew = row.CreatedAtTs - group[^1].CreatedAtTs > GroupingToleranceMilliseconds &&
-                                !(group[^1].EventType == JoinedEvent && row.EventType == LeftEvent);
-                }
-            }
-            if (startsNew)
-            {
-                groups.Add(new List<EventRow> { row });
-            }
-            else
-            {
-                current!.Add(row);
-            }
-        }
+        _eventCaches.TryGetValue(accountUserId ?? string.Empty, out var cache);
+        var groups = GroupRows(cache, events);
 
-        var result = new List<InstanceHistoryEntry>(groups.Count);
+        var lastIndexByAccount = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var index = 0; index < groups.Count; index++)
         {
+            lastIndexByAccount[groups[index].AccountUserId] = index;
+        }
+
+        // A finished group is built once and reused. Grouping is strictly
+        // sequential - a group can only merge with the one before it, and once a
+        // newer group exists for that account no row can ever join it again - so
+        // only each account's last group has to be rebuilt. That last group is
+        // the open session, whose LeftAt and LastSeenAt still move on every read.
+        var result = new List<InstanceHistoryEntry>(Math.Min(groups.Count, MaximumEntries));
+        for (var index = groups.Count - 1; index >= 0 && result.Count < MaximumEntries; index--)
+        {
             var group = groups[index];
-            var row = group[0];
-            var isLastGroup = !groups
-                .Skip(index + 1)
-                .Any(candidate => string.Equals(
-                    candidate[0].AccountUserId,
-                    row.AccountUserId,
-                    StringComparison.Ordinal));
-            locations.TryGetValue((row.AccountUserId, row.Location), out var location);
-            var selfEvents = group
-                .Where(item => string.Equals(item.UserId, row.AccountUserId, StringComparison.Ordinal))
-                .ToList();
-            var selfJoin = selfEvents.FirstOrDefault(item => item.EventType == JoinedEvent);
-            var selfLeft = selfEvents.LastOrDefault(item => item.EventType == LeftEvent);
-            var joinedAt = selfJoin?.CreatedAt ?? row.CreatedAt;
-            var groupEnd = group[^1].CreatedAt;
-            var hasSelfLeft = selfLeft is not null &&
-                              (selfJoin is null || selfLeft.CreatedAtTs >= selfJoin.CreatedAtTs);
-            var closed = hasSelfLeft || !isLastGroup;
-            // Your own leave is the end of the visit. Player events that arrive
-            // after it must not stretch the row's duration to the last log line.
-            var leftAt = closed
-                ? (hasSelfLeft ? selfLeft!.CreatedAt : groupEnd)
-                : (DateTimeOffset?)null;
-            var lastSeenAt = closed ? leftAt!.Value : DateTimeOffset.Now;
-            if (lastSeenAt < joinedAt)
+            var isLastGroup = lastIndexByAccount[group.AccountUserId] == index;
+            locations.TryGetValue((group.AccountUserId, group.Location), out var location);
+            var entry = isLastGroup ? null : group.Entry;
+            if (entry is null || !Equals(group.EntryLocation, location))
             {
-                lastSeenAt = joinedAt;
+                entry = BuildEntry(group, isLastGroup, location);
+                group.Entry = isLastGroup ? null : entry;
+                group.EntryLocation = isLastGroup ? null : location;
             }
 
-            var entry = new InstanceHistoryEntry
-            {
-                Id = StableId(row.AccountUserId, row.Location, joinedAt),
-                AccountUserId = row.AccountUserId,
-                Location = row.Location,
-                WorldId = location?.WorldId ?? LaunchService.GetWorldIdFromLocation(row.Location) ?? string.Empty,
-                InstanceId = location?.InstanceId ?? LaunchService.GetInstanceIdFromLocation(row.Location) ?? string.Empty,
-                WorldName = location?.WorldName ?? string.Empty,
-                WorldThumbnailUrl = location?.ThumbnailUrl ?? string.Empty,
-                WorldAuthorName = location?.AuthorName ?? string.Empty,
-                OwnerId = location?.OwnerId ?? OwnerFromLocation(row.Location),
-                OwnerName = location?.OwnerName ?? string.Empty,
-                JoinedAt = joinedAt,
-                LeftAt = leftAt,
-                LastSeenAt = lastSeenAt,
-                LastEventAt = groupEnd,
-                EventIds = group.Select(item => item.Id).ToList()
-            };
-
-            BuildPlayers(entry, group, closed ? groupEnd : null);
             result.Add(entry);
         }
 
-        return result
-            .OrderByDescending(entry => entry.JoinedAt)
-            .Take(MaximumEntries)
-            .ToList();
+        // Groups are already in join order, so walking them backwards gives the
+        // newest-first order the screens want without sorting every entry.
+        return result;
     }
 
+    /// <summary>
+    /// Keeps the sequential grouping between reads. Only the rows appended since
+    /// the last read are grouped again; a full read (a delete, an edit in place
+    /// or an out-of-order import) replaces the rows and rebuilds every group.
+    /// </summary>
+    private static List<GroupState> GroupRows(EventRowCache? cache, List<EventRow> events)
+    {
+        if (cache is null)
+        {
+            return GroupAll(events);
+        }
+
+        if (cache.Groups is null ||
+            !ReferenceEquals(cache.GroupedRows, events) ||
+            events.Count < cache.GroupedCount)
+        {
+            cache.Groups = GroupAll(events);
+            cache.GroupedRows = events;
+            cache.GroupedCount = events.Count;
+            return cache.Groups;
+        }
+
+        if (events.Count > cache.GroupedCount)
+        {
+            AppendGroups(cache.Groups, events, cache.GroupedCount);
+            cache.GroupedCount = events.Count;
+        }
+
+        return cache.Groups;
+    }
+
+    private static List<GroupState> GroupAll(List<EventRow> events)
+    {
+        var groups = new List<GroupState>();
+        foreach (var row in events)
+        {
+            var current = groups.Count == 0 ? null : groups[^1];
+            if (current is null || StartsNewGroup(current.Rows, row))
+            {
+                groups.Add(new GroupState(row));
+                continue;
+            }
+
+            current.Rows.Add(row);
+        }
+
+        return groups;
+    }
+
+    private static void AppendGroups(IList<GroupState> groups, List<EventRow> events, int start)
+    {
+        for (var index = start; index < events.Count; index++)
+        {
+            var row = events[index];
+            var current = groups.Count == 0 ? null : groups[^1];
+            if (current is null || StartsNewGroup(current.Rows, row))
+            {
+                groups.Add(new GroupState(row));
+
+                // A newer group for the same account means the previous one is
+                // no longer the open session, so its built row is out of date.
+                if (current is not null &&
+                    string.Equals(current.AccountUserId, row.AccountUserId, StringComparison.Ordinal))
+                {
+                    current.Entry = null;
+                    current.EntryLocation = null;
+                }
+
+                continue;
+            }
+
+            // The last group just grew, so its built row no longer matches.
+            current!.Rows.Add(row);
+            current.Entry = null;
+            current.EntryLocation = null;
+        }
+    }
+
+    private static bool StartsNewGroup(IReadOnlyList<EventRow> group, EventRow row)
+    {
+        var last = group[^1];
+        if (!string.Equals(last.AccountUserId, row.AccountUserId, StringComparison.Ordinal) ||
+            !string.Equals(last.Location, row.Location, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var hasSelfEvent = group.Any(item =>
+            string.Equals(item.UserId, row.AccountUserId, StringComparison.Ordinal));
+        if (hasSelfEvent)
+        {
+            // A self session stays together across quiet hours. It only ends
+            // when the log reports that the local player left; the next event
+            // belongs to the next instance.
+            var selfLeftTs = group
+                .Where(item =>
+                    string.Equals(item.UserId, row.AccountUserId, StringComparison.Ordinal) &&
+                    item.EventType == LeftEvent)
+                .Select(item => item.CreatedAtTs)
+                .DefaultIfEmpty(long.MinValue)
+                .Max();
+            return (selfLeftTs != long.MinValue &&
+                    (row.EventType == JoinedEvent ||
+                     row.CreatedAtTs - selfLeftTs > GroupingToleranceMilliseconds)) ||
+                   (string.Equals(row.UserId, row.AccountUserId, StringComparison.Ordinal) &&
+                    row.EventType == JoinedEvent &&
+                    row.CreatedAtTs - last.CreatedAtTs > GroupingToleranceMilliseconds);
+        }
+
+        return row.CreatedAtTs - last.CreatedAtTs > GroupingToleranceMilliseconds &&
+               !(last.EventType == JoinedEvent && row.EventType == LeftEvent);
+    }
+
+    private static InstanceHistoryEntry BuildEntry(
+        GroupState group,
+        bool isLastGroup,
+        LocationRow? location)
+    {
+        var rows = group.Rows;
+        var row = rows[0];
+        var selfEvents = rows
+            .Where(item => string.Equals(item.UserId, row.AccountUserId, StringComparison.Ordinal))
+            .ToList();
+        var selfJoin = selfEvents.FirstOrDefault(item => item.EventType == JoinedEvent);
+        var selfLeft = selfEvents.LastOrDefault(item => item.EventType == LeftEvent);
+        var joinedAt = selfJoin?.CreatedAt ?? row.CreatedAt;
+        var groupEnd = rows[^1].CreatedAt;
+        var hasSelfLeft = selfLeft is not null &&
+                          (selfJoin is null || selfLeft.CreatedAtTs >= selfJoin.CreatedAtTs);
+        var closed = hasSelfLeft || !isLastGroup;
+        // Your own leave is the end of the visit. Player events that arrive
+        // after it must not stretch the row's duration to the last log line.
+        var leftAt = closed
+            ? (hasSelfLeft ? selfLeft!.CreatedAt : groupEnd)
+            : (DateTimeOffset?)null;
+        var lastSeenAt = closed ? leftAt!.Value : DateTimeOffset.Now;
+        if (lastSeenAt < joinedAt)
+        {
+            lastSeenAt = joinedAt;
+        }
+
+        var entry = new InstanceHistoryEntry
+        {
+            Id = StableId(row.AccountUserId, row.Location, joinedAt),
+            AccountUserId = row.AccountUserId,
+            Location = row.Location,
+            WorldId = location?.WorldId ?? LaunchService.GetWorldIdFromLocation(row.Location) ?? string.Empty,
+            InstanceId = location?.InstanceId ?? LaunchService.GetInstanceIdFromLocation(row.Location) ?? string.Empty,
+            WorldName = location?.WorldName ?? string.Empty,
+            WorldThumbnailUrl = location?.ThumbnailUrl ?? string.Empty,
+            WorldAuthorName = location?.AuthorName ?? string.Empty,
+            OwnerId = location?.OwnerId ?? OwnerFromLocation(row.Location),
+            OwnerName = location?.OwnerName ?? string.Empty,
+            JoinedAt = joinedAt,
+            LeftAt = leftAt,
+            LastSeenAt = lastSeenAt,
+            LastEventAt = groupEnd,
+            EventIds = rows.Select(item => item.Id).ToList()
+        };
+
+        BuildPlayers(entry, rows, closed ? groupEnd : null);
+        return entry;
+    }
     private static void BuildPlayers(
         InstanceHistoryEntry entry,
         IReadOnlyList<EventRow> group,
@@ -1390,6 +1480,37 @@ public sealed class InstanceHistoryStore
         public long MaxId { get; set; }
 
         public long LastTimestamp { get; set; }
+
+        /// <summary>The sequential grouping the cached rows were cut into.</summary>
+        public List<GroupState>? Groups { get; set; }
+
+        /// <summary>The row list those groups were built from.</summary>
+        public List<EventRow>? GroupedRows { get; set; }
+
+        /// <summary>How many of those rows the groups already contain.</summary>
+        public int GroupedCount { get; set; }
+    }
+
+    /// <summary>
+    /// One run of consecutive events at the same location. A finished group
+    /// keeps its built row so a refresh does not rebuild history that cannot
+    /// change any more.
+    /// </summary>
+    private sealed class GroupState
+    {
+        public GroupState(EventRow first) => Rows.Add(first);
+
+        public List<EventRow> Rows { get; } = new();
+
+        public string AccountUserId => Rows[0].AccountUserId;
+
+        public string Location => Rows[0].Location;
+
+        /// <summary>The built row, kept only while the group stays finished.</summary>
+        public InstanceHistoryEntry? Entry { get; set; }
+
+        /// <summary>The stored world metadata that row was built from.</summary>
+        public LocationRow? EntryLocation { get; set; }
     }
 
     private sealed record LocationRow(

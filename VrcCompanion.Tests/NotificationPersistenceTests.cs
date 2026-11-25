@@ -715,6 +715,52 @@ public class NotificationPersistenceTests : IDisposable
         Assert.Equal(11, response.ResponseSlot);
     }
 
+    [Fact]
+    public async Task DeclineWithMessageDropsAnInviteVrChatHasExpired()
+    {
+        var handler = new CaptureHandler
+        {
+            ResponseMessageListJson = """
+                [{"id":"msg_2","message":"sorry, busy right now","messageType":"response","slot":2,"canBeUpdated":true,"remainingCooldownMinutes":0}]
+                """,
+            ResponseStatus = HttpStatusCode.NotFound
+        };
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.UseLogPlayer(shell, new VrChatLogPlayerService(() => null, () => false));
+        TestHooks.UseInviteMessageMemory(shell, new InviteMessageMemoryStore(PathFor("invite-messages.json")));
+        TestHooks.SetLoggedIn(shell);
+        TestHooks.SetCurrentUser(shell, new VrcUser
+        {
+            Id = "usr_me",
+            DisplayName = "Me",
+            Location = "wrld_4cf554b4-430c-4f8f-b53e-1f294eed230b:12345"
+        });
+        var invite = new NotificationItem(Notification("not_expired", "invite"));
+
+        shell.DeclineNotificationWithMessageCommand.Execute(invite);
+        Assert.True(shell.IsResponseComposerOpen);
+        await WaitForSavedMessagesAsync(shell);
+        shell.SelectedInviteMessage = shell.InviteMessages.Single(option =>
+            option.Message == "sorry, busy right now");
+
+        shell.SendDeclineWithMessageCommand.Execute(null);
+        for (var attempt = 0; attempt < 500 && shell.IsBusy; attempt++)
+        {
+            await Task.Delay(20);
+        }
+
+        // The reply goes to the documented route, and the server's "Notification
+        // not found" is reported as an expiry instead of a mystery failure.
+        Assert.Contains(
+            handler.Requests,
+            item => item.Path == "POST api/1/invite/not_expired/response");
+        Assert.False(shell.IsResponseComposerOpen);
+        Assert.DoesNotContain(invite, shell.Notifications);
+        Assert.Contains("expired", shell.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not sent", shell.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static async Task WaitForSavedMessagesAsync(MainViewModel shell)
     {
         for (var attempt = 0;
@@ -760,6 +806,9 @@ public class NotificationPersistenceTests : IDisposable
         public string ResponseMessageListJson { get; set; } = "[]";
         public HttpStatusCode MessageUpdateStatus { get; set; } = HttpStatusCode.OK;
 
+        /// <summary>Set to fail the invite response with VRChat's expiry error.</summary>
+        public HttpStatusCode ResponseStatus { get; set; } = HttpStatusCode.OK;
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
@@ -795,6 +844,19 @@ public class NotificationPersistenceTests : IDisposable
             var isMessageList = request.Method == HttpMethod.Get &&
                                 (request.RequestUri?.AbsolutePath.Contains("/message/", StringComparison.Ordinal) ?? false);
             var path = request.RequestUri!.AbsolutePath;
+            if (ResponseStatus != HttpStatusCode.OK &&
+                request.Method == HttpMethod.Post &&
+                path.EndsWith("/response", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(ResponseStatus)
+                {
+                    Content = new StringContent(
+                        "{\"error\":{\"message\":\"Notification not found\",\"status_code\":404}}",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
             var responseBody = isMessageList
                 ? path.EndsWith("/request", StringComparison.Ordinal)
                     ? RequestMessageListJson

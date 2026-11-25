@@ -356,10 +356,11 @@ public sealed class InstanceHistoryTests : IDisposable
 
         Assert.Equal(coldRows.Count, incremental.Count);
         Assert.Contains(incremental, entry => entry.Players.Any(player => player.UserId == Other));
-        // Measured here: 1,385,272 B against 2,168,848 B for the same 1,200
-        // events, so the append has to keep at least a quarter of the read saved.
+        // Measured here: 20,192 B against 2,135,392 B for the same 1,200 events.
+        // The append reuses every finished group, so it pays for the open
+        // session, the location rows and the result list only.
         Assert.True(
-            incrementalCost * 4 < coldCost * 3,
+            incrementalCost * 20 < coldCost,
             $"Appending should not re-read every row: appended={incrementalCost:N0} B, full read={coldCost:N0} B.");
     }
 
@@ -419,6 +420,91 @@ public sealed class InstanceHistoryTests : IDisposable
         Assert.Equal(
             rows.OrderByDescending(row => row.JoinedAt).Select(row => row.Id),
             rows.Select(row => row.Id));
+    }
+
+    [Fact]
+    public void RefreshingHistoryReusesFinishedGroupsAndRebuildsOnlyTheOpenOne()
+    {
+        var path = Path.Combine(_directory, "group-reuse.db");
+        var store = new InstanceHistoryStore(path);
+        var start = DateTimeOffset.Now.AddHours(-8);
+        for (var index = 0; index < 39; index++)
+        {
+            var joined = start.AddMinutes(index * 10);
+            var entry = InstanceHistoryStore.NewFromLog(
+                Me,
+                index % 2 == 0 ? LocationA : LocationB,
+                joined)!;
+            entry.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+            entry.GetOrAddPlayer(Friend, "Maya").StartVisit(joined);
+            entry.Close(joined.AddMinutes(5));
+            store.Add(entry);
+        }
+
+        var openStart = start.AddHours(7);
+        var open = InstanceHistoryStore.NewFromLog(Me, LocationC, openStart)!;
+        open.GetOrAddPlayer(Me, "Me").StartVisit(openStart);
+        store.Add(open);
+
+        var before = store.ForAccount(Me);
+        Assert.Equal(40, before.Count);
+
+        // A live event lands in the open session at the end. Every earlier group
+        // is finished and cannot gain a row, so it must come back untouched.
+        store.RecordPlayerEvent(Me, LocationC, Friend, "Maya", string.Empty, joined: true, openStart.AddMinutes(1));
+        var after = store.ForAccount(Me);
+
+        Assert.Equal(40, after.Count);
+        foreach (var finished in before.Where(row => row.LeftAt is not null))
+        {
+            Assert.Same(finished, after.Single(row => row.Id == finished.Id));
+        }
+
+        var openBefore = before.Single(row => row.LeftAt is null);
+        var openAfter = after.Single(row => row.LeftAt is null);
+        Assert.NotSame(openBefore, openAfter);
+        Assert.Equal(2, openAfter.Players.Count);
+        Assert.All(openAfter.Players, player => Assert.True(player.HasOpenVisit));
+    }
+
+    [Fact]
+    public void AppendingAcrossGroupBoundariesProducesTheSameHistoryAsAFreshRead()
+    {
+        var path = Path.Combine(_directory, "append-boundaries.db");
+        var store = new InstanceHistoryStore(path);
+        var start = DateTimeOffset.Now.AddHours(-6);
+        var events = new (string Location, string User, string Name, bool Joined, DateTimeOffset At)[]
+        {
+            (LocationA, Me, "Me", true, start),
+            (LocationA, Friend, "Maya", true, start.AddMinutes(1)),
+            (LocationA, Friend, "Maya", false, start.AddMinutes(10)),
+            (LocationA, Me, "Me", false, start.AddMinutes(11)),
+            (LocationB, Me, "Me", true, start.AddHours(1)),
+            (LocationB, Other, "Someone", true, start.AddHours(1).AddMinutes(2)),
+            (LocationC, Me, "Me", true, start.AddHours(3)),
+            (LocationC, Friend, "Maya", true, start.AddHours(3).AddMinutes(1)),
+            (LocationC, Friend, "Maya", false, start.AddHours(3).AddMinutes(4))
+        };
+        foreach (var item in events)
+        {
+            store.RecordPlayerEvent(Me, item.Location, item.User, item.Name, string.Empty, item.Joined, item.At);
+            // The app reads history after every live event, so every one of these
+            // refreshes exercises the appended-group path.
+            store.ForAccount(Me);
+        }
+
+        var appended = store.ForAccount(Me);
+        var fresh = new InstanceHistoryStore(path).ForAccount(Me);
+
+        static IEnumerable<string> Shape(IEnumerable<InstanceHistoryEntry> rows)
+            => rows.Select(row =>
+                $"{row.Id}|{row.Location}|{row.JoinedAt:O}|{row.LeftAt:O}|{row.LastEventAt:O}|" +
+                string.Join(";", row.Players.Select(player =>
+                    $"{player.UserId}:" + string.Join(",", player.Visits.Select(visit =>
+                        $"{visit.JoinedAt:O}-{visit.LeftAt:O}")))));
+
+        Assert.Equal(3, appended.Count);
+        Assert.Equal(Shape(fresh), Shape(appended));
     }
 
     [Fact]
