@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 925 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
+A full run is 929 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.89**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.90**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -80,6 +80,20 @@ decodes at most the source width; `AnimatedBackdropWidth` additionally caps the 
 `AnimatedBackdropFrameBudgetBytes` (96 MB), and returns 0 - still frame - when even 320 px wide
 cannot fit. The profile backdrop had the same shape and the same saving.
 
+### What 1.0.90 changed
+
+- **Skia decodes WebP straight to the size the UI needs.** The old `TryDecodeSkia` decoded at the
+source resolution with `SKBitmap.Decode`, resized, then copied the result into a managed array with
+`GetPixelSpan().ToArray()` - a large-object allocation per picture (7.7 MB for 1600x1200), which is
+what left freed large-object space behind. `DecodeSkiaScaled` now asks `SKCodec.GetScaledDimensions`
+for a supported size, decodes into a native buffer (`Marshal.AllocHGlobal`, freed in `finally`) and
+lets `BitmapSource.Create` copy out of it; measured in `ImageDecodeTests`, 1600x1200 at 96 px is
+96x72 and 2,048 managed bytes. `DecodeSkiaFullSize` is the old path kept as the fallback when a
+codec refuses to scale. `ToBitmapSource` passes `SKBitmap.GetPixels()` and its stride to WPF instead
+of copying the frame into a managed array, so animation frames stopped allocating one too.
+- **The animation decoder's `SKMemoryStream` is disposed.** `DecodeAnimationSkia` created one per
+file inline and never freed it.
+
 ### Do not undo these
 
 1. **No `DropShadowEffect`.** If a panel now reads as too flat, give it a baked edge - a second
@@ -111,7 +125,12 @@ because `DecodePixelWidth` above the file's own width upscales it (WPF really pr
 and an animated GIF pays for it on every frame; `BackdropDecodeTests` pins the no-upscale rule, the
 frame budget and the still fallback. Do not raise the budget without measuring the frame set: 66
 frames at 1280 px was 405 MB, not a few tens of megabytes.
-9. **WebView2 suspension already exists.** `Controls/EmbeddedBrowser` suspends a hidden page with
+9. **Skia decoding goes through `DecodeSkiaScaled` first.** Do not reach for `SKBitmap.Decode` on a
+full image and then resize it: that materialises the source resolution, and `GetPixelSpan().ToArray()`
+adds a managed copy of it on the large object heap. Decode through `SKCodec` at a supported scale,
+write into native memory, and let `BitmapSource.Create` copy once; `DecodeSkiaFullSize` exists only as
+the fallback, and `ImageDecodeTests` pins both the scaled size and the allocation bound.
+10. **WebView2 suspension already exists.** `Controls/EmbeddedBrowser` suspends a hidden page with
    `TrySuspendAsync` after 7 seconds (now 3), sets a low memory target while hidden, and releases the
    whole WebView when the section is evicted. Do not add a second suspension mechanism.
 
@@ -400,7 +419,7 @@ has gone untouched for the hour, which is how a reused pid stops keeping litter.
 `build/test-profile-guard-red.ps1`, which requires one filtered run to exit 1 on a fabricated
 baseline.
 
-`test-suite.yml` runs on every push and is the only job that runs all 925 tests. When a test
+`test-suite.yml` runs on every push and is the only job that runs all 929 tests. When a test
 fails, `build/retry-failed-tests.ps1` re-runs only the failed tests once: it plans the filter
 from the run's `trx`, reports what passed on retry as a warning and in the step summary, and the
 job stays green - a flaky test must not redden an otherwise good commit, but it must not be

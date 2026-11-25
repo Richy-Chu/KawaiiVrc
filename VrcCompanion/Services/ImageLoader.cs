@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Media;
@@ -504,10 +505,91 @@ public sealed class ImageLoader : IDisposable
     }
 
     /// <summary>
-    /// Decodes WebP (and anything else WPF cannot read) with SkiaSharp, scaling
-    /// straight to the size the UI needs so the cache stays small.
+    /// Decodes WebP (and anything else WPF cannot read) with SkiaSharp, straight to the size the
+    /// UI needs. Skia's codec can scale while it decodes, so a 2048 px WebP asked for at 96 px
+    /// never materialises 16 MB of pixels plus a copy of them. The old path did exactly that -
+    /// full-size decode, resize, then a managed copy of the result - and that churn is what left
+    /// tens of megabytes of freed large-object space in the heap. The full-size decode is kept as
+    /// the fallback for a codec that refuses to scale.
     /// </summary>
     private static ImageSource? TryDecodeSkia(byte[] bytes, int decodeWidth)
+        => DecodeSkiaScaled(bytes, decodeWidth) ?? DecodeSkiaFullSize(bytes, decodeWidth);
+
+    /// <summary>
+    /// Decodes through the codec at a size Skia supports natively. The destination buffer is
+    /// native and the BitmapSource copies out of it, so no large managed array is allocated and
+    /// the pixels never exist at the source resolution.
+    /// </summary>
+    internal static ImageSource? DecodeSkiaScaled(byte[] bytes, int decodeWidth)
+    {
+        SKMemoryStream? stream = null;
+        SKCodec? codec = null;
+        try
+        {
+            stream = new SKMemoryStream(bytes);
+            codec = SKCodec.Create(stream);
+            if (codec is null || codec.Info.Width <= 0 || codec.Info.Height <= 0)
+            {
+                return null;
+            }
+
+            var requested = Math.Clamp(decodeWidth, 32, codec.Info.Width);
+            var scaled = codec.GetScaledDimensions(requested / (float)codec.Info.Width);
+            var width = Math.Max(1, scaled.Width);
+            var height = Math.Max(1, scaled.Height);
+            if (width > codec.Info.Width || height > codec.Info.Height)
+            {
+                return null;
+            }
+
+            var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+            var size = info.RowBytes * height;
+            if (size <= 0)
+            {
+                return null;
+            }
+
+            var pixels = Marshal.AllocHGlobal(size);
+            try
+            {
+                var result = codec.GetPixels(info, pixels);
+                if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)
+                {
+                    // Some codecs only scale by whole factors, or not at all; the fallback
+                    // handles those instead of failing the picture.
+                    return null;
+                }
+
+                var bitmap = BitmapSource.Create(
+                    width,
+                    height,
+                    96,
+                    96,
+                    PixelFormats.Pbgra32,
+                    null,
+                    pixels,
+                    size,
+                    info.RowBytes);
+                bitmap.Freeze();
+                return bitmap;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pixels);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            codec?.Dispose();
+            stream?.Dispose();
+        }
+    }
+
+    internal static ImageSource? DecodeSkiaFullSize(byte[] bytes, int decodeWidth)
     {
         try
         {
@@ -536,19 +618,7 @@ public sealed class ImageLoader : IDisposable
                 return null;
             }
 
-            // Skia decodes to premultiplied BGRA, which is WPF's Pbgra32 format.
-            var pixels = scaled.GetPixelSpan().ToArray();
-            var bitmap = BitmapSource.Create(
-                scaled.Width,
-                scaled.Height,
-                96,
-                96,
-                PixelFormats.Pbgra32,
-                null,
-                pixels,
-                scaled.RowBytes);
-            bitmap.Freeze();
-            return bitmap;
+            return ToBitmapSource(scaled);
         }
         catch
         {
@@ -586,7 +656,8 @@ public sealed class ImageLoader : IDisposable
     {
         try
         {
-            using var codec = SKCodec.Create(new SKMemoryStream(bytes));
+            using var stream = new SKMemoryStream(bytes);
+            using var codec = SKCodec.Create(stream);
             if (codec is null || codec.Info.Width <= 0 || codec.Info.Height <= 0)
             {
                 return null;
@@ -672,9 +743,13 @@ public sealed class ImageLoader : IDisposable
         }
     }
 
+    /// <summary>
+    /// Copies Skia's pixels straight into a WPF source. Reading from the bitmap's own buffer
+    /// avoids the managed copy of the whole frame this used to make, which for a 2048 px frame
+    /// was a 16 MB large-object allocation per image.
+    /// </summary>
     private static BitmapSource ToBitmapSource(SKBitmap bitmap)
     {
-        var pixels = bitmap.GetPixelSpan().ToArray();
         var image = BitmapSource.Create(
             bitmap.Width,
             bitmap.Height,
@@ -682,7 +757,8 @@ public sealed class ImageLoader : IDisposable
             96,
             PixelFormats.Pbgra32,
             null,
-            pixels,
+            bitmap.GetPixels(),
+            bitmap.RowBytes * bitmap.Height,
             bitmap.RowBytes);
         image.Freeze();
         return image;
