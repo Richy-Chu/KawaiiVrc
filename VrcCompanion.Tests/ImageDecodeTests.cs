@@ -1,4 +1,7 @@
 using System;
+using System.IO;
+using System.Threading.Tasks;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SkiaSharp;
 using VrcCompanion.Services;
@@ -25,6 +28,69 @@ public class ImageDecodeTests
         using var image = surface.Snapshot();
         using var data = image.Encode(SKEncodedImageFormat.Webp, 90);
         return data.ToArray();
+    }
+
+    /// <summary>
+    /// A 1080p screenshot, the format the media grid asks for at 160 px. PNG
+    /// cannot scale while decoding, so it is the case that used to materialise
+    /// ten megapixels per card.
+    /// </summary>
+    private static byte[] Screenshot(int width, int height)
+    {
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        for (var offset = 0; offset < pixels.Length; offset += 4)
+        {
+            pixels[offset] = (byte)(offset % 251);
+            pixels[offset + 1] = (byte)(offset % 241);
+            pixels[offset + 2] = (byte)(offset % 239);
+            pixels[offset + 3] = 255;
+        }
+
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, stride);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        return stream.ToArray();
+    }
+
+    [Fact]
+    public void AScreenshotIsNotDecodedAtItsSourceResolution()
+    {
+        var bytes = Screenshot(1920, 1080);
+
+        // The codec either scales itself or declines and the fallback resizes;
+        // what must never happen is a 1920 px frame handed to a 160 px card.
+        var scaled = ImageLoader.DecodeSkiaScaled(bytes, 160) as BitmapSource;
+        Assert.True(
+            scaled is null || scaled.PixelWidth <= 200,
+            $"scaled decode returned {scaled?.PixelWidth}x{scaled?.PixelHeight}");
+
+        var fallback = Assert.IsAssignableFrom<BitmapSource>(ImageLoader.DecodeSkiaFullSize(bytes, 160));
+        Assert.Equal(160, fallback.PixelWidth);
+        Assert.Equal(90, fallback.PixelHeight);
+    }
+
+    [Fact]
+    public async Task ALocalScreenshotLoadsAtTheWidthTheMediaGridAsksFor()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            "decode-test-" + Guid.NewGuid().ToString("N") + ".png");
+        await File.WriteAllBytesAsync(path, Screenshot(1920, 1080));
+        try
+        {
+            var image = Assert.IsAssignableFrom<BitmapSource>(
+                await new ImageLoader().LoadAsync(path, 160));
+
+            Assert.InRange(image.PixelWidth, 32, 200);
+            Assert.InRange(image.PixelHeight, 24, 120);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]

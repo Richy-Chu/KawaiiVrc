@@ -491,7 +491,9 @@ public sealed class ImageLoader : IDisposable
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
-            image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+            // Not IgnoreImageCache: WPF's ImagingCache is keyed by Uri, and with a
+            // stream there is none, so WPF threw while finishing the image. Every
+            // decode fell through to Skia - and the media grid reports from there.
             image.DecodePixelWidth = decodeWidth;
             image.StreamSource = stream;
             image.EndInit();
@@ -538,6 +540,15 @@ public sealed class ImageLoader : IDisposable
             var width = Math.Max(1, scaled.Width);
             var height = Math.Max(1, scaled.Height);
             if (width > codec.Info.Width || height > codec.Info.Height)
+            {
+                return null;
+            }
+
+            // PNG and BMP cannot scale while decoding and answer with the source
+            // size. Decoding that would materialise every megapixel the caller
+            // asked to avoid - a 1080p screenshot per media card - so hand those
+            // to the fallback, which resizes after decoding.
+            if (width == codec.Info.Width && codec.Info.Width > requested)
             {
                 return null;
             }

@@ -591,6 +591,64 @@ public sealed class InstanceHistoryTests : IDisposable
     }
 
     [Fact]
+    public void AnImportedSessionRecordedAfterTheLiveOneDoesNotFinishIt()
+    {
+        // An import can add a session that started after the live one and is
+        // already over. Picking the open row by list order (or by start time
+        // alone) handed "open" to the import, and the live visit came back with
+        // a leave time it never had.
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "open-after-import.db"));
+        var joined = new DateTimeOffset(2026, 11, 20, 20, 0, 0, TimeSpan.Zero);
+
+        var live = InstanceHistoryStore.NewFromLog(Me, LocationA, joined)!;
+        SetWorldMetadata(live);
+        live.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+        live.GetOrAddPlayer(Friend, "Juicy_Drink").StartVisit(joined.AddMinutes(2));
+        store.Add(live);
+
+        var imported = InstanceHistoryStore.NewFromLog(Me, LocationB, joined.AddMinutes(5))!;
+        SetWorldMetadata(imported);
+        imported.GetOrAddPlayer(Me, "Me").StartVisit(joined.AddMinutes(5));
+        imported.Close(joined.AddMinutes(6));
+        store.Add(imported);
+
+        var rows = store.ForAccount(Me);
+        Assert.Equal(2, rows.Count);
+
+        var open = Assert.Single(rows, row => row.Location == LocationA);
+        Assert.Equal(joined, open.JoinedAt);
+        Assert.Null(open.LeftAt);
+        Assert.Equal(2, open.Players.Count);
+
+        var closed = Assert.Single(rows, row => row.Location == LocationB);
+        Assert.Equal(joined.AddMinutes(6), closed.LeftAt);
+    }
+
+    [Fact]
+    public void OnlyTheNewestLeaveLessSessionStaysOpen()
+    {
+        // A crash leaves a session with no leave line. When a later session
+        // starts, the old row must not keep growing as if it were still running.
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "stale-open.db"));
+        var joined = new DateTimeOffset(2026, 11, 20, 21, 0, 0, TimeSpan.Zero);
+
+        var crashed = InstanceHistoryStore.NewFromLog(Me, LocationA, joined)!;
+        SetWorldMetadata(crashed);
+        crashed.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+        store.Add(crashed);
+
+        var running = InstanceHistoryStore.NewFromLog(Me, LocationB, joined.AddMinutes(30))!;
+        SetWorldMetadata(running);
+        running.GetOrAddPlayer(Me, "Me").StartVisit(joined.AddMinutes(30));
+        store.Add(running);
+
+        var rows = store.ForAccount(Me);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(joined, Assert.Single(rows, row => row.Location == LocationA).LeftAt);
+        Assert.Null(Assert.Single(rows, row => row.Location == LocationB).LeftAt);
+    }
+
+    [Fact]
     public void ANewHistoryRowReusesTheRowsThatDidNotChange()
     {
         var store = new InstanceHistoryStore(Path.Combine(_directory, "reuse-rows.db"));

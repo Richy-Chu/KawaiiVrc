@@ -1090,10 +1090,38 @@ public sealed class InstanceHistoryStore
         _eventCaches.TryGetValue(accountUserId ?? string.Empty, out var cache);
         var groups = GroupRows(cache, events);
 
-        var lastIndexByAccount = new Dictionary<string, int>(StringComparer.Ordinal);
+        // The open session is the newest-starting group the log never saw the
+        // account leave. Neither the last group in the list nor the newest one
+        // alone can answer that: an imported session can be recorded after the
+        // live one, or start after it, and still be over - which handed "open"
+        // to the import and showed the live visit with a leave time it never
+        // had.
+        var openIndexByAccount = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var index = 0; index < groups.Count; index++)
         {
-            lastIndexByAccount[groups[index].AccountUserId] = index;
+            var candidate = groups[index];
+            if (!openIndexByAccount.TryGetValue(candidate.AccountUserId, out var current))
+            {
+                openIndexByAccount[candidate.AccountUserId] = index;
+                continue;
+            }
+
+            var currentGroup = groups[current];
+            var candidateOpen = !HasSelfLeave(candidate);
+            if (candidateOpen != !HasSelfLeave(currentGroup))
+            {
+                if (candidateOpen)
+                {
+                    openIndexByAccount[candidate.AccountUserId] = index;
+                }
+
+                continue;
+            }
+
+            if (candidate.Rows[0].CreatedAtTs >= currentGroup.Rows[0].CreatedAtTs)
+            {
+                openIndexByAccount[candidate.AccountUserId] = index;
+            }
         }
 
         // A finished group is built once and reused. Grouping is strictly
@@ -1105,7 +1133,7 @@ public sealed class InstanceHistoryStore
         for (var index = groups.Count - 1; index >= 0 && result.Count < MaximumEntries; index--)
         {
             var group = groups[index];
-            var isLastGroup = lastIndexByAccount[group.AccountUserId] == index;
+            var isLastGroup = openIndexByAccount[group.AccountUserId] == index;
             locations.TryGetValue((group.AccountUserId, group.Location), out var location);
             var entry = isLastGroup ? null : group.Entry;
             if (entry is null || !Equals(group.EntryLocation, location))
@@ -1261,6 +1289,38 @@ public sealed class InstanceHistoryStore
 
         return row.CreatedAtTs - last.CreatedAtTs > GroupingToleranceMilliseconds &&
                !(last.EventType == JoinedEvent && row.EventType == LeftEvent);
+    }
+
+    /// <summary>
+    /// True when the account's own leave closes this group (the same test
+    /// <see cref="BuildEntry"/> uses). A group without one is the only kind that
+    /// can still be running.
+    /// </summary>
+    private static bool HasSelfLeave(GroupState group)
+    {
+        var account = group.Rows[0].AccountUserId;
+        EventRow? selfJoin = null;
+        EventRow? selfLeft = null;
+        foreach (var row in group.Rows)
+        {
+            if (!string.Equals(row.UserId, account, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            switch (row.EventType)
+            {
+                case JoinedEvent when selfJoin is null:
+                    selfJoin = row;
+                    break;
+                case LeftEvent:
+                    selfLeft = row;
+                    break;
+            }
+        }
+
+        return selfLeft is not null &&
+               (selfJoin is null || selfLeft.CreatedAtTs >= selfJoin.CreatedAtTs);
     }
 
     private static InstanceHistoryEntry BuildEntry(
