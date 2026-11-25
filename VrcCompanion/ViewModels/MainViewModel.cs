@@ -133,6 +133,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private string _contextLogSignature = string.Empty;
     private InstanceHistoryRecorder? _instanceHistoryRecorder;
     private DispatcherTimer? _instanceHistoryTimer;
+    private bool _instanceHistoryPolling;
     private DispatcherTimer? _activityPollTimer;
 
     // Signature of the last friend poll so an unchanged snapshot can skip the
@@ -5893,48 +5894,87 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private void PollInstanceHistory()
     {
-        if (!IsLoggedIn || CurrentUser is null)
+        // One pass at a time: a slow disk must not stack polls behind itself, and every pass
+        // would be reading a log that has not moved yet.
+        if (_instanceHistoryPolling || !IsLoggedIn || CurrentUser is null)
         {
             return;
         }
 
-        // This tick reads VRChat's log and queries instance history on the UI thread; the trace is
-        // what lets a stall line say this was the job running across it.
-        using var poll = Services.UiJobTrace.Shared.Begin("instance-history");
-        var gameRunning = _logPlayerService.IsGameRunning;
-        var snapshot = gameRunning ? _logPlayerService.Poll() : null;
-        if (snapshot is not null && LaunchService.IsLocation(snapshot.Location))
+        _instanceHistoryPolling = true;
+        _ = PollInstanceHistoryAsync();
+    }
+
+    /// <summary>
+    /// Reads VRChat's log and records it in the history store away from the UI thread.
+    /// </summary>
+    /// <remarks>
+    /// The log read is file I/O and the recording is SQLite: together they cost a quarter of a
+    /// second on a busy disk, and every one of those milliseconds used to be a frame the window
+    /// could not draw. Only the resulting state changes come back to the dispatcher, so the trace
+    /// that names this job now covers the apply and nothing else.
+    /// </remarks>
+    private async Task PollInstanceHistoryAsync()
+    {
+        try
         {
-            ApplyObservedCurrentLocation(snapshot.Location, CurrentUser.Id);
-            ApplyLoggedAvatarChanges(snapshot);
+            var userId = CurrentUser?.Id;
+            if (!IsLoggedIn || string.IsNullOrEmpty(userId))
+            {
+                return;
+            }
+
+            var recorder = _instanceHistoryRecorder;
+            var historyReady = _historyReady;
+            var (snapshot, changed) = await Task.Run(() =>
+            {
+                var gameRunning = _logPlayerService.IsGameRunning;
+                var polled = gameRunning ? _logPlayerService.Poll() : null;
+                var recorded = historyReady && recorder is not null &&
+                    recorder.Observe(polled, gameRunning, DateTimeOffset.Now);
+                return (polled, recorded);
+            }).ConfigureAwait(true);
+
+            if (!IsLoggedIn)
+            {
+                return;
+            }
+
+            using var poll = Services.UiJobTrace.Shared.Begin("instance-history");
+            if (snapshot is not null && LaunchService.IsLocation(snapshot.Location))
+            {
+                ApplyObservedCurrentLocation(snapshot.Location, userId);
+                ApplyLoggedAvatarChanges(snapshot);
+            }
+
+            // Context uses the same log signature as Instance: location and the
+            // people in it. A same-instance join or leave must refresh it too.
+            ObserveContextLogSnapshot(snapshot);
+
+            // The profile can be open while its subject switches avatars. Feed the
+            // polled log change into that profile so its current card follows in
+            // near real time instead of staying on the avatar it opened with.
+            if (snapshot?.Avatars is { } loggedAvatars &&
+                SelectedFriendDetail is { } profile &&
+                loggedAvatars.TryGetValue(profile.Id, out var loggedAvatar))
+            {
+                profile.ApplyLoggedAvatar(loggedAvatar);
+            }
+
+            if (changed && InstanceHistoryViewModel is { IsOpen: true, IsListVisible: true })
+            {
+                _ = InstanceHistoryViewModel.RefreshAsync();
+            }
         }
-
-        // Context uses the same log signature as Instance: location and the
-        // people in it. A same-instance join or leave must refresh it too.
-        ObserveContextLogSnapshot(snapshot);
-
-        // The profile can be open while its subject switches avatars. Feed the
-        // polled log change into that profile so its current card follows in
-        // near real time instead of staying on the avatar it opened with.
-        if (snapshot?.Avatars is { } loggedAvatars &&
-            SelectedFriendDetail is { } profile &&
-            loggedAvatars.TryGetValue(profile.Id, out var loggedAvatar))
+        catch (Exception ex)
         {
-            profile.ApplyLoggedAvatar(loggedAvatar);
+            // A tick that throws must not take the window with it, and the next tick repeats
+            // the read anyway.
+            Debug.WriteLine("instance history poll: " + ex.Message);
         }
-
-        if (!_historyReady || _instanceHistoryRecorder is null)
+        finally
         {
-            return;
-        }
-
-        var changed = _instanceHistoryRecorder.Observe(
-            snapshot,
-            gameRunning,
-            DateTimeOffset.Now);
-        if (changed && InstanceHistoryViewModel is { IsOpen: true, IsListVisible: true })
-        {
-            _ = InstanceHistoryViewModel.RefreshAsync();
+            _instanceHistoryPolling = false;
         }
     }
 

@@ -28,6 +28,7 @@ public sealed class InstanceViewModel : ViewModelBase
     private readonly ObservableCollection<InstancePlayerItem> _players = new();
     private readonly ICollectionView _playersView;
     private readonly DispatcherTimer _logTimer;
+    private bool _logPolling;
     private CancellationTokenSource? _loadCancellation;
     private int _loadVersion;
     private VrcInstance? _instance;
@@ -694,12 +695,47 @@ public sealed class InstanceViewModel : ViewModelBase
 
     private void PollLogForChanges()
     {
-        if (!_isActive || IsLoading || _lastCurrentUser is null)
+        // The tick fires once a second while the popup is open, and the read it used to do here
+        // is a file open and a parse. At that rate it was a slice of every second the popup was
+        // up, taken from the thread that draws it.
+        if (_logPolling || !_isActive || IsLoading || _lastCurrentUser is null)
         {
             return;
         }
 
-        var snapshot = _logService.Poll();
+        _logPolling = true;
+        _ = PollLogForChangesAsync();
+    }
+
+    private async Task PollLogForChangesAsync()
+    {
+        try
+        {
+            var snapshot = await Task.Run(() => _logService.Poll()).ConfigureAwait(true);
+            if (!_isActive || IsLoading)
+            {
+                return;
+            }
+
+            ApplyLogSnapshot(snapshot);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("instance log poll: " + ex.Message);
+        }
+        finally
+        {
+            _logPolling = false;
+        }
+    }
+
+    private void ApplyLogSnapshot(VrChatLogSnapshot? snapshot)
+    {
+        if (_lastCurrentUser is null)
+        {
+            return;
+        }
+
         var signature = BuildLogSignature(snapshot);
         if (signature.Length == 0 || string.Equals(signature, _lastLogSignature, StringComparison.Ordinal))
         {

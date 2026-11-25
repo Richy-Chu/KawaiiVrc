@@ -44,6 +44,43 @@ public class InstanceTests
     }
 
     [Fact]
+    public async Task TwoThreadsCanPollTheSameLogAtOnce()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "vrccompanion-instance-" + Guid.NewGuid().ToString("N") + ".log");
+        try
+        {
+            File.WriteAllText(path, string.Join('\n', new[]
+            {
+                $"2026.11.14 12:00:00 Log - [Behaviour] Joining {Location}",
+                $"2026.11.14 12:00:01 Log - [Behaviour] OnPlayerJoined Logged Person ({LoggedUserId})",
+                string.Empty
+            }));
+
+            var service = new VrChatLogPlayerService(() => path);
+            Assert.NotNull(service.Poll());
+
+            // The history tick and the Instance popup both poll this from the pool now. They
+            // share one position and one roster, so overlapping reads have to take turns
+            // instead of reading the same bytes twice or tearing a snapshot.
+            var polls = Enumerable.Range(0, 64)
+                .Select(_ => Task.Run(() => service.Poll()))
+                .ToArray();
+            var results = await Task.WhenAll(polls);
+
+            Assert.All(results, snapshot =>
+            {
+                Assert.NotNull(snapshot);
+                Assert.Equal(Location, snapshot!.Location);
+                Assert.Single(snapshot.Players);
+            });
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
 
     public async Task InstanceEndpointParsesRealWorldAndPlayerData()
     {

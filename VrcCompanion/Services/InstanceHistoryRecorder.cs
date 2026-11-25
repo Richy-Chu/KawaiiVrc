@@ -16,6 +16,10 @@ public sealed class InstanceHistoryRecorder
     private string _activeEntryId = string.Empty;
     private string _activeLocation = string.Empty;
 
+    // Observe now runs on a thread-pool thread, while the account can be set and the recorder
+    // stopped from the dispatcher. Both move the same session fields, so they take turns.
+    private readonly object _gate = new();
+
     public InstanceHistoryRecorder(InstanceHistoryStore store)
     {
         _store = store;
@@ -24,6 +28,14 @@ public sealed class InstanceHistoryRecorder
     public InstanceHistoryStore Store => _store;
 
     public void SetAccount(VrcUser user)
+    {
+        lock (_gate)
+        {
+            SetAccountCore(user);
+        }
+    }
+
+    private void SetAccountCore(VrcUser user)
     {
         var changed = !string.Equals(_accountUserId, user.Id, StringComparison.Ordinal);
         _accountUserId = user.Id ?? string.Empty;
@@ -48,6 +60,17 @@ public sealed class InstanceHistoryRecorder
     /// instances (the history list needs a refresh), not on every player tick.
     /// </summary>
     public bool Observe(
+        VrcCompanion.Services.VrChatLogSnapshot? snapshot,
+        bool gameRunning,
+        DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            return ObserveCore(snapshot, gameRunning, now);
+        }
+    }
+
+    private bool ObserveCore(
         VrcCompanion.Services.VrChatLogSnapshot? snapshot,
         bool gameRunning,
         DateTimeOffset now)
@@ -141,6 +164,14 @@ public sealed class InstanceHistoryRecorder
     }
 
     public void Stop(DateTimeOffset? now = null)
+    {
+        lock (_gate)
+        {
+            StopCore(now);
+        }
+    }
+
+    private void StopCore(DateTimeOffset? now)
     {
         if (string.IsNullOrWhiteSpace(_activeEntryId))
         {

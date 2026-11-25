@@ -72,6 +72,14 @@ public sealed class VrChatLogPlayerService
     private DateTime _lastLogScan = DateTime.MinValue;
     private DateTime _lastGameCheck = DateTime.MinValue;
     private bool _lastGameRunning;
+
+    // Poll is called from a background thread now, by two timers that share this instance: the
+    // main window's history tick and the Instance popup. They share one position, one roster and
+    // one set of dictionaries, so a poll is serialised whole rather than split. The game check is
+    // a separate lock because it is also asked from the UI thread, and it must not wait behind a
+    // read of the log.
+    private readonly object _gate = new();
+    private readonly object _gameGate = new();
     private static readonly TimeSpan LogScanInterval = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan GameCheckInterval = TimeSpan.FromSeconds(5);
 
@@ -90,23 +98,26 @@ public sealed class VrChatLogPlayerService
     {
         get
         {
-            var now = DateTime.UtcNow;
-            if (now - _lastGameCheck < GameCheckInterval)
+            lock (_gameGate)
             {
+                var now = DateTime.UtcNow;
+                if (now - _lastGameCheck < GameCheckInterval)
+                {
+                    return _lastGameRunning;
+                }
+
+                _lastGameCheck = now;
+                try
+                {
+                    _lastGameRunning = _isGameRunning();
+                }
+                catch
+                {
+                    _lastGameRunning = false;
+                }
+
                 return _lastGameRunning;
             }
-
-            _lastGameCheck = now;
-            try
-            {
-                _lastGameRunning = _isGameRunning();
-            }
-            catch
-            {
-                _lastGameRunning = false;
-            }
-
-            return _lastGameRunning;
         }
     }
 
@@ -115,6 +126,14 @@ public sealed class VrChatLogPlayerService
     /// seen in it. Returns null until a valid world instance has been joined.
     /// </summary>
     public VrChatLogSnapshot? Poll()
+    {
+        lock (_gate)
+        {
+            return PollCore();
+        }
+    }
+
+    private VrChatLogSnapshot? PollCore()
     {
         try
         {
@@ -178,6 +197,14 @@ public sealed class VrChatLogPlayerService
     }
 
     public void Reset()
+    {
+        lock (_gate)
+        {
+            ResetCore();
+        }
+    }
+
+    private void ResetCore()
     {
         _players.Clear();
         _avatarNames.Clear();
