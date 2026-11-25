@@ -36,6 +36,7 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
     private bool _canReturnToProfile;
     private string _statusMessage = string.Empty;
     private int _refreshVersion;
+    private long _lastRevision = -1;
 
     public InstanceHistoryViewModel(VrcApiClient api, InstanceHistoryStore store)
     {
@@ -404,6 +405,21 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
         StatusMessage = string.Empty;
         SearchText = string.Empty;
         ClearFilterCore();
+        // The rows are rebuilt on the next open. Holding 500 sessions with every
+        // player row, timeline and command alive while the popup is closed is
+        // memory the app does not need.
+        _entries.Clear();
+        _lastRevision = -1;
+        OnEntryStateChanged();
+    }
+
+    private void RefreshOpenDurations()
+    {
+        var now = DateTimeOffset.Now;
+        foreach (var item in _entries)
+        {
+            item.RefreshOpenDuration(now);
+        }
     }
 
     public async Task RefreshAsync()
@@ -416,6 +432,17 @@ public sealed class InstanceHistoryViewModel : ViewModelBase, IDisposable
         }
 
         var version = ++_refreshVersion;
+
+        // A poll that found no new log rows has the same stored revision, so the
+        // sessions are the same and rebuilding every row would only churn memory.
+        var revision = _store.Revision;
+        if (_entries.Count > 0 && revision == _lastRevision)
+        {
+            RefreshOpenDurations();
+            return;
+        }
+
+        _lastRevision = revision;
         IsLoading = true;
         try
         {
@@ -1162,6 +1189,24 @@ public sealed class InstanceHistoryItem : ViewModelBase
         : Entry.LeftAt is null
             ? $"You have been here {DurationText} · started {Entry.JoinedAt.ToLocalTime():h:mm tt}"
             : $"You were here {DurationText} · {TimeRangeText}";
+
+    /// <summary>
+    /// Keeps an open session's duration moving when the popup polls and the store
+    /// has nothing new, so the row does not have to be rebuilt to stay honest.
+    /// </summary>
+    public void RefreshOpenDuration(DateTimeOffset now)
+    {
+        if (Entry.LeftAt is not null)
+        {
+            return;
+        }
+
+        Entry.LastSeenAt = now;
+        OnPropertyChanged(nameof(TimeText));
+        OnPropertyChanged(nameof(DurationText));
+        OnPropertyChanged(nameof(TimeRangeText));
+        OnPropertyChanged(nameof(TimelineSummary));
+    }
 
     public string AvatarUrl
     {

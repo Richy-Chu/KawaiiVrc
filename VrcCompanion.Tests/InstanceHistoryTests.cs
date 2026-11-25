@@ -553,6 +553,112 @@ public sealed class InstanceHistoryTests : IDisposable
     }
 
     [Fact]
+    public void AHistoryPollWithNothingNewKeepsItsRows()
+    {
+        // Close() clears the collection, so everything stays on this thread.
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "poll-reuse.db"));
+        var start = DateTimeOffset.Now.AddHours(-12);
+        for (var index = 0; index < 200; index++)
+        {
+            var joined = start.AddMinutes(index * 2);
+            var location = $"wrld_{index:00000000}-1111-1111-1111-111111111111:12345~region(eu)";
+            var entry = InstanceHistoryStore.NewFromLog(Me, location, joined)!;
+            entry.WorldName = $"World {index}";
+            entry.WorldThumbnailUrl = $"https://example.test/{index}.png";
+            entry.WorldAuthorName = "Author";
+            entry.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+            for (var player = 0; player < 4; player++)
+            {
+                entry.GetOrAddPlayer(
+                    $"usr_{player}{index:00000000}-1111-1111-1111-111111111111",
+                    $"Player {player}").StartVisit(joined);
+            }
+
+            entry.Close(joined.AddMinutes(1));
+            store.Add(entry);
+        }
+
+        using var api = new VrcApiClient();
+        using var viewModel = new InstanceHistoryViewModel(api, store);
+        viewModel.SetAccount(new VrcUser { Id = Me, DisplayName = "Me" });
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+        Assert.Equal(200, viewModel.Entries.Count);
+        var rows = viewModel.Entries.ToArray();
+
+        // Polling the same store must not rebuild the rows: that was ~6 KB of
+        // garbage per row, every poll, for a history nobody changed.
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(rows.Length, viewModel.Entries.Count);
+        for (var index = 0; index < rows.Length; index++)
+        {
+            Assert.Same(rows[index], viewModel.Entries[index]);
+        }
+
+        Assert.True(
+            allocated < 64 * 1024,
+            $"An unchanged poll allocated {allocated:N0} B; it should not rebuild its rows.");
+    }
+
+    [Fact]
+    public void ANewHistoryEventStillRebuildsTheRows()
+    {
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "poll-change.db"));
+        var joined = DateTimeOffset.Now.AddHours(-1);
+        var entry = InstanceHistoryStore.NewFromLog(Me, LocationA, joined)!;
+        entry.WorldName = "Thunder Tavern";
+        entry.WorldThumbnailUrl = "https://example.test/world.png";
+        entry.WorldAuthorName = "Author";
+        entry.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+        store.Add(entry);
+
+        using var api = new VrcApiClient();
+        using var viewModel = new InstanceHistoryViewModel(api, store);
+        viewModel.SetAccount(new VrcUser { Id = Me, DisplayName = "Me" });
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+        var first = Assert.Single(viewModel.Entries);
+
+        var revisionBefore = store.Revision;
+        store.RecordPlayerEvent(
+            Me, LocationA, Other, "Other", string.Empty, true, joined.AddMinutes(5));
+        Assert.NotEqual(revisionBefore, store.Revision);
+
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+        var updated = Assert.Single(viewModel.Entries);
+        Assert.Contains(updated.Players, player => player.UserId == Other);
+        Assert.NotSame(first, updated);
+    }
+
+    [Fact]
+    public void ClosingTheHistoryPopupReleasesItsRowsAndReopeningRebuildsThem()
+    {
+        var store = new InstanceHistoryStore(Path.Combine(_directory, "close-releases.db"));
+        var joined = DateTimeOffset.Now.AddHours(-2);
+        var entry = InstanceHistoryStore.NewFromLog(Me, LocationA, joined)!;
+        entry.WorldName = "Thunder Tavern";
+        entry.WorldThumbnailUrl = "https://example.test/world.png";
+        entry.WorldAuthorName = "Author";
+        entry.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+        store.Add(entry);
+
+        using var api = new VrcApiClient();
+        using var viewModel = new InstanceHistoryViewModel(api, store);
+        viewModel.SetAccount(new VrcUser { Id = Me, DisplayName = "Me" });
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+        Assert.Single(viewModel.Entries);
+
+        viewModel.Close();
+        Assert.Empty(viewModel.Entries);
+        Assert.Null(viewModel.SelectedEntry);
+
+        // Reopening must not depend on the rows that were released.
+        viewModel.RefreshAsync().GetAwaiter().GetResult();
+        Assert.Single(viewModel.Entries);
+    }
+
+    [Fact]
     public void SameLocationHoursApartIsStoredAsTwoVisits()
     {
         var store = new InstanceHistoryStore(Path.Combine(_directory, "grouping.db"));

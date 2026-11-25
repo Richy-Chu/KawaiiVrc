@@ -47,6 +47,16 @@ public sealed class InstanceHistoryStore
 
     public string FilePath { get; }
 
+    private long _revision;
+
+    /// <summary>
+    /// Moves whenever stored history changes. The history screens rebuild every
+    /// row from this, so a poll that finds nothing new can skip the rebuild.
+    /// </summary>
+    public long Revision => Interlocked.Read(ref _revision);
+
+    private void BumpRevision() => Interlocked.Increment(ref _revision);
+
     /// <summary>
     /// VRCX-0 style SQLite database. It lives beside the old JSON file so the
     /// first launch can migrate that file without deleting it.
@@ -224,6 +234,7 @@ public sealed class InstanceHistoryStore
             WriteEntryEvents(connection, transaction, entry);
             transaction.Commit();
             _locationVersion++;
+            BumpRevision();
             InvalidateCache();
 
             return BuildEntries(connection, entry.AccountUserId)
@@ -254,6 +265,7 @@ public sealed class InstanceHistoryStore
 
                             transaction.Commit();
             _locationVersion++;
+            BumpRevision();
             InvalidateCache();
             return usable.Count;
         }
@@ -317,6 +329,7 @@ public sealed class InstanceHistoryStore
 
             transaction.Commit();
             _locationVersion++;
+            BumpRevision();
             return true;
         }
     }
@@ -447,7 +460,15 @@ public sealed class InstanceHistoryStore
             command.Parameters.AddWithValue("$userId", userId);
             command.Parameters.AddWithValue("$account", accountUserId);
             command.Parameters.AddWithValue("$display", displayName);
-            return command.ExecuteNonQuery();
+            var repaired = command.ExecuteNonQuery();
+            if (repaired > 0)
+            {
+                // Rows changed in place; a reader that skipped a rebuild would
+                // still show the name-only row.
+                BumpRevision();
+            }
+
+            return repaired;
         }
     }
 
@@ -557,6 +578,7 @@ public sealed class InstanceHistoryStore
 
             transaction.Commit();
             _locationVersion++;
+            BumpRevision();
             return entries.Count;
         }
     }
@@ -721,6 +743,7 @@ public sealed class InstanceHistoryStore
             UpsertLocation(connection, transaction, entry);
             transaction.Commit();
             _locationVersion++;
+            BumpRevision();
         }
     }
 
@@ -996,6 +1019,7 @@ public sealed class InstanceHistoryStore
             eventType,
             at);
         transaction.Commit();
+        BumpRevision();
     }
 
     private static void InsertEvent(
