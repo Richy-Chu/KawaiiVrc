@@ -275,7 +275,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
     private bool _cookieRestrictionActive;
     private bool _networkEnabled;
     private readonly HashSet<CoreWebView2DownloadOperation> _activeDownloads = new();
-    private const int SuspendDelayMilliseconds = 7000;
+    private const int SuspendDelayMilliseconds = 3000;
 
     // Test seam only; production leaves this null and shows the Save As dialog.
     internal static Func<string, string?>? DownloadPathProvider { get; set; }
@@ -367,6 +367,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
             {
                 _window.Closed += OnWindowClosed;
                 _window.StateChanged += OnWindowStateChanged;
+                _window.Deactivated += OnWindowDeactivated;
             }
         }
 
@@ -401,6 +402,7 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
         {
             _window.Closed -= OnWindowClosed;
             _window.StateChanged -= OnWindowStateChanged;
+            _window.Deactivated -= OnWindowDeactivated;
             _window = null;
         }
 
@@ -409,6 +411,19 @@ public partial class EmbeddedBrowser : UserControl, IEmbeddedBrowserAutomation
 
     private void OnWindowStateChanged(object? sender, EventArgs e)
         => UpdateMemoryTargetLevel();
+
+    private void OnWindowDeactivated(object? sender, EventArgs e)
+    {
+        // Losing focus lowers the renderer's target. Only a page nobody can see
+        // is disposed: ReleaseForMemory tears the WebView down, and _pendingUrl
+        // is already cleared once a page has navigated, so releasing a visible
+        // page would leave its section blank on the next focus.
+        UpdateMemoryTargetLevel();
+        if (!IsVisible)
+        {
+            ReleaseForMemory();
+        }
+    }
 
     private void OnBrowserNavigationRequested(string url)
     {

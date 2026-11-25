@@ -61,12 +61,12 @@ public sealed class VrcApiClient : IDisposable
     // Everything a session browses had a cache with no ceiling, so a long session kept every
     // profile, world and group it ever saw. These are ceilings, not budgets: the least recently
     // read response goes when one is reached, and the app stays flat over a day of use.
-    private const int MaxCachedWorlds = 1_000;
-    private const int MaxCachedProfiles = 2_000;
-    private const int MaxCachedMutuals = 1_000;
-    private const int MaxCachedUsers = 2_000;
-    private const int MaxCachedCosmetics = 32;
-    private const int MaxCachedGroupLists = 200;
+    private const int MaxCachedWorlds = 400;
+    private const int MaxCachedProfiles = 500;
+    private const int MaxCachedMutuals = 200;
+    private const int MaxCachedUsers = 500;
+    private const int MaxCachedCosmetics = 16;
+    private const int MaxCachedGroupLists = 60;
 
     private readonly BoundedCache<string, VrcWorld> _worldCache = new(MaxCachedWorlds, StringComparer.Ordinal);
     private readonly BoundedCache<string, VrcProfile> _profileCache = new(MaxCachedProfiles, StringComparer.Ordinal);

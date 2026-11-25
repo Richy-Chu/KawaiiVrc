@@ -29,6 +29,8 @@ public sealed class FriendAvatarStore
 
     private readonly object _sync = new();
     private readonly string _path;
+    private StoredFile? _cachedFile;
+    private DateTimeOffset? _cachedFileLastWrite;
 
     public FriendAvatarStore(string? path = null)
     {
@@ -484,12 +486,23 @@ public sealed class FriendAvatarStore
         {
             if (!File.Exists(_path))
             {
+                _cachedFile = null;
+                _cachedFileLastWrite = null;
                 return new StoredFile();
+            }
+
+            var lastWrite = File.GetLastWriteTimeUtc(_path);
+            if (_cachedFile is not null && _cachedFileLastWrite is { } lastCached &&
+                lastWrite == lastCached)
+            {
+                return _cachedFile;
             }
 
             var file = JsonSerializer.Deserialize<StoredFile>(File.ReadAllText(_path), JsonOptions);
             file ??= new StoredFile();
             file.Accounts ??= new Dictionary<string, StoredAccount>(StringComparer.Ordinal);
+            _cachedFile = file;
+            _cachedFileLastWrite = lastWrite;
             return file;
         }
         catch (Exception ex)
@@ -508,6 +521,18 @@ public sealed class FriendAvatarStore
         }
 
         AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(file, JsonOptions));
+
+        // Keep the in-memory cache in sync so the next LoadFile doesn't re-parse
+        // stale JSON from disk.
+        _cachedFile = file;
+        try
+        {
+            _cachedFileLastWrite = File.GetLastWriteTimeUtc(_path);
+        }
+        catch
+        {
+            _cachedFileLastWrite = null;
+        }
     }
 
     private sealed class StoredFile

@@ -6,9 +6,171 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 860 tests and takes about 2 minutes 25 seconds. CI builds with SDK 8, while a
+A full run is 908 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
+
+## Where the app stands
+
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.85**
+(`48f2219`), and every release from 1.0.78 on has been performance work: on a weak machine the
+window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
+thread. The changes below are load-bearing and several have no test under them, so read this before
+touching polling, image decoding, popups, the section cache or a list's panel.
+
+### What 1.0.78 - 1.0.85 changed
+
+- **Freezes are measured, not guessed.** `Services/UiJobTrace` names the periodic job in flight;
+  `Services/UiStallMonitor` logs any gap over 250 ms from a background-priority timer and reads the
+  UI thread's own processor time (`GetThreadTimes(GetCurrentThread())`). `MainWindow` subscribes
+  both in its constructor and disposes the monitor on close. It costs one stopwatch read and one
+  thread-time read per 100 ms tick, and allocates only when it reports.
+- **1.0.80** stopped calling `EmptyWorkingSet` on the background trim. Emptying the working set made
+  the process report a small footprint and then fault every trimmed page back in. The trim now only
+  drops the decoded-image cache (`ImageLoader.TrimMemory`), which is the memory that actually grows.
+- **1.0.83** moved both log readers off the UI thread: `MainViewModel.PollInstanceHistoryAsync` and
+  `InstanceViewModel.PollLogForChangesAsync` do the file work in `Task.Run`, stop overlap with a
+  bool (`_instanceHistoryPolling`, `_logPolling`), re-check sign-in after the await, and apply the
+  result back on the dispatcher. `VrChatLogPlayerService` and `InstanceHistoryRecorder` grew
+  `_gate`/`_gameGate` locks because a pool thread and the dispatcher now read the same snapshot.
+- **1.0.84 / 1.0.85** removed every `DropShadowEffect`. WPF rasterizes that blur in software and
+  re-rasterizes it whenever the surface moves, so each popup paid for it on every drag and every
+  layout pass. The panels keep the 1 px border and dimmed backdrop they already had. Nothing tests
+  this, so the check is the grep: `DropShadowEffect` must not appear under `VrcCompanion/`.
+- **1.0.84 lite mode** now also caps every picture decode at 256 px (`ImageLoader.LiteDecodeWidth`
+  through `ClampDecodeWidth`, 32 px floor), drops the friend safety-net poll from 10 s to 30 s, and
+  keeps one cached section view instead of two. It already stopped the aurora animation and the
+  image fade (`Controls/AuroraBackdrop`, `AsyncImage`, `CosmeticImage`).
+- **1.0.84** replaced the friend list's per-poll change detection. It used to concatenate every
+  row's fields into one string every ten seconds to conclude nothing had changed - a six-figure
+  allocation per poll on a large account. It is a 64-bit FNV-1a hash now
+  (`MainViewModel.FriendsSignature`) and allocates nothing.
+- **1.0.84** routed the activity rows through a `VirtualizingStackPanel`.
+
+### What 1.0.86 changed
+
+- **Image cache reduced in lite mode.** `ImageLoader` normal mode stays 24 MB / 48 entries; lite mode drops to 8 MB / 16 entries, animation cache 12 MB → 4 MB / 8 → 2 entries, 32 → 8 frames, 512 → 256 px max dimension. The ceilings are read from `AppPerformance.LiteMode` on each check rather than captured once, so the Settings toggle applies without a restart, and `MemoryCacheLimitBytes` stays the normal 24 MB the test pins.
+- **Background trim more aggressive.** `MainWindow._backgroundTrimTimer` runs every 10 s (was 15 s). `ImageLoader.Shared.TrimMemory()` is called the moment the window is minimized, and deliberately not on `Deactivated`: deactivation fires on every click into another window, so clearing the decoded cache there makes the next focus re-decode everything on screen to save at most the ten seconds the trim timer would have waited.
+- **Section cache unchanged.** `MaxCachedSectionViews` stays 2 normal / 1 lite. Do not reduce further: `MainWindowLayoutTests` pins focus-mode persistence across section switches, and `AvatarTabSwitchTests` pins the two-section leave/release behavior.
+- **API cache ceilings reduced.** `VrcApiClient` bounded caches shrank: worlds 1000→400, profiles 2000→500, mutuals 1000→200, users 2000→500, cosmetics 32→16, group lists 200→60. These are ceilings, not budgets; `BoundedCache` evicts LRU.
+- **Polling intervals slowed.** Activity poll 10 s → 30 s (lite 30 s → 60 s), bio poll 10 s → 30 s, instance history 5 s → 15 s, clock 20 s → 60 s. The clock skips updates while minimized; instance history and activity/bio polls already return early when minimized. Realtime websocket remains the primary path; polls are safety nets.
+- **Theme brushes no longer leak.** `MainWindow.ApplyKawaiiTheme` tracks created brush keys, removes old brushes from `Resources` before adding replacements, and freezes all brushes. Previously each accent change leaked `SolidColorBrush`/`LinearGradientBrush` objects into the resource dictionary.
+- **FriendAvatarStore caches parsed JSON.** `LoadFile()` keeps the deserialized `StoredFile` in memory with a last-write-time check, re-reading from disk only when the file changes. `WriteFile()` updates the cache in sync. Avoids re-parsing the entire friend-avatar JSON on every poll.
+- **WebView2 suspends sooner.** `EmbeddedBrowser.SuspendDelayMilliseconds` dropped 7000 ms → 3000 ms. Losing focus lowers the renderer's memory target, and `OnWindowDeactivated` calls `ReleaseForMemory()` only when the page is hidden. Do not call it unconditionally: it disposes the WebView, and `_pendingUrl` is already cleared once a page has navigated, so releasing a visible page would leave its section blank on the next focus.
+- **Timers pause when minimized.** Clock timer skips `OnPropertyChanged` while minimized; instance history poll returns early when minimized.
+
+### Do not undo these
+
+1. **No `DropShadowEffect`.** If a panel now reads as too flat, give it a baked edge - a second
+   `Border` or a thicker `BorderBrush` - rather than restoring the blur.
+2. **Lite mode stays one switch.** `AppPerformance.LiteMode` is the single truth, persisted as
+   `CompanionSettings.LiteMode` (`bool?`, null means auto-detect from `RenderCapability.Tier` below
+   tier 2) and applied through `AppPerformance.Apply`/`Set`. `Set` raises `Changed` on the calling
+   thread; `MainWindow.OnPerformanceChanged` marshals to the dispatcher and evicts pages down to the
+   new `MaxCachedSectionViews`, and `MainViewModel.ApplyPerformanceProfile` restarts the activity
+   timer with the new interval. Do not add a second "low spec" flag: two switches will disagree and
+   the one nobody wired is the one a user turns on.
+3. **Every new decode path clamps.** Call `ImageLoader.ClampDecodeWidth` before decoding, or lite
+   mode's biggest memory win is lost for that call site. `AppPerformanceTests` pins the clamp.
+4. **Log, file and network reads stay off the UI thread.** Follow the 1.0.83 shape: `Task.Run` the
+   blocking part, a bool to stop overlap, re-check the account after the await, apply on the
+   dispatcher. A job that runs on the UI thread and can exceed `UiJobTrace.SlowJobMilliseconds`
+   (200 ms) belongs in `UiJobTrace.Shared.Begin("name")`, so a freeze names it.
+5. **Do not re-add `EmptyWorkingSet` or `SetProcessWorkingSetSize`.** They shrink the reported
+   working set and slow the app down.
+6. **`FriendsSignature` stays a hash**, over the same fields as before.
+7. **Page cache changes go through `MaxCachedSectionViews` and `EvictSectionView`.** Eviction calls
+   `ReleaseBrowsers` to drop the page's WebView2s; skipping it leaves a hidden browser running.
+8. **WebView2 suspension already exists.** `Controls/EmbeddedBrowser` suspends a hidden page with
+   `TrySuspendAsync` after 7 seconds (now 3), sets a low memory target while hidden, and releases the
+   whole WebView when the section is evicted. Do not add a second suspension mechanism.
+
+### Virtualization: what is real and what is not
+
+- `Controls/VirtualizingWrapPanel` is a real virtualizing panel for fixed-width card grids. It finds
+  the page's `ScrollViewer`, keeps only the cards in the viewport plus `CacheViewports`, and reports
+  the full height so the page scrollbar stays honest. The worlds list and all three avatar grids use
+  it, and `AvatarTabSwitchTests` finds it there. Its `EstimatedItemHeight` is the card's measured
+  height: if a card's layout changes, update that number or the scrollbar and the realized band
+  drift.
+- The **activity feed is not actually virtualized**. `ActivityFeedViewModel.PageSize` is 25 and the
+  list uses a `VirtualizingStackPanel`, but it sits in a `StackPanel` inside the page's
+  `ScrollViewer`, so it is measured at infinite height and realizes all 25 rows. That is safe at 25
+  rows and is why the panel choice changed nothing on screen; it is not a claim that a much longer
+  feed would stay cheap.
+- The **media library is paged, not virtualized**, on purpose: 48 fixed `MediaCard` slots in
+  `MediaLibraryViewModel.PageCards`, reused across pages. Do not turn it into an unbounded
+  collection.
+- Every other `WrapPanel` in the window is a short chip, tag or filter list. Leave it: a virtualizing
+  panel there buys nothing and changes focus order and hit-testing.
+
+### Open work
+
+1. **Confirm the freezes are gone.** The 1.0.80 log had 26 stalls of 5.2-6.1 s in about nine
+   minutes, `activity-poll` at an average 1480 ms, and `instance-history` at 238-299 ms on the UI
+   thread. No 1.0.85 log has been read yet. Ask the user for
+   `%LOCALAPPDATA%\VrcCompanion\lifecycle.log` - reading it is safe; launching the app is not, it
+   writes the real profile - then compare against those numbers.
+2. **The activity feed could be truly virtualized**, but only by restructuring the page: give the
+   list its own bounded scroll host (a `*` row in the page grid, with the header and filters outside
+   it) or a row-oriented viewport-aware panel. Paging must survive: `ActivityFeedViewModel.PageToken`
+   and `Behaviors/ScrollViewerBehavior` are what reset the scroll when the page changes, and the
+   pager drives `PreviousPageCommand`/`NextPageCommand`. Ship it as its own change, with a test that
+   paging still resets scroll, and check the wheel and the nested scrolling by hand. Do not do it as
+   a drive-by while fixing something else.
+3. **Look at the six panels that lost their shadow** - notification detail, boop preview, group
+   details, friend detail, avatar detail, and the browser shields panel. None were inspected on
+   screen after the change, because that needs the GUI. If one reads as detached from its backdrop,
+   add a baked border rather than the blur.
+
+The records of the pass are in `artifacts/`: `test-run-1083.log` to `test-run-1085.log`, and
+`release-notes-1.0.83.md` to `release-notes-1.0.85.md`, which say what each release claimed and what
+it left undone. Read those instead of trusting a summary.
+
+## Reading a freeze from the lifecycle log
+
+`%LOCALAPPDATA%\VrcCompanion\lifecycle.log`, written through
+`UserDataPaths.Combine("lifecycle.log")`. The lines that matter:
+
+    ui stall 5420ms cpu=5310ms of 5420ms burning cpu across activity-poll
+    ui stall 1180ms cpu=21ms of 1180ms blocked across realtime
+    ui job instance-history 274ms
+    window-ready 812ms
+
+`cpu=` is the UI thread's own processor time inside the gap: at or above 75 % of the gap the line
+says `burning cpu`, at or below 15 % `blocked`, between the two `mixed`, and `unknown` when the
+clock could not be read. A slow `ui job` line is wall-clock across its awaits, not UI-thread time: a
+1480 ms `activity-poll` whose parse is in `Task.Run` is mostly waiting, so the `cpu=` reading on the
+stall line is what decides whether the thread was doing the work.
+
+## Releasing
+
+Bump `<Version>` in `VrcCompanion/VrcCompanion.csproj` in the change that ships, write
+`artifacts/release-notes-<version>.md` (it becomes the release body, so keep its "honest notes"
+honest about what is still paged or unverified), commit, push, wait for green, then:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/pack-release.ps1 `
+        -Version 1.0.86 -NotesFile artifacts/release-notes-1.0.86.md
+
+The script needs a clean tree, a pushed `HEAD` and a csproj version that matches, and it builds,
+packages a delta against the previous release and uploads. It takes about three minutes and outlives
+a single foreground command: run it in the background to a log and poll the log. Afterwards
+`-VerifyOnly` re-checks feed/asset parity and the delta chain without publishing.
+
+Known failure modes: a transient `gh` 401 during publish leaves a packed version in
+`artifacts/releases`, which blocks `vpk pack` on the retry - move that output aside first; a
+transient `gh` failure on an older release makes verification exit 3, which `-VerifyOnly` clears
+when the release itself is fine.
+
+Checks on a commit:
+
+    gh api "repos/Richy-Chu/KawaiiVrc/actions/runs?head_sha=<sha>" \
+        --jq '.workflow_runs[] | "\(.name):\(.status):\(.conclusion)"'
+
+`test-suite.yml` runs on every push; `lint-workflows.yml` only on paths under `VrcCompanion.Tests/`,
+`build/` or `.github/workflows/`, so a commit that touches only app XAML gets no lint run - that is
+the path filter, not a failure. `release-verify.yml` runs nightly against the published releases.
+Never weaken a test to get a workflow green.
 
 ## Never write to the real profile
 
@@ -17,6 +179,10 @@ reaches it can clear the real saved session and sign the user out. Test stores g
 seams in `VrcCompanion/Services` (`UserDataPaths`, `VrcLogPaths`), which the module initializer
 points at a scratch folder before any test runs. Do not add a store that builds the profile
 path itself: `ProfileIsolationTests` scans every production source file for that.
+
+The same rule covers a manual check: launching the app writes that folder, so a visual check of the
+window is the user's to run, not the agent's. Reading `lifecycle.log` and `crash.log` from there is
+safe and is how a freeze is diagnosed.
 
 `RealProfileWatch` records the real profile in the module initializer and compares it when the
 suite ends. The verdict is printed from
@@ -204,7 +370,7 @@ has gone untouched for the hour, which is how a reused pid stops keeping litter.
 `build/test-profile-guard-red.ps1`, which requires one filtered run to exit 1 on a fabricated
 baseline.
 
-`test-suite.yml` runs on every push and is the only job that runs all 865 tests. When a test
+`test-suite.yml` runs on every push and is the only job that runs all 908 tests. When a test
 fails, `build/retry-failed-tests.ps1` re-runs only the failed tests once: it plans the filter
 from the run's `trx`, reports what passed on retry as a warning and in the step summary, and the
 job stays green - a flaky test must not redden an otherwise good commit, but it must not be

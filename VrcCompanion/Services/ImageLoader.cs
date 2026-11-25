@@ -37,14 +37,18 @@ public sealed class ImageLoader : IDisposable
     private readonly object _animationGate = new();
     // Keep enough visible artwork cached for smooth scrolling without letting
     // a long browsing session grow the WPF and GPU memory footprint forever.
-    private const long MaxMemoryBytes = 24L * 1024 * 1024;
-    private const int MaxMemoryEntries = 48;
-    private const long MaxAnimationBytes = 12L * 1024 * 1024;
-    private const int MaxAnimationEntries = 8;
-    private const int MaxAnimationFrames = 32;
-    private const int MaxAnimationDimension = 512;
-
-    internal static long MemoryCacheLimitBytes => MaxMemoryBytes;
+    // Read on every check instead of captured once: the Settings toggle has to
+    // apply without a restart, and a static initializer would also let whichever
+    // mode happened to be set first decide the ceiling for the whole process.
+    // Lite mode keeps a quarter of the normal ceiling, so MemoryCacheLimitBytes
+    // is the normal ceiling the tests pin and every lite ceiling sits below it.
+    internal const long MemoryCacheLimitBytes = 24L * 1024 * 1024;
+    private static long MaxMemoryBytes => AppPerformance.LiteMode ? 8L * 1024 * 1024 : MemoryCacheLimitBytes;
+    private static int MaxMemoryEntries => AppPerformance.LiteMode ? 16 : 48;
+    private static long MaxAnimationBytes => AppPerformance.LiteMode ? 4L * 1024 * 1024 : 12L * 1024 * 1024;
+    private static int MaxAnimationEntries => AppPerformance.LiteMode ? 2 : 8;
+    private static int MaxAnimationFrames => AppPerformance.LiteMode ? 8 : 32;
+    private static int MaxAnimationDimension => AppPerformance.LiteMode ? 256 : 512;
 
     internal long MemoryCacheBytes
     {
@@ -758,10 +762,6 @@ public sealed class ImageLoader : IDisposable
     }
 
     /// <summary>
-    /// Drops decoded artwork while the app is in the background. The disk cache
-    /// keeps the next visit fast without holding native WPF surfaces resident.
-    /// </summary>
-    /// <summary>
     /// Lite mode caps every decode at the size a row can actually show. Nothing in the UI draws
     /// a thumbnail wider than a few hundred pixels, so a 1024 px source is work and resident
     /// memory the window never gets back - multiplied by every media card, friend row and
@@ -775,6 +775,10 @@ public sealed class ImageLoader : IDisposable
         return AppPerformance.LiteMode ? Math.Min(width, LiteDecodeWidth) : width;
     }
 
+    /// <summary>
+    /// Drops decoded artwork while the app is in the background. The disk cache
+    /// keeps the next visit fast without holding native WPF surfaces resident.
+    /// </summary>
     public void TrimMemory()
     {
         lock (_memoryGate)

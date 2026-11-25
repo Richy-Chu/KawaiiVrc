@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private bool _settleScheduled;
     private DateTimeOffset _lastSettleAt = DateTimeOffset.MinValue;
     private readonly List<string> _sectionOrder = new();
+    private readonly HashSet<string> _themeBrushKeys = new();
     // Every cached section view keeps its whole visual tree, item containers
     // and decoded images alive. Two is enough to keep back-and-forth snappy
     // without paying for tabs visited long ago.
@@ -85,7 +86,7 @@ public partial class MainWindow : Window
         // background for a while; it pages back in on the next activation.
         _backgroundTrimTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromSeconds(15)
+            Interval = TimeSpan.FromSeconds(10)
         };
         _backgroundTrimTimer.Tick += OnBackgroundTrimTick;
         AppPerformance.Changed += OnPerformanceChanged;
@@ -589,19 +590,39 @@ public partial class MainWindow : Window
     private void ApplyKawaiiTheme()
     {
         var chatbox = _viewModel.ChatboxViewModel;
-        Resources["KawaiiAccentBrush"] = new SolidColorBrush(chatbox.KawaiiAccentColor);
-        Resources["KawaiiAccentSoftBrush"] = new SolidColorBrush(chatbox.KawaiiAccentSoftColor);
-        Resources["KawaiiHeaderStartBrush"] = new SolidColorBrush(chatbox.KawaiiHeaderStartColor);
-        Resources["KawaiiHeaderEndBrush"] = new SolidColorBrush(chatbox.KawaiiHeaderEndColor);
-        Resources["KawaiiHeaderTextBrush"] = new SolidColorBrush(chatbox.KawaiiHeaderTextColor);
-        Resources["KawaiiPanelBrush"] = new SolidColorBrush(chatbox.KawaiiPanelColor);
-        Resources["KawaiiBorderBrush"] = new SolidColorBrush(chatbox.KawaiiBorderColor);
-        Resources["KawaiiChipBrush"] = new SolidColorBrush(chatbox.KawaiiChipColor);
-        Resources["KawaiiMutedBrush"] = new SolidColorBrush(chatbox.KawaiiMutedColor);
-        Resources["KawaiiShellBrush"] = new SolidColorBrush(chatbox.KawaiiShellColor);
-        Resources["KawaiiTabStripBrush"] = new SolidColorBrush(chatbox.KawaiiTabStripColor);
-        Resources["KawaiiListBrush"] = new SolidColorBrush(chatbox.KawaiiListColor);
-        Resources["KawaiiHeaderBrush"] = new LinearGradientBrush
+
+        // Remove old theme brushes so they don't accumulate in the resource
+        // dictionary on every accent change.
+        foreach (var key in _themeBrushKeys)
+        {
+            Resources.Remove(key);
+        }
+        _themeBrushKeys.Clear();
+
+        var brushes = new Dictionary<string, Brush>
+        {
+            { "KawaiiAccentBrush", new SolidColorBrush(chatbox.KawaiiAccentColor) },
+            { "KawaiiAccentSoftBrush", new SolidColorBrush(chatbox.KawaiiAccentSoftColor) },
+            { "KawaiiHeaderStartBrush", new SolidColorBrush(chatbox.KawaiiHeaderStartColor) },
+            { "KawaiiHeaderEndBrush", new SolidColorBrush(chatbox.KawaiiHeaderEndColor) },
+            { "KawaiiHeaderTextBrush", new SolidColorBrush(chatbox.KawaiiHeaderTextColor) },
+            { "KawaiiPanelBrush", new SolidColorBrush(chatbox.KawaiiPanelColor) },
+            { "KawaiiBorderBrush", new SolidColorBrush(chatbox.KawaiiBorderColor) },
+            { "KawaiiChipBrush", new SolidColorBrush(chatbox.KawaiiChipColor) },
+            { "KawaiiMutedBrush", new SolidColorBrush(chatbox.KawaiiMutedColor) },
+            { "KawaiiShellBrush", new SolidColorBrush(chatbox.KawaiiShellColor) },
+            { "KawaiiTabStripBrush", new SolidColorBrush(chatbox.KawaiiTabStripColor) },
+            { "KawaiiListBrush", new SolidColorBrush(chatbox.KawaiiListColor) },
+        };
+
+        foreach (var pair in brushes)
+        {
+            pair.Value.Freeze();
+            Resources[pair.Key] = pair.Value;
+            _themeBrushKeys.Add(pair.Key);
+        }
+
+        var gradient = new LinearGradientBrush
         {
             StartPoint = new Point(0, 0),
             EndPoint = new Point(1, 1),
@@ -612,6 +633,9 @@ public partial class MainWindow : Window
                 new GradientStop(chatbox.KawaiiHeaderEndColor, 1)
             }
         };
+        gradient.Freeze();
+        Resources["KawaiiHeaderBrush"] = gradient;
+        _themeBrushKeys.Add("KawaiiHeaderBrush");
     }
 
     private static Color BlendColor(Color from, Color to, double amount)
@@ -1075,6 +1099,7 @@ public partial class MainWindow : Window
         if (WindowState == WindowState.Minimized)
         {
             _backgroundTrimTimer.Start();
+            ImageLoader.Shared.TrimMemory();
         }
         else if (IsActive)
         {

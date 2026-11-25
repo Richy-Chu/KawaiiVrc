@@ -506,9 +506,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         _clockTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromSeconds(20)
+            Interval = TimeSpan.FromSeconds(60)
         };
-        _clockTimer.Tick += (_, _) => OnPropertyChanged(nameof(ClockText));
+        _clockTimer.Tick += (_, _) =>
+        {
+            if (!IsMainWindowMinimized())
+            {
+                OnPropertyChanged(nameof(ClockText));
+            }
+        };
         _clockTimer.Start();
 
         ClearErrorCommand = Track(new RelayCommand(ClearError));
@@ -2737,7 +2743,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ActivityFeedViewModel.RefreshRequested = LoadAllFriendsAsync;
         _instanceHistoryTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromSeconds(5)
+            Interval = TimeSpan.FromSeconds(15)
         };
         _instanceHistoryTimer.Tick += (_, _) => PollInstanceHistory();
         _instanceHistoryTimer.Start();
@@ -2745,10 +2751,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _activityPollTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             // Realtime is the primary path. This poll is the safety net for
-            // missed pipeline events, so it has to run on every tab and much
-            // faster than the old 30-second Activity-only tick. Ten seconds
-            // keeps that job while halving the full friend fetch it costs.
-            Interval = TimeSpan.FromSeconds(10)
+            // missed pipeline events, so it has to run on every tab but slower
+            // than the old ten-second tick to cut allocation and CPU on the UI thread.
+            Interval = TimeSpan.FromSeconds(30)
         };
         _activityPollTimer.Tick += OnActivityPollTick;
         _activityPollTimer.Start();
@@ -2761,7 +2766,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // events do not carry bio, so a periodic profile read is required.
             // Each tick is an API call and a persisted baseline, so keep it slow
             // enough that a large friend list is worked through instead of hammered.
-            Interval = TimeSpan.FromSeconds(10)
+            Interval = TimeSpan.FromSeconds(30)
         };
         _bioPollTimer.Tick += OnBioPollTick;
         _bioPollTimer.Start();
@@ -3215,7 +3220,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var interval = TimeSpan.FromSeconds(AppPerformance.LiteMode ? 30 : 10);
+        var interval = TimeSpan.FromSeconds(AppPerformance.LiteMode ? 60 : 30);
         if (timer.Interval != interval)
         {
             timer.Interval = interval;
@@ -5928,7 +5933,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         // One pass at a time: a slow disk must not stack polls behind itself, and every pass
         // would be reading a log that has not moved yet.
-        if (_instanceHistoryPolling || !IsLoggedIn || CurrentUser is null)
+        if (_instanceHistoryPolling || !IsLoggedIn || CurrentUser is null || IsMainWindowMinimized())
         {
             return;
         }
