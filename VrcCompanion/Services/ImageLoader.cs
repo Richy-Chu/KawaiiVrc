@@ -748,7 +748,7 @@ public sealed class ImageLoader : IDisposable
     /// avoids the managed copy of the whole frame this used to make, which for a 2048 px frame
     /// was a 16 MB large-object allocation per image.
     /// </summary>
-    private static BitmapSource ToBitmapSource(SKBitmap bitmap)
+    internal static BitmapSource ToBitmapSource(SKBitmap bitmap)
     {
         var image = BitmapSource.Create(
             bitmap.Width,

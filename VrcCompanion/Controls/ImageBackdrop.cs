@@ -3,17 +3,20 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
-using WpfAnimatedGif;
+using System.Windows.Threading;
+using SkiaSharp;
+using VrcCompanion.Services;
 
 namespace VrcCompanion.Controls;
 
 /// <summary>
 /// Full-window custom background from a PNG, JPEG, WebP, or animated GIF.
 ///
-/// Derives from Image so WPF's own GIF decoder drives the animation. WPF's
-/// Image control handles palettes, transparency, disposal methods, and partial
-/// frames correctly — far more reliable than manual frame extraction. When
-/// Animate is false the BitmapImage is frozen so only the first frame shows.
+/// A still is a frozen <see cref="BitmapImage"/>. An animation is decoded by Skia into frozen
+/// frames at the width the wallpaper is drawn at, and a timer shows one frame at a time.
+/// WpfAnimatedGif used to drive the animation, but it keeps a writeable copy of every frame on
+/// top of the decoded frames - measured at 148 writeable bitmaps (about 45 MB) for the shipped
+/// 66-frame wallpaper - while WPF's own decoder was asked for every frame at once.
 /// </summary>
 public sealed class ImageBackdrop : Image
 {
@@ -22,19 +25,27 @@ public sealed class ImageBackdrop : Image
     // than a still wallpaper; motion hides the difference and the saving is large.
     private const int MaxAnimatedBackdropDecodeWidth = 1280;
     // A decorative wallpaper is drawn inside the window, so asking for more pixels than the file
-    // has only upscales it: WPF decoded a 280x275 GIF at 1280x1257 when told 1280, and
-    // WpfAnimatedGif holds every frame of an animation decoded at once, so that one 0.9 MB file
-    // was about 405 MB of the process. The decode stops at the source width now, and a long
-    // animation is held to a total frame budget as well.
+    // has only upscales it: WPF decoded a 280x275 GIF at 1280x1257 when told 1280, which was
+    // about 405 MB of frames for that one 0.9 MB file. The decode stops at the source width now,
+    // and a long animation is held to a frame budget as well.
     private const int MinAnimatedBackdropDecodeWidth = 320;
     internal const long AnimatedBackdropFrameBudgetBytes = 96L * 1024 * 1024;
+    // Long animations give up frames rather than resolution: the budget already shrinks the
+    // decode width, and past this many frames the picture would be a blur before it fits.
+    internal const int MaxAnimatedBackdropFrames = 96;
     private const double AnimationSpeedRatio = 0.75;
+    private const int DefaultFrameMilliseconds = 100;
+    private const int MinFrameDelayMilliseconds = 20;
+    private const int MaxFrameDelayMilliseconds = 10_000;
 
     private Window? _window;
     private bool _isActive = true;
     private string? _loadedPath;
     private bool _loadedAnimate;
     private bool _isLoaded;
+    private readonly DispatcherTimer _timer;
+    private AnimatedImageData? _animation;
+    private int _frameIndex;
 
     public static readonly DependencyProperty SourcePathProperty = DependencyProperty.Register(
         nameof(SourcePath),
@@ -60,6 +71,10 @@ public sealed class ImageBackdrop : Image
     {
         IsHitTestVisible = false;
         ClipToBounds = true;
+        // Render priority matches the decoration animations: a background a frame behind is
+        // invisible, and it keeps playback from holding up layout.
+        _timer = new DispatcherTimer(DispatcherPriority.Render);
+        _timer.Tick += OnFrameTick;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         IsVisibleChanged += OnIsVisibleChanged;
@@ -109,13 +124,18 @@ public sealed class ImageBackdrop : Image
             var isGif = string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase);
             var info = ReadImageInfo(path);
 
+            // Only the frames that are actually kept count against the budget, so a very long
+            // animation is thinned out instead of being shrunk to an unreadable strip.
+            var frames = info is { } known
+                ? Math.Min(known.Frames, MaxAnimatedBackdropFrames)
+                : MaxAnimatedBackdropFrames;
             var animationWidth = isGif && Animate
                 ? info is { } gif
                     ? AnimatedBackdropWidth(
                         MaxAnimatedBackdropDecodeWidth,
                         gif.Width,
                         gif.Height,
-                        gif.Frames)
+                        frames)
                     : MaxAnimatedBackdropDecodeWidth
                 : 0;
 
@@ -123,26 +143,16 @@ public sealed class ImageBackdrop : Image
             // animating it would cost hundreds of megabytes for a background.
             if (isGif && Animate && animationWidth > 0)
             {
-                // WPF's BitmapImage alone renders only the first GIF frame.
-                // ImageBehavior drives the frames; 75% keeps the motion close to
-                // natural without triggering the much costlier full-rate path.
-                ImageBehavior.SetAnimationSpeedRatio(this, AnimationSpeedRatio);
-                var animation = new BitmapImage();
-                animation.BeginInit();
-                animation.CacheOption = BitmapCacheOption.OnLoad;
-                animation.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
-                animation.UriSource = new Uri(path, UriKind.Absolute);
-                animation.DecodePixelWidth = animationWidth;
-                animation.EndInit();
-                ImageBehavior.SetAnimatedSource(this, animation);
-                _loadedPath = path;
-                _loadedAnimate = Animate;
-                _isLoaded = true;
-                QueueAnimationStateUpdate();
-                return;
+                // Decoding the whole animation is a one-time cost at load, the same work WPF's
+                // decoder did here before, and it holds only the frames that are kept.
+                var animation = DecodeAnimation(path, animationWidth, frames);
+                if (animation is { Frames.Count: > 0 })
+                {
+                    ShowAnimation(animation, path);
+                    return;
+                }
             }
 
-            ImageBehavior.SetAnimatedSource(this, null);
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
@@ -159,6 +169,9 @@ public sealed class ImageBackdrop : Image
 
             // A frozen bitmap only ever shows the first frame.
             image.Freeze();
+            _timer.Stop();
+            _animation = null;
+            _frameIndex = 0;
             Source = image;
             _loadedPath = path;
             _loadedAnimate = Animate;
@@ -171,10 +184,56 @@ public sealed class ImageBackdrop : Image
         }
     }
 
+    private void ShowAnimation(AnimatedImageData animation, string path)
+    {
+        _timer.Stop();
+        _animation = animation;
+        _frameIndex = 0;
+        _loadedPath = path;
+        _loadedAnimate = Animate;
+        _isLoaded = true;
+        ShowCurrentFrame();
+        UpdateAnimationState();
+    }
+
+    private void ShowCurrentFrame()
+    {
+        if (_animation is not { Frames.Count: > 0 } animation)
+        {
+            return;
+        }
+
+        _frameIndex %= animation.Frames.Count;
+        Source = animation.Frames[_frameIndex];
+
+        var duration = _frameIndex < animation.Durations.Count
+            ? animation.Durations[_frameIndex]
+            : DefaultFrameMilliseconds;
+        // WpfAnimatedGif played this at 75% speed; keep the motion people already saw.
+        _timer.Interval = TimeSpan.FromMilliseconds(
+            Math.Clamp(
+                duration / AnimationSpeedRatio,
+                MinFrameDelayMilliseconds,
+                MaxFrameDelayMilliseconds));
+    }
+
+    private void OnFrameTick(object? sender, EventArgs e)
+    {
+        if (_animation is not { Frames.Count: > 1 } animation)
+        {
+            _timer.Stop();
+            return;
+        }
+
+        _frameIndex = (_frameIndex + 1) % animation.Frames.Count;
+        ShowCurrentFrame();
+    }
+
     private void ReleaseImage()
     {
-        ImageBehavior.GetAnimationController(this)?.Pause();
-        ImageBehavior.SetAnimatedSource(this, null);
+        _timer.Stop();
+        _animation = null;
+        _frameIndex = 0;
         Source = null;
         _loadedPath = null;
         _isLoaded = false;
@@ -208,7 +267,7 @@ public sealed class ImageBackdrop : Image
     internal static int ClampBackdropWidth(int requestedWidth, int sourceWidth)
         => sourceWidth > 0 ? Math.Min(requestedWidth, sourceWidth) : requestedWidth;
 
-    /// <summary>Resident bytes of one decoded animation, at the size WPF will decode it to.</summary>
+    /// <summary>Resident bytes of one decoded animation, at the size it is decoded to.</summary>
     internal static long FrameMemoryBytes(
         int width,
         int sourceWidth,
@@ -226,9 +285,8 @@ public sealed class ImageBackdrop : Image
 
     /// <summary>
     /// The width an animated backdrop is decoded at, or 0 when the animation cannot fit the frame
-    /// budget even at the smallest useful width - such a GIF is shown as a still. WpfAnimatedGif
-    /// keeps every frame decoded at once, so what a long GIF costs grows with its frame count and
-    /// its decoded size, not with the size it is drawn at.
+    /// budget even at the smallest useful width - such a GIF is shown as a still. What an animation
+    /// costs grows with its frame count and its decoded size, not with the size it is drawn at.
     /// </summary>
     internal static int AnimatedBackdropWidth(
         int requestedWidth,
@@ -262,6 +320,121 @@ public sealed class ImageBackdrop : Image
         bool Fits(int candidate) =>
             FrameMemoryBytes(candidate, sourceWidth, sourceHeight, frameCount)
                 <= AnimatedBackdropFrameBudgetBytes;
+    }
+
+    /// <summary>Every how many source frames one kept frame stands for; 1 keeps them all.</summary>
+    internal static int AnimationFrameStride(int frameCount, int maxFrames)
+        => frameCount <= 0 || maxFrames <= 0
+            ? 1
+            : Math.Max(1, (frameCount + maxFrames - 1) / maxFrames);
+
+    /// <summary>
+    /// Decodes an animated file's frames at the width the wallpaper is drawn at, keeping at most
+    /// <paramref name="maxFrames"/> of them. Each kept frame stands in for the frames that were
+    /// dropped after it, so the loop plays for as long as the file asked.
+    /// </summary>
+    internal static AnimatedImageData? DecodeAnimation(string path, int decodeWidth, int maxFrames)
+    {
+        try
+        {
+            return DecodeAnimation(File.ReadAllBytes(path), decodeWidth, maxFrames);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    internal static AnimatedImageData? DecodeAnimation(byte[] bytes, int decodeWidth, int maxFrames)
+    {
+        try
+        {
+            using var stream = new SKMemoryStream(bytes);
+            using var codec = SKCodec.Create(stream);
+            if (codec is null || codec.Info.Width <= 0 || codec.Info.Height <= 0)
+            {
+                return null;
+            }
+
+            var sourceWidth = codec.Info.Width;
+            var sourceHeight = codec.Info.Height;
+            var targetWidth = ClampBackdropWidth(decodeWidth, sourceWidth);
+            var targetHeight = Math.Max(
+                1,
+                (int)Math.Round(sourceHeight * (targetWidth / (double)sourceWidth)));
+            var sourceInfo = new SKImageInfo(
+                sourceWidth,
+                sourceHeight,
+                SKColorType.Bgra8888,
+                SKAlphaType.Premul);
+            var targetInfo = new SKImageInfo(
+                targetWidth,
+                targetHeight,
+                SKColorType.Bgra8888,
+                SKAlphaType.Premul);
+            var frameCount = Math.Max(1, codec.FrameCount);
+            var stride = AnimationFrameStride(frameCount, maxFrames);
+            var frameInfo = codec.FrameInfo;
+
+            using var framePixels = new SKBitmap(sourceInfo);
+            framePixels.Erase(SKColors.Transparent);
+            var frames = new List<BitmapSource>();
+            var durations = new List<int>();
+
+            for (var index = 0; index < frameCount; index++)
+            {
+                // Passing the previous frame lets the codec composite disposal and
+                // partial-frame updates instead of returning isolated rectangles.
+                var options = new SKCodecOptions(index, index > 0 ? index - 1 : -1);
+                if (codec.GetPixels(sourceInfo, framePixels.GetPixels(), options) != SKCodecResult.Success)
+                {
+                    continue;
+                }
+
+                var duration = frameInfo is not null && index < frameInfo.Length
+                    ? Math.Clamp(frameInfo[index].Duration, MinFrameDelayMilliseconds, MaxFrameDelayMilliseconds)
+                    : DefaultFrameMilliseconds;
+
+                if (index % stride != 0 || frames.Count >= maxFrames)
+                {
+                    // A dropped frame still takes time: the kept frame before it stays on screen,
+                    // so the loop keeps the file's length instead of speeding up.
+                    if (durations.Count > 0)
+                    {
+                        durations[^1] = Math.Min(MaxFrameDelayMilliseconds, durations[^1] + duration);
+                    }
+
+                    continue;
+                }
+
+                BitmapSource? frame;
+                if (targetWidth == sourceWidth && targetHeight == sourceHeight)
+                {
+                    frame = ImageLoader.ToBitmapSource(framePixels);
+                }
+                else
+                {
+                    using var scaled = framePixels.Resize(
+                        targetInfo,
+                        new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
+                    frame = scaled is null ? null : ImageLoader.ToBitmapSource(scaled);
+                }
+
+                if (frame is null)
+                {
+                    continue;
+                }
+
+                frames.Add(frame);
+                durations.Add(duration);
+            }
+
+            return frames.Count == 0 ? null : new AnimatedImageData(frames, durations);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -349,24 +522,21 @@ public sealed class ImageBackdrop : Image
         UpdateAnimationState();
     }
 
-    private void QueueAnimationStateUpdate()
-        => Dispatcher.BeginInvoke(new Action(UpdateAnimationState));
-
     private void UpdateAnimationState()
     {
-        var controller = ImageBehavior.GetAnimationController(this);
-        if (controller is null)
+        var playing = Animate
+            && _isActive
+            && IsVisible
+            && _window?.WindowState != WindowState.Minimized
+            && _animation is { Frames.Count: > 1 };
+
+        if (!playing)
         {
+            _timer.Stop();
             return;
         }
 
-        if (Animate && _isActive && IsVisible && _window?.WindowState != WindowState.Minimized)
-        {
-            controller.Play();
-        }
-        else
-        {
-            controller.Pause();
-        }
+        ShowCurrentFrame();
+        _timer.Start();
     }
 }

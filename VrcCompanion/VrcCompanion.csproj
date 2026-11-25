@@ -13,7 +13,7 @@
     <StartupObject>VrcCompanion.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
-    <Version>1.0.90</Version>
+    <Version>1.0.91</Version>
     <AssemblyTitle>KawaiiVrc</AssemblyTitle>
     <Product>KawaiiVrc</Product>
     <Company>KawaiiVrc</Company>
@@ -52,7 +52,6 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
     <PackageReference Include="SkiaSharp" Version="4.155.0" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.155.0" />
-    <PackageReference Include="WpfAnimatedGif" Version="2.0.2" />
   </ItemGroup>
 
 </Project>

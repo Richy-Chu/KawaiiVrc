@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 929 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
+A full run is 934 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.90**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.91**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -94,6 +94,12 @@ of copying the frame into a managed array, so animation frames stopped allocatin
 - **The animation decoder's `SKMemoryStream` is disposed.** `DecodeAnimationSkia` created one per
 file inline and never freed it.
 
+### What 1.0.91 changed
+
+- **The animated backdrop plays its own frames.** `ImageBackdrop` no longer uses WpfAnimatedGif: that library keeps a writeable bitmap of every frame on top of the decoded frames (the 1.0.89 heap dump counted 148 of them, about 45 MB, for the 76 frames of the two shipped wallpapers). The control now decodes frames with Skia at the width it draws them, freezes them, and steps them with a `DispatcherTimer` at the file's own frame times and the 75% speed the old playback used. Measured on the shipped 66-frame 280x275 GIF: 66 frames, 20,328,000 bytes, 5,510 ms loop, 32 ms to decode. The `WpfAnimatedGif` package reference is gone; nothing else used it.
+- **A backdrop animation is capped at 96 frames** (`MaxAnimatedBackdropFrames`). A dropped frame adds its time to the frame before it, so the loop keeps the file's length instead of speeding up, and only kept frames count against `AnimatedBackdropFrameBudgetBytes` - a long GIF is thinned rather than shrunk to a blur.
+- **Measured 1.0.90 before changing anything:** 786-797 MB private on the running copy, of which the managed heap was 460 MB at its peak and 99 MB live after a collection (661,754 objects); the large-object heap stayed committed at 226 MB, which a running process never gives back. The browsers and Discord are separate processes, so they do not explain the app's own number.
+
 ### Do not undo these
 
 1. **No `DropShadowEffect`.** If a panel now reads as too flat, give it a baked edge - a second
@@ -123,8 +129,9 @@ file inline and never freed it.
 8. **A backdrop decode never exceeds the source width.** `ImageBackdrop.ClampBackdropWidth` exists
 because `DecodePixelWidth` above the file's own width upscales it (WPF really produces that size),
 and an animated GIF pays for it on every frame; `BackdropDecodeTests` pins the no-upscale rule, the
-frame budget and the still fallback. Do not raise the budget without measuring the frame set: 66
-frames at 1280 px was 405 MB, not a few tens of megabytes.
+   frame budget and the still fallback. Do not raise the budget without measuring the frame set: 66
+   frames at 1280 px was 405 MB, not a few tens of megabytes. The frames come from
+   `ImageBackdrop.DecodeAnimation` now (rule 11), which clamps the same way.
 9. **Skia decoding goes through `DecodeSkiaScaled` first.** Do not reach for `SKBitmap.Decode` on a
 full image and then resize it: that materialises the source resolution, and `GetPixelSpan().ToArray()`
 adds a managed copy of it on the large object heap. Decode through `SKCodec` at a supported scale,
@@ -133,6 +140,8 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
 10. **WebView2 suspension already exists.** `Controls/EmbeddedBrowser` suspends a hidden page with
    `TrySuspendAsync` after 7 seconds (now 3), sets a low memory target while hidden, and releases the
    whole WebView when the section is evicted. Do not add a second suspension mechanism.
+
+11. **The backdrop animation is ours.** Do not put WpfAnimatedGif back to save code: it decoded and then copied every frame, which cost about 45 MB over the frames themselves. `ImageBackdrop.DecodeAnimation` composites through Skia (passing the previous frame index so disposal and partial frames are right), clamps to the source width, and holds only the frames it keeps; `BackdropDecodeTests` pins the width, the frame cap, the loop-time rule and a real GIF round trip.
 
 ### Virtualization: what is real and what is not
 
@@ -419,7 +428,7 @@ has gone untouched for the hour, which is how a reused pid stops keeping litter.
 `build/test-profile-guard-red.ps1`, which requires one filtered run to exit 1 on a fabricated
 baseline.
 
-`test-suite.yml` runs on every push and is the only job that runs all 929 tests. When a test
+`test-suite.yml` runs on every push and is the only job that runs all 934 tests. When a test
 fails, `build/retry-failed-tests.ps1` re-runs only the failed tests once: it plans the filter
 from the run's `trx`, reports what passed on retry as a warning and in the step summary, and the
 job stays green - a flaky test must not redden an otherwise good commit, but it must not be
