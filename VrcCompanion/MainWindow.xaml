@@ -6242,7 +6242,8 @@
                 </Border>
 
                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto"
-                              HorizontalScrollBarVisibility="Disabled">
+                              HorizontalScrollBarVisibility="Disabled"
+                              behaviors:ScrollViewerBehavior.PageToken="{Binding MediaViewModel.PageToken}">
                     <ItemsControl ItemsSource="{Binding MediaViewModel.PageCards}"
                                   ItemTemplate="{StaticResource MediaCardTemplate}">
                         <ItemsControl.ItemsPanel>

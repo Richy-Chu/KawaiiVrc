@@ -42,6 +42,22 @@ public class MediaPagingTests
     }
 
     [Fact]
+    public async Task PagingMovesTheTokenSoTheGalleryStartsAtTheTop()
+    {
+        var viewModel = await LoadAsync(Group("Japan", 60), Group("VRChat", 20));
+        var first = viewModel.PageToken;
+
+        viewModel.NextPageCommand.Execute(null);
+
+        Assert.True(viewModel.PageToken > first, "Next should move the token the view scrolls on");
+
+        var second = viewModel.PageToken;
+        viewModel.PreviousPageCommand.Execute(null);
+
+        Assert.True(viewModel.PageToken > second, "Previous should move it too");
+    }
+
+    [Fact]
     public async Task PageCards_AreCappedAndPageTwoCarriesRemainingGroups()
     {
         var viewModel = await LoadAsync(Group("Japan", 60), Group("VRChat", 20));

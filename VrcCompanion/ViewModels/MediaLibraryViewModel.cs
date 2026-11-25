@@ -156,6 +156,14 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public RelayCommand<MediaPersonItem> ShowPersonFilterCommand { get; }
 
+    private int _pageToken;
+
+    /// <summary>
+    /// Moves whenever the gallery shows a different page or filter, so the view scrolls back to
+    /// its first card instead of keeping the offset the last page was left at.
+    /// </summary>
+    public int PageToken => _pageToken;
+
     public int PageCount => (PictureCount + PageSize - 1) / PageSize;
 
     public int CurrentPage => PageCount == 0 ? 0 : _pageIndex + 1;
@@ -1876,6 +1884,8 @@ public sealed class MediaLibraryViewModel : ViewModelBase
             PageCards[i].Set(pageItems[i].Item, groupTitle);
         }
 
+        _pageToken++;
+        OnPropertyChanged(nameof(PageToken));
         OnPropertyChanged(nameof(PageCount));
         OnPropertyChanged(nameof(CurrentPage));
         OnPropertyChanged(nameof(PageText));

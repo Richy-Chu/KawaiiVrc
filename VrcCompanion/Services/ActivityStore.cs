@@ -517,7 +517,7 @@ public sealed class ActivityStore
                 Directory.CreateDirectory(directory);
             }
 
-            AtomicFile.WriteAllText(path, JsonSerializer.Serialize(file, JsonOptions));
+            AtomicFile.WriteJson(path, file, JsonOptions);
 
             if (!string.Equals(path, _path, StringComparison.Ordinal))
             {

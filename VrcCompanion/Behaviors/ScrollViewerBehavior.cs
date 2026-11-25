@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
+using System.Windows.Threading;
 
 namespace VrcCompanion.Behaviors;
 
@@ -29,7 +30,20 @@ public static class ScrollViewerBehavior
         // A page may bind the token on its own ScrollViewer or on the list that
         // owns the ScrollViewer inside its template.
         var viewer = d as ScrollViewer ?? FindScrollViewer(d);
-        viewer?.ScrollToTop();
+        if (viewer is null)
+        {
+            return;
+        }
+
+        viewer.ScrollToTop();
+
+        // The rows of the new page are usually published just after the token moves, and the list
+        // then lays out with whatever row it still has selected or focused - which pulls the
+        // viewport back to that row, so the page appeared to open half way down. Reset again once
+        // that layout pass is over.
+        viewer.Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            new Action(() => viewer.ScrollToTop()));
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)
