@@ -749,6 +749,91 @@ public class NotificationPersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task MarkingOneFilterReadOnlyMarksWhatItShows()
+    {
+        var path = PathFor("notifications-filter-actions.json");
+        var store = new NotificationPersistenceStore(path);
+        var handler = new CaptureHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.UseNotificationStore(shell, store, "usr_me");
+        TestHooks.UseLogPlayer(shell, new VrChatLogPlayerService(() => null, () => false));
+        TestHooks.SetLoggedIn(shell);
+        TestHooks.SeedNotifications(
+            shell,
+            new[]
+            {
+                new NotificationItem(Notification("not_invite_a", "invite")),
+                new NotificationItem(Notification("not_request", "requestInvite")),
+                new NotificationItem(Notification("not_invite_b", "invite")),
+                new NotificationItem(Notification("not_boop", "boop"))
+            });
+
+        shell.SelectedNotificationFilter = shell.NotificationFilters.Single(option =>
+            option.Key == "world-invites");
+        Assert.True(shell.HasVisibleNotifications);
+        Assert.True(shell.HasUnreadVisibleNotifications);
+
+        shell.MarkFilteredNotificationsReadCommand.Execute(null);
+        for (var attempt = 0; attempt < 200 && shell.IsBusy; attempt++)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.Contains(
+            handler.Requests,
+            request => request.Path == "PUT api/1/auth/user/notifications/not_invite_a/see");
+        Assert.Contains(
+            handler.Requests,
+            request => request.Path == "PUT api/1/auth/user/notifications/not_invite_b/see");
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.Path.Contains("not_boop", StringComparison.Ordinal));
+        Assert.Equal(4, shell.Notifications.Count);
+    }
+
+    [Fact]
+    public void ClearingOneFilterLeavesTheOtherFiltersAlone()
+    {
+        var path = PathFor("notifications-filter-clear.json");
+        var store = new NotificationPersistenceStore(path);
+        var handler = new CaptureHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.UseNotificationStore(shell, store, "usr_me");
+        TestHooks.UseLogPlayer(shell, new VrChatLogPlayerService(() => null, () => false));
+        TestHooks.SetLoggedIn(shell);
+        TestHooks.SeedNotifications(
+            shell,
+            new[]
+            {
+                new NotificationItem(Notification("not_invite_a", "invite")),
+                new NotificationItem(Notification("not_request", "requestInvite")),
+                new NotificationItem(Notification("not_invite_b", "invite")),
+                new NotificationItem(Notification("not_boop", "boop"))
+            });
+
+        shell.SelectedNotificationFilter = shell.NotificationFilters.Single(option =>
+            option.Key == "world-invites");
+        Assert.True(shell.HasVisibleNotifications);
+
+        shell.ClearFilteredNotificationsCommand.Execute(null);
+        Assert.Equal(
+            new[] { "not_request", "not_boop" },
+            shell.Notifications.Select(item => item.Id));
+
+        // The header's Clear all is untouched and still means every row.
+        shell.ClearAllNotificationsCommand.Execute(null);
+        Assert.Empty(shell.Notifications);
+
+        var saved = new NotificationPersistenceStore(path).Load("usr_me");
+        Assert.Empty(saved.Notifications);
+        Assert.Equal(
+            new[] { "not_boop", "not_invite_a", "not_invite_b", "not_request" },
+            saved.ClearedIds.OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task DeclineWithMessageDropsAnInviteVrChatHasExpired()
     {
         var handler = new CaptureHandler

@@ -545,6 +545,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ClearAllNotificationsCommand = Track(new RelayCommand(
             ClearAllNotifications,
             () => Notifications.Count > 0 && !IsBusy));
+        ClearFilteredNotificationsCommand = Track(new RelayCommand(
+            ClearFilteredNotifications,
+            () => HasVisibleNotifications && !IsBusy));
+        MarkFilteredNotificationsReadCommand = Track(new AsyncRelayCommand(
+            MarkFilteredNotificationsReadAsync,
+            () => IsLoggedIn && !IsBusy && HasUnreadVisibleNotifications));
         MarkNotificationSeenCommand = Track(new AsyncRelayCommand<NotificationItem>(
             MarkNotificationSeenAsync,
             item => item is { Seen: false } && IsLoggedIn && !IsBusy));
@@ -2559,6 +2565,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public AsyncRelayCommand MarkAllReadCommand { get; }
     public RelayCommand<NotificationItem> ClearNotificationCommand { get; }
     public RelayCommand ClearAllNotificationsCommand { get; }
+    public RelayCommand ClearFilteredNotificationsCommand { get; }
+    public AsyncRelayCommand MarkFilteredNotificationsReadCommand { get; }
+
+    /// <summary>True while the selected filter shows at least one notification.</summary>
+    public bool HasVisibleNotifications => !HasNoVisibleNotifications;
+
+    /// <summary>True while the selected filter shows an unread notification.</summary>
+    public bool HasUnreadVisibleNotifications =>
+        _notificationsView.Cast<NotificationItem>().Any(notification => !notification.Seen);
     public AsyncRelayCommand<NotificationItem> MarkNotificationSeenCommand { get; }
     public RelayCommand<NotificationItem> OpenBoopPreviewCommand { get; }
     public RelayCommand<NotificationItem> OpenNotificationGroupCommand { get; }
@@ -4010,6 +4025,59 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         finally
         {
+            PopBusy();
+        }
+    }
+
+    /// <summary>
+    /// Marks only the notifications the selected filter shows as read, so a
+    /// reader can clear one tab without touching the others.
+    /// </summary>
+    private async Task MarkFilteredNotificationsReadAsync()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var unseen = _notificationsView
+            .Cast<NotificationItem>()
+            .Where(notification => !notification.Seen)
+            .ToList();
+        if (unseen.Count == 0)
+        {
+            return;
+        }
+
+        PushBusy($"Marking {unseen.Count} notification{(unseen.Count == 1 ? string.Empty : "s")} as read…");
+        try
+        {
+            foreach (var notification in unseen)
+            {
+                await _api.MarkNotificationSeenAsync(notification.Id, notification.IsV2);
+                notification.MarkSeen();
+                UpdateUnreadState();
+            }
+
+            PersistNotifications();
+            ClearError();
+        }
+        catch (VrcApiException ex)
+        {
+            ShowError(ex.Message);
+        }
+        catch (HttpRequestException)
+        {
+            ShowError("Could not reach VRChat. Check your internet connection.");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            ShowError("Couldn't mark these notifications as read.");
+        }
+        finally
+        {
+            UpdateUnreadState();
             PopBusy();
         }
     }
@@ -7465,6 +7533,41 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ShowInfo(cleared == 1 ? "Notification cleared." : $"Cleared {cleared} notifications.");
     }
 
+    /// <summary>
+    /// Clears only the notifications the selected filter shows. The other
+    /// filters keep their rows, unlike the header's Clear all.
+    /// </summary>
+    private void ClearFilteredNotifications()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var visible = _notificationsView.Cast<NotificationItem>().ToList();
+        if (visible.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var notification in visible)
+        {
+            _clearedNotificationIds.Add(notification.Id);
+            Notifications.Remove(notification);
+        }
+
+        if (_selectedNotification is not null && visible.Contains(_selectedNotification))
+        {
+            ClearNotificationSelection();
+        }
+
+        UpdateUnreadState();
+        PersistNotifications();
+        ShowInfo(visible.Count == 1
+            ? "Notification cleared."
+            : $"Cleared {visible.Count} notifications in this filter.");
+    }
+
     private void ClearPersistentNotification(NotificationItem item)
     {
         _clearedNotificationIds.Add(item.Id);
@@ -9396,6 +9499,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         OnPropertyChanged(nameof(NotificationFilterSummary));
         OnPropertyChanged(nameof(HasNoVisibleNotifications));
+        OnPropertyChanged(nameof(HasVisibleNotifications));
+        OnPropertyChanged(nameof(HasUnreadVisibleNotifications));
         OnPropertyChanged(nameof(NotificationsEmptyMessage));
     }
 
@@ -9742,6 +9847,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         RefreshNotificationsView();
         MarkAllReadCommand.RaiseCanExecuteChanged();
         ClearAllNotificationsCommand.RaiseCanExecuteChanged();
+        ClearFilteredNotificationsCommand.RaiseCanExecuteChanged();
+        MarkFilteredNotificationsReadCommand.RaiseCanExecuteChanged();
     }
 
     private void ConfigureTwoFactor(IReadOnlyList<string> methods)

@@ -1036,11 +1036,14 @@
                     </Grid.RowDefinitions>
 
                     <!-- Notification filters -->
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
                     <ListBox ItemsSource="{Binding NotificationFilters}"
                              SelectedItem="{Binding SelectedNotificationFilter, Mode=TwoWay}"
-                             Style="{StaticResource RegionPillList}"
-                             Margin="0,0,0,12"
-                             Grid.Row="0">
+                             Style="{StaticResource RegionPillList}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{StaticResource InputBrush}"
@@ -1063,6 +1066,25 @@
                             </Style>
                         </ListBox.ItemContainerStyle>
                     </ListBox>
+
+                        <!-- These act on the selected filter only. -->
+                        <StackPanel Grid.Column="1"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Center"
+                                    Margin="8,0,0,0">
+                            <Button Style="{StaticResource SmallButton}"
+                                    Content="Mark these read"
+                                    Margin="0,0,6,0"
+                                    ToolTip="Mark every notification in this filter as read"
+                                    Command="{Binding MarkFilteredNotificationsReadCommand}"
+                                    Visibility="{Binding HasUnreadVisibleNotifications, Converter={StaticResource BoolToVis}}" />
+                            <Button Style="{StaticResource SmallButton}"
+                                    Content="Clear these"
+                                    ToolTip="Clear every notification in this filter from your list"
+                                    Command="{Binding ClearFilteredNotificationsCommand}"
+                                    Visibility="{Binding HasVisibleNotifications, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+                    </Grid>
 
                     <!-- Notification list + detail -->
                     <Grid Grid.Row="1">
