@@ -10859,7 +10859,8 @@
         <!-- ========================================================= -->
         <!-- Friend locations popup                                    -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="23"
+        <Grid x:Name="FriendLocationsOverlay"
+              Panel.ZIndex="23"
               Visibility="{Binding IsFriendLocationsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CloseFriendLocationsCommand}"
                     Focusable="False"
@@ -11007,7 +11008,8 @@
         <!-- ========================================================= -->
         <!-- Recently played with popup                                -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="25"
+        <Grid x:Name="RecentPlayersOverlay"
+              Panel.ZIndex="25"
               AutomationProperties.AutomationId="RecentPlayersOverlay"
               Visibility="{Binding RecentPlayersViewModel.IsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CloseRecentPlayersCommand}"

@@ -259,6 +259,23 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // These two fill the window with a backdrop but were missing from the
+            // chain, so Escape did nothing to them. Recent players (25) sits over
+            // friend locations (23); one press closes the popup on top.
+            if (_viewModel.RecentPlayersViewModel is { IsOpen: true })
+            {
+                _viewModel.CloseRecentPlayersCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (_viewModel.IsFriendLocationsOpen)
+            {
+                _viewModel.CloseFriendLocationsCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (FindVisibleBrowser() is { } focusedBrowser &&
                 focusedBrowser.TryCancelAddressEdit())
             {

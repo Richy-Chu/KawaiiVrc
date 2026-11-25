@@ -143,6 +143,15 @@ internal static class TestHooks
         InstanceHistoryViewModel history)
         => AttachViewModel(shell, nameof(MainViewModel.InstanceHistoryViewModel), history);
 
+    /// <summary>
+    /// Attaches the recent-players popup without restoring a session; the shell
+    /// otherwise builds it only inside <see cref="MainViewModel.InitializeAsync"/>.
+    /// </summary>
+    public static void AttachRecentPlayersViewModel(
+        MainViewModel shell,
+        RecentPlayersViewModel recent)
+        => AttachViewModel(shell, nameof(MainViewModel.RecentPlayersViewModel), recent);
+
     private static void AttachViewModel(MainViewModel shell, string propertyName, object? value)
     {
         var setter = typeof(MainViewModel)
