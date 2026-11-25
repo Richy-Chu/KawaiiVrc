@@ -121,6 +121,22 @@ public sealed class InstanceHistoryStore
     private string? _cachedAccount;
     private string? _cachedSignature;
 
+    /// <summary>
+    /// Parsed event rows, keyed by account. The live log appends a few events at
+    /// a time and every screen re-reads history after each write, so keeping the
+    /// rows turns a 27k-row re-read into an append of just the new rows. The row
+    /// count and highest id prove the cache still matches the table; a delete or
+    /// an out-of-order import falls back to a full read.
+    /// </summary>
+    private readonly Dictionary<string, EventRowCache> _eventCaches = new(StringComparer.Ordinal);
+    private const int MaximumCachedEventAccounts = 2;
+
+    /// <summary>
+    /// Drops parsed rows after a write that edits them in place. Appends do not
+    /// need this: the row count and highest id tell ReadEvents what is new.
+    /// </summary>
+    private void InvalidateEventRows() => _eventCaches.Clear();
+
     private string DatabaseSignature()
     {
         try
@@ -237,6 +253,7 @@ public sealed class InstanceHistoryStore
         {
             EnsureInitialized();
             InvalidateCache();
+            InvalidateEventRows();
             using var connection = OpenConnection();
             var entry = BuildEntries(connection, accountUserId: null)
                 .FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.Ordinal));
@@ -343,6 +360,9 @@ public sealed class InstanceHistoryStore
     public int AssignPlayerUserId(string accountUserId, string displayName, string userId)
     {
         InvalidateCache();
+        // This edits stored rows in place, which neither the row count nor the
+        // highest id can reveal, so the parsed rows have to go.
+        InvalidateEventRows();
         if (string.IsNullOrWhiteSpace(accountUserId) ||
             string.IsNullOrWhiteSpace(displayName) ||
             string.IsNullOrWhiteSpace(userId))
@@ -484,6 +504,7 @@ public sealed class InstanceHistoryStore
         {
             EnsureInitialized();
             InvalidateCache();
+            InvalidateEventRows();
             using var connection = OpenConnection();
             var entries = BuildEntries(connection, accountUserId: null)
                 .Where(entry => wanted.Contains(entry.Id))
@@ -1016,7 +1037,7 @@ public sealed class InstanceHistoryStore
         }
     }
 
-    private static IReadOnlyList<InstanceHistoryEntry> BuildEntries(
+    private IReadOnlyList<InstanceHistoryEntry> BuildEntries(
         SqliteConnection connection,
         string? accountUserId)
     {
@@ -1235,26 +1256,98 @@ public sealed class InstanceHistoryStore
         return rows;
     }
 
-    private static List<EventRow> ReadEvents(SqliteConnection connection, string? accountUserId)
+    private List<EventRow> ReadEvents(SqliteConnection connection, string? accountUserId)
+    {
+        var key = accountUserId ?? string.Empty;
+        var (count, maxId) = ReadEventStats(connection, accountUserId);
+        if (_eventCaches.TryGetValue(key, out var cache))
+        {
+            if (cache.Count == count && cache.MaxId == maxId)
+            {
+                return cache.Rows;
+            }
+
+            // The table only grows at its end for live events. Anything that
+            // arrives with an older timestamp (an imported history) would sort
+            // into the middle, so it must not be appended to the cached rows.
+            if (count > cache.Count && maxId > cache.MaxId)
+            {
+                var appended = ReadEventRows(connection, accountUserId, afterId: cache.MaxId);
+                if (appended.Count == count - cache.Count &&
+                    (appended.Count == 0 || appended[0].CreatedAtTs >= cache.LastTimestamp))
+                {
+                    cache.Rows.AddRange(appended);
+                    cache.Count = count;
+                    cache.MaxId = maxId;
+                    if (appended.Count > 0)
+                    {
+                        cache.LastTimestamp = appended[^1].CreatedAtTs;
+                    }
+
+                    return cache.Rows;
+                }
+            }
+        }
+
+        var rows = ReadEventRows(connection, accountUserId, afterId: null);
+        if (_eventCaches.Count >= MaximumCachedEventAccounts)
+        {
+            _eventCaches.Clear();
+        }
+
+        _eventCaches[key] = new EventRowCache
+        {
+            Rows = rows,
+            Count = rows.Count,
+            MaxId = rows.Count == 0 ? 0 : rows[^1].Id,
+            LastTimestamp = rows.Count == 0 ? 0 : rows[^1].CreatedAtTs
+        };
+        return rows;
+    }
+
+    private static (int Count, long MaxId) ReadEventStats(
+        SqliteConnection connection,
+        string? accountUserId)
     {
         using var command = connection.CreateCommand();
         command.CommandText = accountUserId is null
-            ? """
-              SELECT id, account_user_id, location, user_id, display_name, avatar_url,
-                     event_type, created_at, created_at_ts
-              FROM gamelog_join_leave
-              ORDER BY created_at_ts ASC, id ASC
-              """
-            : """
-              SELECT id, account_user_id, location, user_id, display_name, avatar_url,
-                     event_type, created_at, created_at_ts
-              FROM gamelog_join_leave
-              WHERE account_user_id = $account
-              ORDER BY created_at_ts ASC, id ASC
-              """;
+            ? "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM gamelog_join_leave"
+            : "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM gamelog_join_leave WHERE account_user_id = $account";
         if (accountUserId is not null)
         {
             command.Parameters.AddWithValue("$account", accountUserId);
+        }
+
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? ((int)reader.GetInt64(0), reader.GetInt64(1))
+            : (0, 0);
+    }
+
+    private static List<EventRow> ReadEventRows(
+        SqliteConnection connection,
+        string? accountUserId,
+        long? afterId)
+    {
+        const string projection =
+            "SELECT id, account_user_id, location, user_id, display_name, avatar_url, " +
+            "event_type, created_at, created_at_ts FROM gamelog_join_leave";
+        using var command = connection.CreateCommand();
+        command.CommandText = (accountUserId is null, afterId is null) switch
+        {
+            (true, true) => projection + " ORDER BY created_at_ts ASC, id ASC",
+            (true, false) => projection + " WHERE id > $after ORDER BY created_at_ts ASC, id ASC",
+            (false, true) => projection + " WHERE account_user_id = $account ORDER BY created_at_ts ASC, id ASC",
+            _ => projection + " WHERE account_user_id = $account AND id > $after ORDER BY created_at_ts ASC, id ASC"
+        };
+        if (accountUserId is not null)
+        {
+            command.Parameters.AddWithValue("$account", accountUserId);
+        }
+
+        if (afterId is { } after)
+        {
+            command.Parameters.AddWithValue("$after", after);
         }
 
         var rows = new List<EventRow>();
@@ -1287,6 +1380,17 @@ public sealed class InstanceHistoryStore
             out var parsed)
             ? parsed
             : DateTimeOffset.MinValue;
+
+    private sealed class EventRowCache
+    {
+        public List<EventRow> Rows { get; init; } = new();
+
+        public int Count { get; set; }
+
+        public long MaxId { get; set; }
+
+        public long LastTimestamp { get; set; }
+    }
 
     private sealed record LocationRow(
         string AccountUserId,

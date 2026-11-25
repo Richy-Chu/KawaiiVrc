@@ -144,6 +144,35 @@ public class PagingTests
         Assert.Equal(24, recent.PlayersPage.PageSize);
     }
 
+    [Fact]
+    public void PagedListPageTokenMovesOnlyWhenTheVisiblePageChanges()
+    {
+        var page = new PagedList<int>();
+        page.SetSource(Enumerable.Range(0, 60));
+        var first = page.PageToken;
+
+        // A presence refresh republishes the same page without moving the reader.
+        page.SetSource(Enumerable.Range(0, 60));
+        Assert.Equal(first, page.PageToken);
+
+        page.NextCommand.Execute(null);
+        var second = page.PageToken;
+        Assert.True(second > first);
+
+        page.PreviousCommand.Execute(null);
+        var third = page.PageToken;
+        Assert.True(third > second);
+
+        page.NextCommand.Execute(null);
+        var fourth = page.PageToken;
+        Assert.True(fourth > third);
+
+        // Filtering starts over on the first page, so the list scrolls back with it.
+        page.SetSource(Enumerable.Range(0, 60), resetPage: true);
+        Assert.Equal(1, page.PageNumber);
+        Assert.True(page.PageToken > fourth);
+    }
+
     private static void RunOnSta(Action action)
     {
         ExceptionDispatchInfo? failure = null;

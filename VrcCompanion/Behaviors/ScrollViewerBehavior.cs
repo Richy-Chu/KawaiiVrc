@@ -1,4 +1,6 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -35,15 +37,7 @@ public static class ScrollViewerBehavior
             return;
         }
 
-        viewer.ScrollToTop();
-
-        // The rows of the new page are usually published just after the token moves, and the list
-        // then lays out with whatever row it still has selected or focused - which pulls the
-        // viewport back to that row, so the page appeared to open half way down. Reset again once
-        // that layout pass is over.
-        viewer.Dispatcher.BeginInvoke(
-            DispatcherPriority.Background,
-            new Action(() => viewer.ScrollToTop()));
+        ResetScroll(viewer);
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)
@@ -71,6 +65,73 @@ public static class ScrollViewerBehavior
     /// surface is already at its edge, continues outward to the containing page.
     /// Returns true when a surface consumed the wheel input.
     /// </summary>
+    /// <summary>
+    /// Puts every scroll surface that shows a page back at the top: the list bound
+    /// to the page's rows and any ScrollViewer around the pager. The reset runs now
+    /// and again once the new rows have been laid out.
+    /// </summary>
+    public static void ResetPageScroll(DependencyObject anchor, IEnumerable? items)
+    {
+        var viewers = new HashSet<ScrollViewer>();
+        if (items is not null)
+        {
+            CollectListedViewers((DependencyObject?)Window.GetWindow(anchor) ?? anchor, items, viewers);
+        }
+
+        for (var current = GetVisualOrLogicalParent(anchor);
+             current is not null;
+             current = GetVisualOrLogicalParent(current))
+        {
+            if (current is ScrollViewer host)
+            {
+                viewers.Add(host);
+            }
+        }
+
+        foreach (var viewer in viewers)
+        {
+            ResetScroll(viewer);
+        }
+    }
+
+    private static void CollectListedViewers(
+        DependencyObject root,
+        IEnumerable items,
+        HashSet<ScrollViewer> viewers)
+    {
+        var pending = new Stack<DependencyObject>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (current is ItemsControl list &&
+                ReferenceEquals(list.ItemsSource, items) &&
+                FindScrollViewer(list) is { } viewer)
+            {
+                viewers.Add(viewer);
+            }
+
+            var count = VisualTreeHelper.GetChildrenCount(current);
+            for (var index = 0; index < count; index++)
+            {
+                pending.Push(VisualTreeHelper.GetChild(current, index));
+            }
+        }
+    }
+
+    private static void ResetScroll(ScrollViewer viewer)
+    {
+        viewer.ScrollToTop();
+
+        // The rows of the new page are usually published just after the token moves, and the list
+        // then lays out with whatever row it still has selected or focused - which pulls the
+        // viewport back to that row, so the page appeared to open half way down. Reset again once
+        // that layout pass is over.
+        viewer.Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            new Action(() => viewer.ScrollToTop()));
+    }
+
     public static bool HandleMouseWheel(DependencyObject? source, int delta)
     {
         if (source is null || delta == 0)

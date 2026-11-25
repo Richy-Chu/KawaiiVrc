@@ -388,6 +388,100 @@ public class PagerLayoutTests
         Assert.Equal(24, viewModel.GroupSearchResultsPage.PageSize);
     }
 
+    [Fact]
+    public void FriendsPagerPutsTheListBackAtItsFirstRow()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var api = IsolatedApi();
+            using var shell = new MainViewModel(api);
+            for (var index = 0; index < 30; index++)
+            {
+                shell.Friends.Add(new FriendItem(new VrcUser
+                {
+                    Id = $"usr_scroll{index}",
+                    DisplayName = $"Scroll Friend {index}",
+                    State = "offline",
+                    Status = "offline",
+                    Location = "offline"
+                }));
+            }
+
+            shell.ShowOnlineOnly = true;
+            shell.ShowOnlineOnly = false;
+            TestHooks.SetLoggedIn(shell);
+
+            var window = Host(new MainWindow(shell, initializeOnLoad: false));
+            try
+            {
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "friends");
+                Pump(window);
+
+                var pager = PagerFor(window, shell.FriendsPage);
+                var list = FindVisualChildren<ListBox>(window)
+                    .Single(box => ReferenceEquals(box.ItemsSource, shell.FriendsPage.Items));
+                Settle.Until(() => list.Items.Count == 24, () => Pump(window), "The friends list did not show its first page.");
+
+                var viewer = FindVisualChildren<ScrollViewer>(list).First();
+                viewer.ScrollToVerticalOffset(viewer.ScrollableHeight);
+                window.UpdateLayout();
+                Assert.True(viewer.VerticalOffset > 100, "The test could not scroll the friends list.");
+
+                ClickNext(pager);
+                Settle.Until(() => list.Items.Count == 6, () => Pump(window), "The friends list did not flip to page 2.");
+                Settle.Until(() => viewer.VerticalOffset == 0, () => Pump(window),
+                    $"The friends list stayed at offset {viewer.VerticalOffset} after Next.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void ContextPagerPutsThePageBackAtTheTop()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var viewModel = new ContextViewModel();
+            for (var index = 0; index < 30; index++)
+            {
+                viewModel.Players.Add(new InstancePlayerItem(
+                    $"usr_context_scroll{index}",
+                    $"Scroll Person {index}",
+                    isFriend: false,
+                    isSelf: false));
+            }
+
+            TestHooks.RefreshContext(viewModel);
+
+            var window = Host(new ContextView { DataContext = viewModel });
+            try
+            {
+                var pager = PagerFor(window, viewModel.PlayersPage);
+                // The context view scrolls as one page, so the pager has to put the
+                // page host back at the top, not just the roster list inside it.
+                var page = FindVisualChildren<ScrollViewer>(window).First();
+                Settle.Until(() => pager.Visibility == Visibility.Visible && page.ScrollableHeight > 200,
+                    () => Pump(window), "The context page did not become scrollable.");
+
+                page.ScrollToVerticalOffset(page.ScrollableHeight);
+                window.UpdateLayout();
+                Assert.True(page.VerticalOffset > 100, "The test could not scroll the context page.");
+
+                ClickNext(pager);
+                Settle.Until(() => viewModel.PlayersPage.Items.Count == 6, () => Pump(window), "The context roster did not flip to page 2.");
+                Settle.Until(() => page.VerticalOffset == 0, () => Pump(window),
+                    $"The context page stayed at offset {page.VerticalOffset} after Next.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     private sealed class NeverCompletingHandler : System.Net.Http.HttpMessageHandler
     {
         protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(

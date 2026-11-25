@@ -336,6 +336,25 @@ public class GroupModerationTests
         Assert.Contains(vm.RolePermissions, option => option.Label == "Manage bans");
     }
 
+    [Fact]
+    public async Task NextMembersPageMovesThePopupPageToken()
+    {
+        var (vm, _) = await OpenAsync(handler =>
+        {
+            handler.MemberTotal = 250;
+            handler.RosterSize = 100;
+        });
+        var first = vm.MembersPageToken;
+
+        vm.NextMembersPageCommand.Execute(null);
+        await Settle.UntilAsync(() => !vm.IsBusy, "The moderation member page never settled.");
+
+        // The group popup binds PopupPageToken, which the moderation roster moves
+        // through MembersPageToken, so a new roster page opens at the top too.
+        Assert.True(vm.MembersPageToken > first);
+        Assert.Equal("Page 2 of 3", vm.MembersPageText);
+    }
+
     private static async Task<(GroupModerationViewModel Vm, GroupModerationTestHandler Handler)> OpenAsync(
         Action<GroupModerationTestHandler>? configure = null)
     {

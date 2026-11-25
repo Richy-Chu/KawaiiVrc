@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -37,6 +38,7 @@ public sealed class GroupViewModel : ViewModelBase
     private string _membersStatus = string.Empty;
     private string _memberPageInput = "1";
     private int _membersPageToken;
+    private int _popupPageToken;
     private int? _membersLastPageWithRows;
     private bool _membersTruncated;
     private readonly Action<GroupMemberItem>? _openMemberProfile;
@@ -98,6 +100,7 @@ public sealed class GroupViewModel : ViewModelBase
                     _openMemberProfile)))
         };
         Moderation.MemberCountChanged += OnModerationMemberRemoved;
+        Moderation.PropertyChanged += OnModerationPropertyChanged;
         _openLaunchChooser = openLaunchChooser;
         _openUrl = openUrl ?? (url => LaunchService.OpenUrl(url));
 
@@ -661,6 +664,13 @@ public sealed class GroupViewModel : ViewModelBase
     /// <summary>Bumped on every loaded page; the popup scrolls to the top when it changes.</summary>
     public int MembersPageToken => _membersPageToken;
 
+    /// <summary>
+    /// Bumped whenever the popup moves to another page of members - the member
+    /// list or the moderation roster. The popup scrolls to the top on it, so a
+    /// new page never opens at the offset the last one was left at.
+    /// </summary>
+    public int PopupPageToken => _popupPageToken;
+
     public string MembersPageText => IsMemberSearchActive ? string.Empty : $"Page {MemberPageNumber} of {MemberPageCount}";
 
     /// <summary>The "of 569" half of the pager, with the page number living in the jump box.</summary>
@@ -795,8 +805,7 @@ public sealed class GroupViewModel : ViewModelBase
 
             Moderation.Open(info);
             // The moderation panel starts at the top of the popup, like a new member page.
-            _membersPageToken++;
-            OnPropertyChanged(nameof(MembersPageToken));
+            MovePopupToTop();
             OnPropertyChanged(nameof(IsGroupModerationOpen));
         }
         catch (VrcApiException ex)
@@ -1370,7 +1379,7 @@ public sealed class GroupViewModel : ViewModelBase
 
             _membersPage = page;
             _membersLastPageWithRows = page;
-            _membersPageToken++;
+            MovePopupToTop();
             _isMemberSearchActive = false;
             _lastMemberSearch = null;
             _membersStatus = string.Empty;
@@ -1761,6 +1770,28 @@ public sealed class GroupViewModel : ViewModelBase
         {
             members.Add(rows[index]);
         }
+    }
+
+    private void MovePopupToTop()
+    {
+        _membersPageToken++;
+        OnPropertyChanged(nameof(MembersPageToken));
+        _popupPageToken++;
+        OnPropertyChanged(nameof(PopupPageToken));
+    }
+
+    private void OnModerationPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(
+                e.PropertyName,
+                nameof(GroupModerationViewModel.MembersPageToken),
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _popupPageToken++;
+        OnPropertyChanged(nameof(PopupPageToken));
     }
 
     private void RaiseMemberListChanged()

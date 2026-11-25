@@ -3571,7 +3571,7 @@
                                           VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled"
                                           Padding="20,16,20,20"
-                                          behaviors:ScrollViewerBehavior.PageToken="{Binding DataContext.GroupViewModel.MembersPageToken, RelativeSource={RelativeSource AncestorType=Window}}">
+                                          behaviors:ScrollViewerBehavior.PageToken="{Binding DataContext.GroupViewModel.PopupPageToken, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <Grid>
                                 <StackPanel Visibility="{Binding DataContext.GroupViewModel.IsGroupModerationOpen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolToVis}}">
                                     <TextBlock Text="ABOUT" Style="{StaticResource FieldLabel}" />

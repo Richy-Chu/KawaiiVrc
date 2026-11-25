@@ -1,9 +1,21 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 
 namespace VrcCompanion.ViewModels;
+
+/// <summary>
+/// Non-generic view of a paged list, so the shared pager can find the rows it
+/// pages and follow its page token without knowing the row type.
+/// </summary>
+public interface IPagedList
+{
+    IEnumerable Items { get; }
+
+    int PageToken { get; }
+}
 
 /// <summary>
 /// A window of a longer list with Previous and Next. Lists that used to hand
@@ -12,12 +24,14 @@ namespace VrcCompanion.ViewModels;
 /// panel is virtualizing. The source is kept as a snapshot so a page flip never
 /// re-filters or re-sorts the underlying collection.
 /// </summary>
-public sealed class PagedList<T> : ViewModelBase
+public sealed class PagedList<T> : ViewModelBase, IPagedList
 {
     private readonly List<T> _source = new();
     private readonly RelayCommand _previousCommand;
     private readonly RelayCommand _nextCommand;
     private int _pageIndex;
+    private int _pageToken;
+    private int _publishedPageIndex = -1;
 
     public PagedList(int pageSize = 24)
     {
@@ -28,6 +42,15 @@ public sealed class PagedList<T> : ViewModelBase
 
     /// <summary>The rows on the current page; bind the list to this.</summary>
     public ObservableCollection<T> Items { get; } = new();
+
+    IEnumerable IPagedList.Items => Items;
+
+    /// <summary>
+    /// Bumped when the visible page changes. The pager scrolls the list back to
+    /// its top when it moves; a refresh that keeps the same page does not move
+    /// it, so a live update never yanks the reader away from what they read.
+    /// </summary>
+    public int PageToken => _pageToken;
 
     public int PageSize { get; }
 
@@ -127,6 +150,14 @@ public sealed class PagedList<T> : ViewModelBase
         OnPropertyChanged(nameof(HasNext));
         OnPropertyChanged(nameof(PageText));
         OnPropertyChanged(nameof(PageNumber));
+
+        if (_publishedPageIndex != _pageIndex)
+        {
+            _publishedPageIndex = _pageIndex;
+            _pageToken++;
+            OnPropertyChanged(nameof(PageToken));
+        }
+
         _previousCommand.RaiseCanExecuteChanged();
         _nextCommand.RaiseCanExecuteChanged();
     }

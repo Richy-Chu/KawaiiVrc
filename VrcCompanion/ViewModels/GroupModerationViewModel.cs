@@ -47,6 +47,7 @@ public sealed class GroupModerationViewModel : ViewModelBase
     private Func<Task>? _pendingWork;
     private int _memberPage;
     private int _memberTotal;
+    private int _membersPageToken;
     private string? _editingRoleId;
     private string _roleEditorName = string.Empty;
     private string _roleEditorDescription = string.Empty;
@@ -371,6 +372,9 @@ public sealed class GroupModerationViewModel : ViewModelBase
         ? "Loading members…"
         : string.Create(CultureInfo.InvariantCulture, $"Page {_memberPage + 1:N0} of {MemberPageCount:N0}");
 
+    /// <summary>Bumped after a page of members loads; the group popup scrolls to the top on it.</summary>
+    public int MembersPageToken => _membersPageToken;
+
     public bool CanGoToPreviousMembersPage => IsOpen && !IsBusy && _memberPage > 0;
 
     public bool CanGoToNextMembersPage => IsOpen && !IsBusy
@@ -530,6 +534,8 @@ public sealed class GroupModerationViewModel : ViewModelBase
             Members = new ObservableCollection<ModerationMemberRow>(
                 members.Select(member => new ModerationMemberRow(member, this)));
             StatusMessage = Members.Count == 0 ? "VRChat returned no members for this page." : string.Empty;
+            _membersPageToken++;
+            OnPropertyChanged(nameof(MembersPageToken));
         }
         catch (Exception ex)
         {

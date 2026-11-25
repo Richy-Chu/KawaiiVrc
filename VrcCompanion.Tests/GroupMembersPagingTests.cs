@@ -179,6 +179,7 @@ public class GroupMembersPagingTests
         await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
         var firstPage = vm.Members;
         var firstToken = vm.MembersPageToken;
+        var firstPopupToken = vm.PopupPageToken;
 
         vm.NextMembersPageCommand.Execute(null);
         await Settle.UntilAsync(() => !vm.IsBusy, "The members page never settled.");
@@ -186,6 +187,7 @@ public class GroupMembersPagingTests
         // The popup scrolls to the top whenever this token changes, so a new page is
         // read from its first member instead of from wherever the pager was left.
         Assert.True(vm.MembersPageToken > firstToken);
+        Assert.True(vm.PopupPageToken > firstPopupToken);
         Assert.Same(firstPage, vm.Members);
         Assert.Equal(100, vm.Members.Count);
         Assert.Equal("Member 0100", vm.Members[0].DisplayName);

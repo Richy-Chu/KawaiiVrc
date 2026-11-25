@@ -320,6 +320,108 @@ public sealed class InstanceHistoryTests : IDisposable
     }
 
     [Fact]
+    public void AppendingOneEventDoesNotRebuildEveryStoredRow()
+    {
+        var path = Path.Combine(_directory, "incremental.db");
+        var store = new InstanceHistoryStore(path);
+        var start = DateTimeOffset.Now.AddHours(-8);
+        for (var index = 0; index < 300; index++)
+        {
+            var joined = start.AddMinutes(index);
+            var entry = InstanceHistoryStore.NewFromLog(
+                Me,
+                index % 2 == 0 ? LocationA : LocationB,
+                joined)!;
+            entry.GetOrAddPlayer(Me, "Me").StartVisit(joined);
+            entry.GetOrAddPlayer(Friend, "Maya").StartVisit(joined);
+            entry.Close(joined.AddSeconds(30));
+            store.Add(entry);
+        }
+
+        // Warm the store the way the app does: one screen reads the history.
+        store.ForAccount(Me);
+
+        // The log appends one event while the app is open. The next refresh must
+        // read that row instead of parsing every stored row again.
+        store.RecordPlayerEvent(Me, LocationA, Other, "Someone", string.Empty, joined: true, DateTimeOffset.Now);
+        var incrementalStart = GC.GetAllocatedBytesForCurrentThread();
+        var incremental = store.ForAccount(Me);
+        var incrementalCost = GC.GetAllocatedBytesForCurrentThread() - incrementalStart;
+
+        // A store that has never read this file pays for the full read.
+        var cold = new InstanceHistoryStore(path);
+        var coldStart = GC.GetAllocatedBytesForCurrentThread();
+        var coldRows = cold.ForAccount(Me);
+        var coldCost = GC.GetAllocatedBytesForCurrentThread() - coldStart;
+
+        Assert.Equal(coldRows.Count, incremental.Count);
+        Assert.Contains(incremental, entry => entry.Players.Any(player => player.UserId == Other));
+        // Measured here: 1,385,272 B against 2,168,848 B for the same 1,200
+        // events, so the append has to keep at least a quarter of the read saved.
+        Assert.True(
+            incrementalCost * 4 < coldCost * 3,
+            $"Appending should not re-read every row: appended={incrementalCost:N0} B, full read={coldCost:N0} B.");
+    }
+
+    [Fact]
+    public void AppendedEventsProduceTheSameHistoryAsAFreshRead()
+    {
+        var path = Path.Combine(_directory, "incremental-accuracy.db");
+        var store = new InstanceHistoryStore(path);
+        var start = DateTimeOffset.Now.AddHours(-4);
+        var entry = InstanceHistoryStore.NewFromLog(Me, LocationA, start)!;
+        entry.GetOrAddPlayer(Me, "Me").StartVisit(start);
+        entry.GetOrAddPlayer(Friend, "Maya").StartVisit(start);
+        entry.Close(start.AddMinutes(15));
+        store.Add(entry);
+        store.ForAccount(Me);
+
+        var joined = DateTimeOffset.Now.AddMinutes(-5);
+        store.RecordPlayerEvent(Me, LocationA, Me, "Me", string.Empty, joined: true, joined);
+        store.ForAccount(Me);
+        store.RecordPlayerEvent(Me, LocationA, Friend, "Maya", string.Empty, joined: true, joined.AddMinutes(1));
+        var incremental = store.ForAccount(Me);
+
+        var fresh = new InstanceHistoryStore(path);
+        var expected = fresh.ForAccount(Me);
+
+        Assert.Equal(expected.Count, incremental.Count);
+        Assert.Equal(
+            expected.Select(row => (row.Id, row.JoinedAt, row.LeftAt, row.Players.Count)),
+            incremental.Select(row => (row.Id, row.JoinedAt, row.LeftAt, row.Players.Count)));
+        Assert.Equal(
+            expected.SelectMany(row => row.Players.Select(player => (row.Id, player.UserId, player.Visits.Count))),
+            incremental.SelectMany(row => row.Players.Select(player => (row.Id, player.UserId, player.Visits.Count))));
+    }
+
+    [Fact]
+    public void AnOlderImportedSessionForcesAFullReadInsteadOfAnAppend()
+    {
+        var path = Path.Combine(_directory, "incremental-import.db");
+        var store = new InstanceHistoryStore(path);
+        var recent = DateTimeOffset.Now.AddHours(-2);
+        var entry = InstanceHistoryStore.NewFromLog(Me, LocationA, recent)!;
+        entry.GetOrAddPlayer(Me, "Me").StartVisit(recent);
+        entry.Close(recent.AddMinutes(10));
+        store.Add(entry);
+        store.ForAccount(Me);
+
+        // An imported session older than everything already read sorts before the
+        // cached rows, so it must not be appended to the end of them.
+        var imported = InstanceHistoryStore.NewFromLog(Me, LocationB, recent.AddHours(-6))!;
+        imported.GetOrAddPlayer(Me, "Me").StartVisit(imported.JoinedAt);
+        imported.Close(imported.JoinedAt.AddMinutes(12));
+        store.Add(imported);
+
+        var rows = store.ForAccount(Me);
+        Assert.Equal(2, rows.Count);
+        Assert.Contains(rows, row => row.Location == LocationB && row.Duration.TotalMinutes == 12);
+        Assert.Equal(
+            rows.OrderByDescending(row => row.JoinedAt).Select(row => row.Id),
+            rows.Select(row => row.Id));
+    }
+
+    [Fact]
     public void SameLocationHoursApartIsStoredAsTwoVisits()
     {
         var store = new InstanceHistoryStore(Path.Combine(_directory, "grouping.db"));
