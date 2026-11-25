@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -54,6 +55,7 @@ public partial class MainWindow : Window
     private string _shownSectionKey = string.Empty;
     private readonly Dictionary<string, CancellationTokenSource> _pendingReleases = new(StringComparer.Ordinal);
     private bool _settleScheduled;
+    private int _settleCount;
     private readonly List<string> _sectionOrder = new();
     private readonly HashSet<string> _themeBrushKeys = new();
     // Every cached section view keeps its whole visual tree, item containers
@@ -684,6 +686,15 @@ public partial class MainWindow : Window
     {
         var key = _viewModel.SelectedSection.Key;
         ReleaseDataOnLeave(key);
+        // Every switch settles, not only the ones that hand a page back. Two light
+        // tabs both stay in the cache, so nothing was evicted - but the page that
+        // was just left still dropped its garbage and its artwork is still in the
+        // decode cache. The flag coalesces a burst of hops into one collection.
+        if (_shownSectionKey.Length > 0 &&
+            !string.Equals(_shownSectionKey, key, StringComparison.Ordinal))
+        {
+            ScheduleSettle();
+        }
         _shownSectionKey = key;
         if (!_sectionViews.TryGetValue(key, out var view))
         {
@@ -759,6 +770,9 @@ public partial class MainWindow : Window
 
     /// <summary>How long to wait before retrying a release that was refused.</summary>
     internal TimeSpan SectionReleaseRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>The settles that have run; a test uses it to prove a switch settled.</summary>
+    internal int SettleCount => Volatile.Read(ref _settleCount);
 
     private static bool IsAvatarSectionKey(string key)
         => string.Equals(key, "avatars", StringComparison.Ordinal) ||
@@ -967,6 +981,7 @@ public partial class MainWindow : Window
                 // cache now; dropping it costs a re-decode from the disk cache and
                 // frees up to 24 MB of the heap the collect is about to walk.
                 var result = MemorySettle.Run(ImageLoader.Shared.TrimMemory);
+                Interlocked.Increment(ref _settleCount);
                 LifecycleLog.Write(
                     $"memory: settled in {result.Milliseconds}ms " +
                     $"freed={result.FreedBytes / (1024 * 1024)}MB");

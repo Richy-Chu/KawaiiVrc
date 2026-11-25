@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 973 tests and takes about 3 minutes. CI builds with SDK 8, while a
+A full run is 975 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.104**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.105**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -129,9 +129,15 @@ file inline and never freed it.
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
 
+### What 1.0.105 changed
+
+- **Every switch settles.** 1.0.104 released memory only when a page was given up - leaving Media or the avatar library, or pushing a page out of the two-view cache. Two light tabs both stay cached, so Worlds -> Friends evicted nothing and settled nothing. `ShowSelectedSection` now schedules the settle on any real switch (selecting the open section again is not one; startup is not one), still coalesced into one collection a second after the last hop.
+- **The quiet-heap cost is 10-12 ms** (three runs in the probe), against 21 ms and 267 MB handed back for the 256 MB-of-garbage probe. `MainWindow.SettleCount` exists for `SwitchingBetweenTwoLightSectionsStillSettles` and `ReturningToTheSectionThatIsAlreadyOpenDoesNotSettle`.
+- **A light tab still keeps its rows for the 90 s grace**; what the settle returns there is its garbage and the decode cache, not its data. Only Media and the avatar library release data on leave.
+
 ### What 1.0.104 changed
 
-- **A tab switch gives the memory back.** `MainWindow.ScheduleSettle` used to send `GC.Collect(2, GCCollectionMode.Optimized, blocking: false)`, a hint the GC may ignore, and skipped any switch within 20 s of the last one. The log showed Media at `683 -> 1095 -> 1178 MB` working set and `1178 MB` still there after switching to Worlds. `Services/MemorySettle` now drops the decoded-image cache, collects with `GCCollectionMode.Aggressive`/`Compacting` plus `LargeObjectHeapCompactionMode.CompactOnce`, waits for finalizers and collects again, then logs `memory: settled in Xms freed=YMB`. Every switch schedules one (coalesced, one second after the switch).
+- **A tab switch gives the memory back.** `MainWindow.ScheduleSettle` used to send `GC.Collect(2, GCCollectionMode.Optimized, blocking: false)`, a hint the GC may ignore, and skipped any switch within 20 s of the last one. The log showed Media at `683 -> 1095 -> 1178 MB` working set and `1178 MB` still there after switching to Worlds. `Services/MemorySettle` now drops the decoded-image cache, collects with `GCCollectionMode.Aggressive`/`Compacting` plus `LargeObjectHeapCompactionMode.CompactOnce`, waits for finalizers and collects again, then logs `memory: settled in Xms freed=YMB`. Every switch that hands a page back schedules one (coalesced, one second after the switch); 1.0.105 extended that to every switch.
 - **Aggressive is the mode that matters.** Probe with the metadata pass's buffer pattern (256 MB of dropped 256 KB/512 KB buffers, 48 MB library live): peak 339 MB private -> old hint 340 MB (0 freed) -> forced collect only 327 MB (12 freed, managed 310 -> 55 MB but 307 MB still committed) -> `MemorySettle` 72 MB (267 MB freed, 55 MB committed), 21 ms for both passes. A plain forced `GC.Collect` reclaims the heap but leaves the segments committed, which is exactly the reported "it stays where it is".
 - **Media is released on leave, not after a grace period.** `MediaDataGrace` is zero like avatars. `MediaLibraryViewModel.ReleaseData` now returns bool, closes the viewer, cancels the metadata pass and drops `_allItems`, `_itemsByFolder`, `_photoCache`, the 48 reusable `PageCards` (through `RebuildPage`) and the filter rows; it refuses (false) while a scan runs, so `MainWindow` retries via the renamed `SectionReleaseRetryDelay`. `DataGraceFor` in `MainWindow` decides which sections are released immediately.
 - **`MediaThumbnailRenderTests` no longer pins the `BitmapImage` instance** after a hidden page is shown again - the settle drops the shared decode cache, so a card may decode again; the render check still asserts the same picture draws.
@@ -205,7 +211,9 @@ file inline and never freed it.
    `LargeObjectHeapCompactionMode.CompactOnce`, `WaitForPendingFinalizers`, and one more pass. Do
    not put it back on a hint (`Optimized`, `blocking: false`) or on a plain `Forced` pass: the hint
    is allowed to do nothing (0 MB freed in the 1.0.104 probe), and a forced pass collected the heap
-   but kept 307 MB committed against a 55 MB heap.
+   but kept 307 MB committed against a 55 MB heap. `ShowSelectedSection` schedules it on every
+   switch (1.0.105), so a light tab that stays in the two-view cache still settles; do not move it
+   back inside `EvictSectionView` alone.
 6. **`FriendsSignature` stays a hash**, over the same fields as before.
 7. **Page cache changes go through `MaxCachedSectionViews` and `EvictSectionView`.** Eviction calls
    `ReleaseBrowsers` to drop the page's WebView2s; skipping it leaves a hidden browser running.
