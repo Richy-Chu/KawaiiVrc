@@ -6,7 +6,7 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 908 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
+A full run is 917 tests and takes about 2 minutes 40 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
@@ -64,6 +64,10 @@ touching polling, image decoding, popups, the section cache or a list's panel.
 - **Alt-tab no longer costs the page.** `EmbeddedBrowser.OnWindowDeactivated` called `ReleaseForMemory()` for any page that was not visible, which disposes the WebView of a cached section, so returning to that section came back blank. `MainWindow.OnWindowDeactivated` also cleared the decoded-image cache on every focus loss, so the next focus re-decoded every picture on screen. Focus loss now only lowers the WebView's memory target, and `OnWindowActivated` restores it. Disposal stays with section eviction.
 - **The chatbox tick stopped enumerating processes on the UI thread.** `ChatboxViewModel.RefreshOutputMode` called `VrModeDetector.IsVrRunning`, which walks the process list for `vrmonitor` and `OVRServer_x64`, inside the UI-thread scan tick. The 1.0.86 log named it: `ui stall 828ms cpu=687ms of 828ms burning cpu across chatbox-tick`. It now probes on the pool (at most every 15 s) and applies the answer on the dispatcher, the same shape as `PollNowPlayingAsync`.
 
+### What 1.0.88 changed
+
+- **A section switch no longer reloads Discord.** `ShouldKeepSectionView` never named `discord`, so the LRU loop - or the lite-mode limit of one cached view - evicted the Discord section, `ReleaseBrowsers` disposed its WebView, and coming back loaded the page from scratch, which drops a voice call. The method's own comment already promised Discord stayed cached; the predicate enforces it now, because a call is not always audible and `IsDocumentPlayingAudio` cannot stand in for it.
+
 ### Do not undo these
 
 1. **No `DropShadowEffect`.** If a panel now reads as too flat, give it a baked edge - a second
@@ -86,6 +90,10 @@ touching polling, image decoding, popups, the section cache or a list's panel.
 6. **`FriendsSignature` stays a hash**, over the same fields as before.
 7. **Page cache changes go through `MaxCachedSectionViews` and `EvictSectionView`.** Eviction calls
    `ReleaseBrowsers` to drop the page's WebView2s; skipping it leaves a hidden browser running.
+   `ShouldKeepSectionView` pins an open Discord page (and a focused or busy Brave/Resources page)
+   above the limit, because evicting a browser view disposes its WebView and the reload that follows
+   drops a Discord voice call. `SectionCacheTests` pins that predicate; do not narrow it back to the
+   cache limit alone.
 8. **WebView2 suspension already exists.** `Controls/EmbeddedBrowser` suspends a hidden page with
    `TrySuspendAsync` after 7 seconds (now 3), sets a low memory target while hidden, and releases the
    whole WebView when the section is evicted. Do not add a second suspension mechanism.
@@ -375,7 +383,7 @@ has gone untouched for the hour, which is how a reused pid stops keeping litter.
 `build/test-profile-guard-red.ps1`, which requires one filtered run to exit 1 on a fabricated
 baseline.
 
-`test-suite.yml` runs on every push and is the only job that runs all 908 tests. When a test
+`test-suite.yml` runs on every push and is the only job that runs all 917 tests. When a test
 fails, `build/retry-failed-tests.ps1` re-runs only the failed tests once: it plans the filter
 from the run's `trx`, reports what passed on retry as a warning and in the step summary, and the
 job stays green - a flaky test must not redden an otherwise good commit, but it must not be

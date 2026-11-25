@@ -998,16 +998,38 @@ public partial class MainWindow : Window
 
     private bool ShouldKeepSectionView(string key)
     {
-        // A focused or playing browser is an active workspace; its view owns
-        // the layout and WebView state. Keep it while music or a download is
-        // running so switching sections does not restart the page.
-        return key switch
+        var (browserFocused, browserActive) = key switch
         {
-            "brave" => _viewModel.BraveBrowserViewModel.IsFocusMode || SectionHasBrowserActivity(key),
-            "resources" => _viewModel.CreatorResourcesViewModel.IsFocusMode || SectionHasBrowserActivity(key),
+            "brave" => (_viewModel.BraveBrowserViewModel.IsFocusMode, SectionHasBrowserActivity(key)),
+            "resources" => (_viewModel.CreatorResourcesViewModel.IsFocusMode, SectionHasBrowserActivity(key)),
+            _ => (false, false)
+        };
+
+        return ShouldKeepSectionView(
+            key,
+            _viewModel.DiscordBrowserViewModel.IsBrowserOpen,
+            browserFocused,
+            browserActive);
+    }
+
+    /// <summary>
+    /// A focused or playing browser is an active workspace; its view owns the layout and the
+    /// WebView state, and keeping it is what stops a section switch from restarting the page.
+    /// Discord is kept whenever its page is open: evicting the view disposes the WebView, and
+    /// a reload drops a voice call. A call is not always audible, so "playing audio" cannot
+    /// stand in for it, and the page has to stay instead.
+    /// </summary>
+    internal static bool ShouldKeepSectionView(
+        string key,
+        bool discordOpen,
+        bool browserFocused,
+        bool browserActive)
+        => key switch
+        {
+            "discord" => discordOpen,
+            "brave" or "resources" => browserFocused || browserActive,
             _ => false
         };
-    }
 
     private static string TemplateKeyFor(string key)
         => key switch
