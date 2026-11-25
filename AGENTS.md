@@ -12,7 +12,7 @@ newer SDK may be the local default: to check SDK 8 compatibility, write a `globa
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.87**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.88**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
