@@ -94,6 +94,23 @@ public class ImageDecodeTests
     }
 
     [Fact]
+    public void APictureIsDecodedForItsBoxNotForTheSourceFile()
+    {
+        var bytes = Screenshot(1920, 1080);
+
+        // The enlarged boop card draws a 160 DIP box and used to decode 640 px
+        // wide; 320 is twice the box, which is what 200% scaling draws.
+        var before = Assert.IsAssignableFrom<BitmapSource>(ImageLoader.DecodeSkiaFullSize(bytes, 640));
+        var after = Assert.IsAssignableFrom<BitmapSource>(ImageLoader.DecodeSkiaFullSize(bytes, 320));
+
+        Assert.Equal(640 * 360 * 4, before.PixelWidth * before.PixelHeight * 4);
+        Assert.Equal(320 * 180 * 4, after.PixelWidth * after.PixelHeight * 4);
+        _output.WriteLine(
+            $"boop card: 640 px {before.PixelWidth * before.PixelHeight * 4:N0} B -> " +
+            $"320 px {after.PixelWidth * after.PixelHeight * 4:N0} B");
+    }
+
+    [Fact]
     public void AWebpIsNotDecodedAtItsSourceResolution()
     {
         var bytes = Webp(1600, 1200);

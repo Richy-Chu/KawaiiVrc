@@ -10,7 +10,6 @@ namespace VrcCompanion.Services;
 /// <summary>One picture found in the VRChat pictures folder.</summary>
 public sealed class MediaItem
 {
-    private BitmapImage? _thumbnail;
     private VrcPhotoMetadata? _embeddedMetadata;
     private bool _metadataRead;
     private readonly object _metadataLock = new();
@@ -107,10 +106,12 @@ public sealed class MediaItem
         }
     }
 
-    /// <summary>Small decode for the grid; loaded lazily and frozen for reuse.</summary>
-    public BitmapImage? Thumbnail => _thumbnail ??= LoadBitmap(320);
-
-    /// <summary>Decodes this file at the requested width (frozen, safe across threads).</summary>
+    /// <summary>
+    /// Decodes this file at the requested width (frozen, safe across threads).
+    /// The grid never calls it: a card decodes through <c>AsyncImage</c> at 160 px,
+    /// so a per-item thumbnail cache here only held a second decode of files the
+    /// library keeps for the whole session.
+    /// </summary>
     public BitmapImage? LoadBitmap(int decodeWidth)
     {
         try

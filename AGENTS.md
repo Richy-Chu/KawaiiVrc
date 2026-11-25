@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 967 tests and takes about 2 minutes 45 seconds. CI builds with SDK 8, while a
+A full run is 969 tests and takes about 2 minutes 45 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.102**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.103**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -129,6 +129,12 @@ file inline and never freed it.
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
 
+### What 1.0.103 changed
+
+- **No image decodes wider than twice the box it draws in.** `ImageDecodeBudgetTests` parses every `AsyncImage` in every `.xaml`, takes the nearest ancestor that names a numeric `Width`, and fails when `DecodeWidth` is above twice it (96 px floor for the tiny avatars). Twelve sites were over: the enlarged boop card decoded 640 px into a 160 px box (921,600 B -> 230,400 B for a 1080p source), the group card 256 into 64 (262,144 -> 65,536), the notification chips 220 into 52 (193,600 -> 43,264, twice), the invite world 360 into 92 (292,320 -> 76,544), the media viewer's world chip 240 into 76 (157,440 -> 63,232), the avatar detail 300 into 122 (360,000 -> 238,144), the avatar grid 256 into 112, and four avatar chips 128/112 into 52-56. About 1.5 MB less decoded pixel data for one screen holding one of each, and the same 24 MB loader cache now holds roughly four times as many of them.
+- **`MediaItem.Thumbnail` is gone.** Nothing called it; the grid decodes through `AsyncImage` at 160 px, so the per-item cache only kept a second, 320 px decode of every file the library holds for the session. `LoadBitmap` stays, because the viewer uses it.
+- **Decode the size you draw at 200% scaling.** `DecodePixelWidth` is physical pixels: a 52 DIP box is 104 px on a 200% display, so twice the box is the last useful width. Do not "improve" a small box back to a round 256 - it costs bytes and buys nothing on screen.
+
 ### What 1.0.102 changed
 
 - **A media card decodes at the size it draws.** `ImageLoader.LoadAsync(path, 160)` was measured returning a 1920x1080 frame (8,294,400 B) instead of 160x90 (57,600 B): forty-eight cards held about 398 MB of pixels, which is the gigabyte the Media tab reached on a real library. Two bugs stacked. `TryDecodeWpf` set `BitmapCreateOptions.IgnoreImageCache`, and WPF's `ImagingCache` is keyed by URI - a `StreamSource` has none, so `EndInit` threw `ArgumentNullException` and every decode fell back to Skia. Then `DecodeSkiaScaled` accepted the size `SKCodec.GetScaledDimensions` offered, and PNG (VRChat's format) answers with the source size, so it decoded ten megapixels and reported success; the resize fallback never ran.
@@ -222,6 +228,8 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
 16. **Stored location metadata is cached per account.** `ReadLocationsCached` hands out one shared dictionary; nothing may mutate it. Any path that inserts, updates or deletes a `gamelog_location` row must bump `_locationVersion` (the continuity importers only read the table, and the `COUNT(*)`/`MAX(last_updated_at)` check covers a store from elsewhere), or a rename will keep showing the old world name. `ARefreshDoesNotReReadEveryStoredLocation` pins both the allocation bound and the rename-after-warm accuracy.
 
 17. **Clearing a notification is local and persistent.** `ClearNotification`/`ClearAllNotifications` add the ids to `_clearedNotificationIds`, remove the rows and call `PersistNotifications`; they do not call VRChat. Decline (`DeclineNotificationAsync`) is the one that hides or answers on the server, and Accept/reply are unchanged. Do not clear `_clearedNotificationIds` on a refresh - that is what stops a cleared invite from coming back until a new notification with a new id arrives. The per-filter versions (`ClearFilteredNotifications`, `MarkFilteredNotificationsReadAsync`) read `_notificationsView` rather than `Notifications`; do not switch them to the full collection, or the buttons would repeat the header's Clear all. `NotificationPersistenceTests.MarkingOneFilterReadOnlyMarksWhatItShows` and `ClearingOneFilterLeavesTheOtherFiltersAlone` pin both rules. The bulk clears go through `ConfirmClearConfirmationCommand`; do not call the `Perform*` methods from a button, or the confirmation is bypassed.
+
+18. **A decode width stays within twice the drawn width.** `ImageDecodeBudgetTests` fails the suite for any `AsyncImage` whose `DecodeWidth` exceeds 2x the nearest ancestor `Width` (96 px floor). It skips a picture with no sized ancestor - a full-width hero or lightbox - so those still need a look by eye. When adding an `AsyncImage`, copy the width from the box it sits in rather than inventing one.
 
 ### Virtualization: what is real and what is not
 

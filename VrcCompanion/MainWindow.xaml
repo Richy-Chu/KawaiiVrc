@@ -1195,7 +1195,7 @@
                                                             ClipToBounds="True"
                                                             Background="{StaticResource InputBrush}">
                                                         <controls:AsyncImage SourceUrl="{Binding BoopImageUrl}"
-                                                                             DecodeWidth="220"
+                                                                             DecodeWidth="104"
                                                                              CornerRadius="9" />
                                                     </Border>
                                                 </Button>
@@ -1217,7 +1217,7 @@
                                                             ClipToBounds="True"
                                                             Background="{StaticResource InputBrush}">
                                                         <controls:AsyncImage SourceUrl="{Binding GroupImageUrl}"
-                                                                             DecodeWidth="220"
+                                                                             DecodeWidth="104"
                                                                              CornerRadius="9" />
                                                     </Border>
                                                 </Button>
@@ -1431,7 +1431,7 @@
                                                     Margin="0,0,12,0"
                                                     Visibility="{Binding HasGroupImage, Converter={StaticResource BoolToVis}}">
                                                 <controls:AsyncImage SourceUrl="{Binding GroupImageUrl}"
-                                                                     DecodeWidth="256"
+                                                                     DecodeWidth="128"
                                                                      CornerRadius="10" />
                                             </Border>
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -1573,7 +1573,7 @@
                                                 ClipToBounds="True"
                                                 Background="{StaticResource InputBrush}">
                                             <controls:AsyncImage SourceUrl="{Binding BoopImageUrl}"
-                                                                 DecodeWidth="640"
+                                                                 DecodeWidth="320"
                                                                  CornerRadius="12" />
                                         </Border>
                                     </Button>
@@ -1614,7 +1614,7 @@
                                                         ClipToBounds="True"
                                                         Background="{DynamicResource KawaiiChipBrush}">
                                                     <controls:AsyncImage SourceUrl="{Binding WorldImageUrl}"
-                                                                         DecodeWidth="360"
+                                                                         DecodeWidth="184"
                                                                          CornerRadius="8" />
                                                 </Border>
                                                 <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
@@ -3519,7 +3519,7 @@
                                                 Background="{StaticResource InputBrush}"
                                                 Margin="0,0,14,0">
                                             <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}"
-                                                                 DecodeWidth="128" />
+                                                                 DecodeWidth="112" />
                                         </Border>
 
                                         <!-- Group info -->
@@ -3612,7 +3612,7 @@
                                             CornerRadius="14"
                                             Background="{StaticResource InputBrush}"
                                             Margin="0,0,14,0">
-                                        <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}" DecodeWidth="128" />
+                                        <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}" DecodeWidth="104" />
                                     </Border>
 
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -6502,7 +6502,7 @@
                                                                    HorizontalAlignment="Center"
                                                                    VerticalAlignment="Center" />
                                                         <controls:AsyncImage SourceUrl="{Binding MediaViewModel.ViewerWorldThumbnailUrl}"
-                                                                             DecodeWidth="240"
+                                                                             DecodeWidth="152"
                                                                              CornerRadius="9" />
                                                     </Grid>
                                                 </Border>
@@ -10207,7 +10207,7 @@
                                                                                    HorizontalAlignment="Center"
                                                                                    VerticalAlignment="Center"
                                                                                    Visibility="{Binding HasThumbnail, Converter={StaticResource InverseBoolToVis}}" />
-                                                                        <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}" DecodeWidth="256" />
+                                                                        <controls:AsyncImage SourceUrl="{Binding ThumbnailUrl}" DecodeWidth="224" />
                                                                         <Border Background="#99060810"
                                                                                 Visibility="{Binding IsPrivate, Converter={StaticResource BoolToVis}}">
                                                                             <TextBlock Text="&#xE72E;"
@@ -10648,7 +10648,7 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <Border Width="52" Height="52" CornerRadius="14" Background="{StaticResource InputBrush}" Margin="0,0,14,0">
-                                            <controls:AsyncImage SourceUrl="{Binding GroupViewModel.GroupInfo.ThumbnailUrl}" DecodeWidth="128" />
+                                            <controls:AsyncImage SourceUrl="{Binding GroupViewModel.GroupInfo.ThumbnailUrl}" DecodeWidth="104" />
                                         </Border>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                             <TextBlock Text="{Binding GroupViewModel.GroupInfo.Name}"
@@ -11132,7 +11132,7 @@
                                                             Margin="0,0,11,0">
                                                         <Grid>
                                                             <controls:AsyncImage SourceUrl="{Binding AvatarUrl}"
-                                                                                 DecodeWidth="112"
+                                                                                 DecodeWidth="96"
                                                                                  CornerRadius="23" />
                                                             <TextBlock Text="&#xE77B;"
                                                                        FontFamily="Segoe MDL2 Assets"
@@ -12269,7 +12269,7 @@
                                 Background="{StaticResource InputBrush}"
                                 VerticalAlignment="Top">
                             <controls:AsyncImage SourceUrl="{Binding SelectedEntry.AvatarUrl}"
-                                                 DecodeWidth="300"
+                                                 DecodeWidth="244"
                                                  CornerRadius="9" />
                         </Border>
                         <StackPanel Grid.Column="1" Margin="12,0,0,0">
