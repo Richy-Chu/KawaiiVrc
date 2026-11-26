@@ -589,7 +589,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SearchSuggestionCommand = Track(new AsyncRelayCommand<string>(
             SearchSuggestionAsync,
             _ => IsLoggedIn && !IsBusy));
-        OpenWorldCommand = Track(new RelayCommand<WorldItem>(OpenWorld, world => world is not null));
+        OpenWorldCommand = Track(new RelayCommand<WorldItem>(
+            world => OpenWorld(world),
+            world => world is not null));
         OpenMediaPersonCommand = Track(new RelayCommand<MediaPersonItem>(
             OpenMediaPerson,
             person => person is { HasUserId: true }));
@@ -704,6 +706,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OpenFriendWorldCommand = Track(new AsyncRelayCommand<FriendItem>(
             OpenFriendWorldAsync,
             friend => friend is not null && LaunchService.GetWorldIdFromLocation(friend.Location) is not null && !IsBusy));
+        // Any world location - an invite, a friend's instance, a profile row - opens the
+        // same world dialog with that exact instance pinned at the top of its list.
+        OpenWorldDetailsForLocationCommand = Track(new AsyncRelayCommand<string>(
+            OpenWorldDetailsForLocationAsync,
+            location => LaunchService.GetWorldIdFromLocation(location) is not null && !IsBusy));
         OpenFriendLocationsCommand = Track(new AsyncRelayCommand(
             OpenFriendLocationsAsync,
             () => IsLoggedIn && !IsBusy));
@@ -733,7 +740,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             () => WorldDialog is not null && !WorldDialog.IsLoading && !IsBusy));
         CreateInstanceCommand = Track(new AsyncRelayCommand(
             CreateInstanceAsync,
-            () => WorldDialog is { IsCreating: false } && !IsBusy));
+            () => WorldDialog is { IsCreating: false, IsLoadingOwners: false } && !IsBusy));
         LaunchCreatedInstanceCommand = Track(new RelayCommand(
             LaunchCreatedInstance,
             () => WorldDialog?.CreatedInstance is not null));
@@ -2683,6 +2690,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand<FriendItem> CopyFriendUserIdCommand { get; }
     public RelayCommand<FriendItem> CopyFriendProfileLinkCommand { get; }
     public AsyncRelayCommand<FriendItem> OpenFriendWorldCommand { get; }
+    public AsyncRelayCommand<string> OpenWorldDetailsForLocationCommand { get; }
     public AsyncRelayCommand OpenFriendLocationsCommand { get; }
     public RelayCommand OpenFriendsCommand { get; }
     public RelayCommand OpenInstanceCommand { get; }
@@ -4532,7 +4540,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void OpenWorld(WorldItem? world)
+    private void OpenWorld(WorldItem? world, string? focusLocation = null, string? focusNote = null)
     {
         if (world is null)
         {
@@ -4544,7 +4552,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         var cancellation = new CancellationTokenSource();
         _worldDialogCancellation = cancellation;
 
-        var dialog = new WorldDialogViewModel(world, _api, _images);
+        // A profile or the friend-locations popup sits above this dialog in z-order, so a
+        // Details button inside one would otherwise open the world underneath the popup.
+        if (HasSelectedFriend)
+        {
+            ClearFriendSelection();
+        }
+        if (IsFriendLocationsOpen)
+        {
+            IsFriendLocationsOpen = false;
+        }
+
+        var dialog = new WorldDialogViewModel(world, _api, _images, focusLocation, focusNote);
         WorldDialog = dialog;
         ClearInfo();
         _ = dialog.LoadAsync(forceRefresh: false, cancellation.Token);
@@ -7978,10 +7997,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        OpenWorld(new WorldItem(world)
-        {
-            IsFavorite = _favoriteWorlds.Contains(world.Id)
-        });
+        var inviteLocation = LaunchService.IsLocation(detail.InviteLocation)
+            ? detail.InviteLocation
+            : null;
+        OpenWorld(
+            new WorldItem(world)
+            {
+                IsFavorite = _favoriteWorlds.Contains(world.Id)
+            },
+            inviteLocation,
+            "You were invited to this instance.");
     }
 
     private void ChooseBackdrop()
@@ -8152,6 +8177,33 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        await OpenWorldForLocationAsync(friend.Location, worldId, "Your friend is in this instance.");
+    }
+
+    /// <summary>
+    /// Opens the world dialog for any location the app is showing - an invite's instance,
+    /// a friend's world, a profile, an instance row - with that instance pinned, so the
+    /// details, join and invite actions all point at the world the location names.
+    /// </summary>
+    private async Task OpenWorldDetailsForLocationAsync(string? location)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var worldId = LaunchService.GetWorldIdFromLocation(location);
+        if (worldId is null)
+        {
+            ShowError("That location does not point to a VRChat world.");
+            return;
+        }
+
+        await OpenWorldForLocationAsync(location!, worldId, "This is the instance you opened.");
+    }
+
+    private async Task OpenWorldForLocationAsync(string location, string worldId, string focusNote)
+    {
         PushBusy("Loading that world…");
         try
         {
@@ -8162,7 +8214,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            OpenWorld(new WorldItem(world));
+            OpenWorld(
+                new WorldItem(world) { IsFavorite = _favoriteWorlds.Contains(world.Id) },
+                location,
+                focusNote);
         }
         catch (VrcApiException ex)
         {

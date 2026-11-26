@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1022 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1030 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.121**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.122**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,35 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.122 changed
+
+- **A world opens on the instance it was asked about, not just the world.** `OpenWorld` takes an
+  optional location and note, and `WorldDialogViewModel` pins that instance first in Active instances
+  (`WorldInstanceItem.IsFocus`, `FocusInstance`). VRChat does not list a private invite among a
+  world's visible instances, so the row is built from the location itself; when the instance is
+  listed, the existing row is marked instead of duplicated. Every surface that names a world now
+  passes its location: the profile popup's World details button and its world row, the friend
+  locations rows, an invite's Open world details, and the Friends tab's friend command. The new
+  `MainViewModel.OpenWorldDetailsForLocationCommand` is the shared entry point (empty or
+  `private` locations fail its CanExecute).
+- **The popup profile shows the world, not just a line of text.** `FriendDetailViewModel` reads the
+  world it points at and exposes its picture (`WorldImageUrl`), drawn at 64x40 beside the world line;
+  `HasWorldId` reveals an Open world details link in the same card.
+- **Group instances can be created from the world dialog.** The HOST list offers the account ("Just
+  you") and each joined group whose role carries an instance-creation permission
+  (`InstancePresentation.GroupInstanceAccess` maps `group-instance-public-create`/`-open-create`,
+  `-plus-create` and `-restricted-create`/`-members-create`; a group without `myMember` is left open
+  for VRChat to judge). Choosing a group swaps ACCESS to Group public / Group+ / Group members and
+  defaults to the most limited kind the role allows. `VrcApiClient.CreateInstanceAsync` gained
+  optional `ownerId` and `groupAccessType`, sending `type: "group"`, the `grp_…` id as owner, and
+  `groupAccessType` with `canRequestInvite: false`.
+- **The world dialog is never opened underneath the popup that asked for it.** The friend profile
+  (z 30/34) and friend locations (23) sit above it (20), so `OpenWorld` closes a selected friend
+  profile and the friend-locations list before showing the dialog.
+- **Tests: 1030.** `WorldDialogInstanceTargetTests` pins the pinned invite row, no duplicate of a
+  listed instance, permission-filtered owners, the group create payload, the personal owner, the
+  profile-location command, the popup closing, and that non-world locations are not offered.
 
 ### What 1.0.121 changed
 
@@ -557,7 +586,16 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    timing (through `OverlayBackdropGuard.Clock`, which `TestHooks.ResetAll` resets) and audits every
    `Cursor="Arrow"` element in the XAML, so a new backdrop without the attribute fails the suite.
 
-24. **An account row shows the profile picture, with the letter as fallback.** The picture lives in
+24. **A world opened from a location pins that instance.** `OpenWorld`'s location and note go into
+   `WorldDialogViewModel`, which keeps the instance first in `Instances` (`IsFocus`) even though
+   VRChat omits private invites from a world's visible instances. Do not turn the focus row back
+   into a plain lookup of `slimInstances`, and do not open the world dialog from a profile or the
+   friend-locations list without closing that popup first: both sit above the dialog, so otherwise
+   the dialog opens invisibly behind them. Group instances are created with `type: "group"`, the
+   `grp_…` id as `ownerId`, and `groupAccessType` - never as a user-owned `hidden`/`friends`
+   instance.
+
+25. **An account row shows the profile picture, with the letter as fallback.** The picture lives in
    the account's stored profile (`imageUrl` in `<accountId>.json`) and is captured when the session
    is saved or switched, from the same `PickAvatarThumbnailUrl` order every list uses.
    `RegisterAccount(..., imageUrl)` keeps an existing URL when given none, and

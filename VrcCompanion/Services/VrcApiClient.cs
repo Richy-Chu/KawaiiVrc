@@ -1416,18 +1416,33 @@ public sealed class VrcApiClient : IDisposable
         return world;
     }
 
+    /// <summary>
+    /// Creates an instance. A personal instance is owned by the signed-in account (or by
+    /// nobody when it is public). A group instance passes <c>type: "group"</c>, the
+    /// <c>grp_…</c> id as <c>ownerId</c>, and which group access it grants in
+    /// <paramref name="groupAccessType"/> (<c>public</c>, <c>plus</c> or <c>members</c>).
+    /// </summary>
     public async Task<VrcInstance> CreateInstanceAsync(
         string worldId,
         string type,
         string region,
         bool canRequestInvite,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? ownerId = null,
+        string? groupAccessType = null)
     {
-        var ownerId = string.Equals(type, "public", StringComparison.OrdinalIgnoreCase)
-            ? null
-            : CurrentUser?.Id;
-        if (!string.Equals(type, "public", StringComparison.OrdinalIgnoreCase) &&
-            string.IsNullOrWhiteSpace(ownerId))
+        var isGroup = string.Equals(type, "group", StringComparison.OrdinalIgnoreCase);
+        var isPublic = string.Equals(type, "public", StringComparison.OrdinalIgnoreCase);
+        var resolvedOwnerId = isGroup
+            ? ownerId
+            : isPublic
+                ? null
+                : CurrentUser?.Id;
+        if (isGroup && string.IsNullOrWhiteSpace(resolvedOwnerId))
+        {
+            throw new VrcApiException(0, "Choose a group before creating a group instance.");
+        }
+        if (!isGroup && !isPublic && string.IsNullOrWhiteSpace(resolvedOwnerId))
         {
             throw new VrcApiException(0, "Sign in again before creating a friends-only instance.");
         }
@@ -1437,11 +1452,18 @@ public sealed class VrcApiClient : IDisposable
             ["worldId"] = worldId,
             ["type"] = type,
             ["region"] = region,
-            ["canRequestInvite"] = canRequestInvite
+            ["canRequestInvite"] = isGroup ? false : canRequestInvite
         };
-        if (ownerId is not null)
+        if (resolvedOwnerId is not null)
         {
-            payload["ownerId"] = ownerId;
+            payload["ownerId"] = resolvedOwnerId;
+        }
+        if (isGroup)
+        {
+            // Group access is a separate field: public, plus (friends of members) or members.
+            payload["groupAccessType"] = string.IsNullOrWhiteSpace(groupAccessType)
+                ? "members"
+                : groupAccessType;
         }
 
         using var content = JsonContent.Create(payload);

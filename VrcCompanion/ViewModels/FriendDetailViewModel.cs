@@ -37,6 +37,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
     private ImageSource? _avatarImage;
     private ImageSource? _bannerImage;
     private string? _worldName;
+    private string? _worldImageUrl;
     private string? _error;
     private bool _isLoading;
     private VrcFriendStatus? _friendStatus;
@@ -2906,6 +2907,14 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     public bool HasWorldName => !string.IsNullOrWhiteSpace(_worldName);
 
+    /// <summary>The world's own picture, so the profile shows the place and not just its name.</summary>
+    public string WorldImageUrl => _worldImageUrl ?? string.Empty;
+
+    public bool HasWorldImage => !string.IsNullOrWhiteSpace(_worldImageUrl);
+
+    /// <summary>True when the profile points at a real world the details dialog can open.</summary>
+    public bool HasWorldId => WorldId is not null;
+
     public string WorldLine
     {
         get
@@ -3249,6 +3258,8 @@ public sealed class FriendDetailViewModel : ViewModelBase
         else if (locationChanged)
         {
             _worldName = friend.HasWorldName ? friend.WorldName : null;
+            _worldImageUrl = null;
+            _ = LoadWorldInfoAsync(CancellationToken.None);
         }
         else if (friend.HasWorldName)
         {
@@ -3446,22 +3457,10 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
     private async Task LoadExtrasAsync(CancellationToken cancellationToken)
     {
-        var worldId = WorldId;
+        await LoadWorldInfoAsync(cancellationToken);
+
         try
         {
-            if (worldId is not null)
-            {
-                var world = await _api.GetWorldAsync(worldId, cancellationToken: cancellationToken);
-                if (!cancellationToken.IsCancellationRequested &&
-                    string.Equals(WorldId, worldId, StringComparison.OrdinalIgnoreCase))
-                {
-                    _worldName = world?.Name;
-                    OnPropertyChanged(nameof(WorldName));
-                    OnPropertyChanged(nameof(HasWorldName));
-                    OnPropertyChanged(nameof(WorldLine));
-                }
-            }
-
             var mutuals = await _api.GetMutualsAsync(Id, cancellationToken: cancellationToken);
             if (cancellationToken.IsCancellationRequested)
             {
@@ -3479,6 +3478,57 @@ public sealed class FriendDetailViewModel : ViewModelBase
         catch (VrcApiException ex)
         {
             Debug.WriteLine(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    /// <summary>
+    /// Reads the world the profile points at: its name and picture. The details button
+    /// then opens that exact instance, not just the world in general.
+    /// </summary>
+    private async Task LoadWorldInfoAsync(CancellationToken cancellationToken)
+    {
+        var worldId = WorldId;
+        if (worldId is null)
+        {
+            _worldImageUrl = null;
+            OnPropertyChanged(nameof(WorldImageUrl));
+            OnPropertyChanged(nameof(HasWorldImage));
+            OnPropertyChanged(nameof(HasWorldId));
+            return;
+        }
+
+        try
+        {
+            var world = await _api.GetWorldAsync(worldId, cancellationToken: cancellationToken);
+            if (cancellationToken.IsCancellationRequested ||
+                !string.Equals(WorldId, worldId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(world?.Name))
+            {
+                _worldName = world!.Name;
+            }
+
+            _worldImageUrl = ImageUrlHelper.ToThumbnailUrl(
+                string.IsNullOrWhiteSpace(world?.ImageUrl) ? world?.ThumbnailImageUrl : world!.ImageUrl,
+                132);
+
+            OnPropertyChanged(nameof(WorldName));
+            OnPropertyChanged(nameof(HasWorldName));
+            OnPropertyChanged(nameof(WorldLine));
+            OnPropertyChanged(nameof(WorldImageUrl));
+            OnPropertyChanged(nameof(HasWorldImage));
+            OnPropertyChanged(nameof(HasWorldId));
+        }
+        catch (OperationCanceledException)
+        {
+            // Selection changed.
         }
         catch (Exception ex)
         {

@@ -24,6 +24,40 @@ public sealed class InstanceTypeOption
     public string Description { get; }
 }
 
+/// <summary>
+/// Who owns the instance the dialog creates: the signed-in account, or one of its groups
+/// whose role is allowed to open an instance. A group carries the access it may create.
+/// </summary>
+public sealed class InstanceOwnerOption
+{
+    public InstanceOwnerOption(
+        string label,
+        string? groupId,
+        string description,
+        IReadOnlyList<string> accessTypes,
+        string thumbnailUrl = "")
+    {
+        Label = label;
+        GroupId = groupId;
+        Description = description;
+        AccessTypes = accessTypes;
+        ThumbnailUrl = thumbnailUrl;
+    }
+
+    public string Label { get; }
+    public string? GroupId { get; }
+    public string Description { get; }
+
+    /// <summary>The group access kinds this account's role may open: public, plus, members.</summary>
+    public IReadOnlyList<string> AccessTypes { get; }
+
+    public string ThumbnailUrl { get; }
+
+    public bool IsGroup => !string.IsNullOrWhiteSpace(GroupId);
+
+    public bool HasThumbnail => !string.IsNullOrWhiteSpace(ThumbnailUrl);
+}
+
 public sealed class RegionOption
 {
     public RegionOption(string label, string value, string detail)
@@ -45,17 +79,39 @@ public sealed class WorldInstanceItem : ViewModelBase
     private bool _isGroupMember;
     private string? _groupMembershipStatus;
     private string? _groupJoinState;
+    private string? _focusNote;
 
-    public WorldInstanceItem(VrcInstance instance, string worldId)
+    public WorldInstanceItem(VrcInstance instance, string worldId, string? focusNote = null)
     {
         Instance = instance;
         WorldId = worldId;
+        _focusNote = focusNote;
         GroupId = ParseGroupId(instance.InstanceId) ?? ParseGroupId(instance.Location);
     }
 
     public VrcInstance Instance { get; }
     public string WorldId { get; }
     public string InstanceId => Instance.InstanceId;
+
+    /// <summary>
+    /// True for the instance the dialog was opened for: the one an invite names, the one a
+    /// friend is in, or the one a location points at. It is pinned to the top of the list
+    /// even when VRChat does not include it in the world's visible instances.
+    /// </summary>
+    public bool IsFocus => !string.IsNullOrWhiteSpace(_focusNote);
+
+    public bool HasFocusNote => IsFocus;
+
+    public string FocusNote => _focusNote ?? string.Empty;
+
+    public void MarkFocus(string? note)
+    {
+        _focusNote = note;
+        OnPropertyChanged(nameof(IsFocus));
+        OnPropertyChanged(nameof(HasFocusNote));
+        OnPropertyChanged(nameof(FocusNote));
+        OnPropertyChanged(nameof(DetailText));
+    }
 
     /// <summary>Group instances carry their group in the instance id,
     /// e.g. `12345~group(grp_…)~groupAccessType(public)`; other instances have none.</summary>
@@ -118,7 +174,9 @@ public sealed class WorldInstanceItem : ViewModelBase
         }
     }
 
-    public string DetailText => $"{OccupancyText} · {RegionLabel}";
+    public string DetailText => IsFocus && Occupants <= 0
+        ? $"{AccessLabel} · {RegionLabel}"
+        : $"{OccupancyText} · {RegionLabel}";
 
     public string Title => !string.IsNullOrWhiteSpace(_groupName)
         ? _groupName!
@@ -177,25 +235,31 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private string? _errorMessage;
     private bool _isLoading;
     private bool _isCreating;
+    private readonly string? _focusLocation;
+    private readonly string? _focusNote;
+    private InstanceOwnerOption _selectedOwner;
+    private bool _isLoadingOwners;
+    private bool _ownersLoaded;
+    private WorldInstanceItem? _focusInstance;
     // Group details do not change while a world is open, so a refresh reuses them
     // instead of re-querying the same group for every rebuilt row.
     private readonly ConcurrentDictionary<string, Group> _groupCache = new(StringComparer.OrdinalIgnoreCase);
 
-    public WorldDialogViewModel(WorldItem summary, VrcApiClient api, ImageLoader images)
+    public WorldDialogViewModel(
+        WorldItem summary,
+        VrcApiClient api,
+        ImageLoader images,
+        string? focusLocation = null,
+        string? focusNote = null)
     {
         _summary = summary;
         _api = api;
         _images = images;
+        _focusLocation = focusLocation;
+        _focusNote = focusNote;
         HeroImage = summary.Image;
 
-        InstanceTypes = new ObservableCollection<InstanceTypeOption>
-        {
-            new("Public", "public", false, "Anyone can join."),
-            new("Friends+", "hidden", false, "Friends of friends can join."),
-            new("Friends", "friends", false, "Only your friends can join."),
-            new("Invite+", "private", true, "Invite only, friends can ask."),
-            new("Invite", "private", false, "Only invited friends can join.")
-        };
+        InstanceTypes = new ObservableCollection<InstanceTypeOption>(PersonalInstanceTypes);
         _selectedType = InstanceTypes[0];
 
         Regions = new ObservableCollection<RegionOption>
@@ -206,6 +270,16 @@ public sealed class WorldDialogViewModel : ViewModelBase
             new("Japan", "jp", "Tokyo")
         };
         _selectedRegion = Regions[0];
+
+        Owners = new ObservableCollection<InstanceOwnerOption>
+        {
+            new(
+                "Just you",
+                null,
+                "A personal instance you own",
+                Array.Empty<string>())
+        };
+        _selectedOwner = Owners[0];
 
         Instances = new ObservableCollection<WorldInstanceItem>();
     }
@@ -275,6 +349,61 @@ public sealed class WorldDialogViewModel : ViewModelBase
     public ObservableCollection<WorldInstanceItem> Instances { get; }
 
     public bool HasActiveInstances => Instances.Count > 0;
+
+    /// <summary>The instance this dialog was opened for, pinned at the top of the list.</summary>
+    public WorldInstanceItem? FocusInstance
+    {
+        get => _focusInstance;
+        private set => SetProperty(ref _focusInstance, value);
+    }
+
+    /// <summary>The account itself first, then each group whose role may create an instance.</summary>
+    public ObservableCollection<InstanceOwnerOption> Owners { get; }
+
+    public InstanceOwnerOption SelectedOwner
+    {
+        get => _selectedOwner;
+        set
+        {
+            if (value is null || ReferenceEquals(_selectedOwner, value))
+            {
+                return;
+            }
+
+            _selectedOwner = value;
+            OnPropertyChanged(nameof(SelectedOwner));
+            OnPropertyChanged(nameof(IsGroupOwner));
+            OnPropertyChanged(nameof(CreateButtonText));
+            RebuildInstanceTypes();
+        }
+    }
+
+    public bool IsGroupOwner => _selectedOwner.IsGroup;
+
+    public string CreateButtonText => IsGroupOwner
+        ? $"Create for {_selectedOwner.Label}"
+        : "Create instance";
+
+    public bool IsLoadingOwners
+    {
+        get => _isLoadingOwners;
+        private set
+        {
+            if (SetProperty(ref _isLoadingOwners, value))
+            {
+                OnPropertyChanged(nameof(HasGroupOwners));
+                OnPropertyChanged(nameof(OwnerHintText));
+            }
+        }
+    }
+
+    public bool HasGroupOwners => Owners.Any(owner => owner.IsGroup);
+
+    public string OwnerHintText => IsLoadingOwners
+        ? "Checking your groups for instance permissions…"
+        : HasGroupOwners
+            ? "Group instances are hosted by the group. VRChat only offers the access types your group role allows."
+            : "No group of yours allows instance creation, or you are not signed in. A group role needs an instance-creation permission to host for it.";
 
     public ObservableCollection<InstanceTypeOption> InstanceTypes { get; }
 
@@ -471,6 +600,10 @@ public sealed class WorldDialogViewModel : ViewModelBase
         IsLoading = true;
         ErrorMessage = null;
 
+        // Your groups load beside the world: the dialog is usable without them, and the
+        // create card fills in the moment VRChat answers.
+        _ = LoadOwnersAsync(cancellationToken);
+
         try
         {
             var world = await _api.GetWorldAsync(WorldId, forceRefresh, cancellationToken);
@@ -528,12 +661,24 @@ public sealed class WorldDialogViewModel : ViewModelBase
         ErrorMessage = null;
         try
         {
-            var instance = await _api.CreateInstanceAsync(
-                WorldId,
-                SelectedType.Value,
-                SelectedRegion.Value,
-                SelectedType.CanRequestInvite,
-                cancellationToken);
+            var owner = SelectedOwner;
+            // A group instance is owned by the group, and its access comes from the
+            // group access kind rather than the personal public/friends/private types.
+            var instance = owner.IsGroup
+                ? await _api.CreateInstanceAsync(
+                    WorldId,
+                    "group",
+                    SelectedRegion.Value,
+                    canRequestInvite: false,
+                    cancellationToken,
+                    ownerId: owner.GroupId,
+                    groupAccessType: SelectedType.Value)
+                : await _api.CreateInstanceAsync(
+                    WorldId,
+                    SelectedType.Value,
+                    SelectedRegion.Value,
+                    SelectedType.CanRequestInvite,
+                    cancellationToken);
 
             CreatedInstance = instance;
             _ = LoadUpdatedInstancesAsync(cancellationToken);
@@ -615,19 +760,33 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private void RebuildInstances(CancellationToken cancellationToken = default)
     {
         Instances.Clear();
+        FocusInstance = null;
         if (World is null)
         {
             OnPropertyChanged(nameof(HasActiveInstances));
             return;
         }
 
+        var items = World.SlimInstances
+            .Where(item => !string.IsNullOrWhiteSpace(item.InstanceId))
+            .OrderByDescending(item => item.Occupants)
+            .Take(12)
+            .Select(instance => new WorldInstanceItem(instance, World.Id))
+            .ToList();
+
         var added = new List<WorldInstanceItem>();
-        foreach (var instance in World.SlimInstances
-                     .Where(item => !string.IsNullOrWhiteSpace(item.InstanceId))
-                     .OrderByDescending(item => item.Occupants)
-                     .Take(12))
+
+        // The instance the dialog was opened for goes first and stays even when VRChat
+        // does not list it (a private invite is not in the world's visible instances).
+        var focus = BuildFocusInstance(items);
+        if (focus is not null)
         {
-            var item = new WorldInstanceItem(instance, World.Id);
+            Instances.Add(focus);
+            added.Add(focus);
+        }
+
+        foreach (var item in items)
+        {
             Instances.Add(item);
             added.Add(item);
         }
@@ -635,6 +794,178 @@ public sealed class WorldDialogViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasActiveInstances));
         GroupHydration = HydrateGroupsAsync(added, cancellationToken);
     }
+
+    private WorldInstanceItem? BuildFocusInstance(List<WorldInstanceItem> listed)
+    {
+        if (!LaunchService.IsLocation(_focusLocation) || string.IsNullOrWhiteSpace(_focusNote))
+        {
+            return null;
+        }
+
+        if (!string.Equals(
+                LaunchService.GetWorldIdFromLocation(_focusLocation),
+                World?.Id ?? _summary.Id,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var instanceId = LaunchService.GetInstanceIdFromLocation(_focusLocation);
+        if (string.IsNullOrWhiteSpace(instanceId))
+        {
+            return null;
+        }
+
+        var item = listed.FirstOrDefault(candidate =>
+            string.Equals(candidate.InstanceId, instanceId, StringComparison.OrdinalIgnoreCase));
+        if (item is not null)
+        {
+            listed.Remove(item);
+        }
+        else
+        {
+            item = new WorldInstanceItem(
+                new VrcInstance
+                {
+                    InstanceId = instanceId,
+                    WorldId = World?.Id ?? _summary.Id,
+                    Location = _focusLocation ?? string.Empty
+                },
+                World?.Id ?? _summary.Id);
+        }
+
+        item.MarkFocus(_focusNote);
+        FocusInstance = item;
+        return item;
+    }
+
+    /// <summary>
+    /// Your account plus the groups whose role may open an instance. VRChat sends the
+    /// permissions with the membership; when it does not, the group stays listed and
+    /// VRChat itself rejects an access kind the role cannot create.
+    /// </summary>
+    private async Task LoadOwnersAsync(CancellationToken cancellationToken)
+    {
+        // A refresh reloads the world and its instances; the account's groups do not
+        // change while the dialog is open, so they are read once.
+        if (_ownersLoaded || _api.CurrentUser is null)
+        {
+            return;
+        }
+
+        _ownersLoaded = true;
+        IsLoadingOwners = true;
+        try
+        {
+            var groups = await _api.GetMyGroupsAsync(cancellationToken);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            foreach (var group in groups
+                         .Where(group => group.IsMember || string.IsNullOrWhiteSpace(group.MembershipStatus))
+                         .OrderBy(group => group.Name, StringComparer.CurrentCultureIgnoreCase))
+            {
+                var access = InstancePresentation.GroupInstanceAccess(group);
+                if (access.Count == 0)
+                {
+                    continue;
+                }
+
+                var label = string.IsNullOrWhiteSpace(group.Name) ? "Group" : group.Name;
+                Owners.Add(new InstanceOwnerOption(
+                    label,
+                    group.EffectiveId,
+                    $"Hosted by {label}",
+                    access,
+                    group.ThumbnailUrl));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Dialog closed.
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"world dialog owners: {ex.Message}");
+        }
+        finally
+        {
+            IsLoadingOwners = false;
+            OnPropertyChanged(nameof(HasGroupOwners));
+        }
+    }
+
+    /// <summary>
+    /// The access list follows the owner: personal types for your account, and only the
+    /// group access kinds the chosen group's role allows. The default is the most
+    /// limited kind available so a group instance is never listed in public by accident.
+    /// </summary>
+    private void RebuildInstanceTypes()
+    {
+        var previous = _selectedType?.Value;
+        InstanceTypes.Clear();
+
+        if (_selectedOwner.IsGroup)
+        {
+            foreach (var access in _selectedOwner.AccessTypes)
+            {
+                InstanceTypes.Add(access switch
+                {
+                    "public" => new InstanceTypeOption(
+                        "Group public",
+                        "public",
+                        false,
+                        "Anyone can join. The instance is listed with public instances."),
+                    "plus" => new InstanceTypeOption(
+                        "Group+",
+                        "plus",
+                        false,
+                        "Friends of group members can join too."),
+                    _ => new InstanceTypeOption(
+                        "Group members",
+                        "members",
+                        false,
+                        "Only members of the group can join.")
+                });
+            }
+
+            if (InstanceTypes.Count == 0)
+            {
+                InstanceTypes.Add(new InstanceTypeOption(
+                    "Group members",
+                    "members",
+                    false,
+                    "Only members of the group can join."));
+            }
+
+            _selectedType = InstanceTypes.FirstOrDefault(option => option.Value == previous)
+                            ?? InstanceTypes.Last();
+        }
+        else
+        {
+            foreach (var option in PersonalInstanceTypes)
+            {
+                InstanceTypes.Add(option);
+            }
+
+            _selectedType = InstanceTypes.FirstOrDefault(option => option.Value == previous)
+                            ?? InstanceTypes[0];
+        }
+
+        OnPropertyChanged(nameof(SelectedType));
+        OnPropertyChanged(nameof(SelectedTypeDescription));
+    }
+
+    private static readonly InstanceTypeOption[] PersonalInstanceTypes =
+    {
+        new("Public", "public", false, "Anyone can join."),
+        new("Friends+", "hidden", false, "Friends of friends can join."),
+        new("Friends", "friends", false, "Only your friends can join."),
+        new("Invite+", "private", true, "Invite only, friends can ask."),
+        new("Invite", "private", false, "Only invited friends can join.")
+    };
 
     /// <summary>
     /// Instances only name their group by id, so resolve each group once and let every
@@ -761,6 +1092,7 @@ internal static class InstancePresentation
             // label matches VRChat's own wording instead of a generic "Group".
             if (value.Contains("groupAccessType(plus)", StringComparison.OrdinalIgnoreCase)) return "Group+";
             if (value.Contains("groupAccessType(public)", StringComparison.OrdinalIgnoreCase)) return "Group public";
+            if (value.Contains("groupAccessType(members)", StringComparison.OrdinalIgnoreCase)) return "Group members";
             return "Group";
         }
         if (value.Contains("~hidden(", StringComparison.OrdinalIgnoreCase)) return "Friends+";
@@ -780,6 +1112,40 @@ internal static class InstancePresentation
             "group" => "Group",
             _ => "Public"
         };
+    }
+
+    /// <summary>
+    /// The group access kinds a member's role may create. VRChat sends the account's
+    /// permissions with the group membership; a group without them is left open so the
+    /// server, not a guess on this side, decides what the role can do.
+    /// </summary>
+    public static IReadOnlyList<string> GroupInstanceAccess(Group group)
+    {
+        // No myMember means VRChat did not send the role permissions with this row;
+        // an empty list means the role really has none, so the group is not offered.
+        if (group.MyMember is null)
+        {
+            return new[] { "public", "plus", "members" };
+        }
+
+        var permissions = group.MyMember.Permissions ?? new List<string>();
+        var allowed = new List<string>();
+        if (permissions.Contains("group-instance-public-create") ||
+            permissions.Contains("group-instance-open-create"))
+        {
+            allowed.Add("public");
+        }
+        if (permissions.Contains("group-instance-plus-create"))
+        {
+            allowed.Add("plus");
+        }
+        if (permissions.Contains("group-instance-restricted-create") ||
+            permissions.Contains("group-instance-members-create"))
+        {
+            allowed.Add("members");
+        }
+
+        return allowed;
     }
 
     /// <summary>The grp_ id inside `~~group(grp_…)~…`, if the instance has one.</summary>
