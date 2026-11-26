@@ -270,6 +270,15 @@ public partial class MainWindow : Window
 
             // Instance history (32) sits over the friend popups below it and under
             // a profile opened from one of its rows, which the branch above handles.
+            // An open session detail is a layer of its own: the first Escape goes
+            // back to the list and the next one closes the popup.
+            if (_viewModel.InstanceHistoryViewModel is { IsDetailVisible: true } historyDetail)
+            {
+                historyDetail.BackCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (_viewModel.InstanceHistoryViewModel is { IsOpen: true } history)
             {
                 history.CloseCommand.Execute(null);

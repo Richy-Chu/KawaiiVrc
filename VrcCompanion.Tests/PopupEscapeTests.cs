@@ -11,7 +11,7 @@ using Xunit;
 namespace VrcCompanion.Tests;
 
 /// <summary>
-/// Five full-window popups share a dim backdrop, but Escape used to do nothing to
+/// Five full-window popups share a dim backdrop, and Escape used to do nothing to
 /// any of them. They are in the window's Escape chain now, in their z-order:
 /// avatar details (40) over instance history (32) over recent players (25) over
 /// friend changes (24) over friend locations (23), so one press closes the popup
@@ -88,6 +88,60 @@ public class PopupEscapeTests
 
                 Assert.True(escape.Handled, "Escape should close the instance history popup.");
                 Assert.False(history.IsOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeLeavesTheSessionDetailBeforeItClosesInstanceHistory()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            using var history = new InstanceHistoryViewModel(IsolatedApi(), HistoryWithOneSession());
+            history.SetAccount(new VrcUser { Id = "usr_escape", DisplayName = "Me" });
+            history.RefreshAsync().GetAwaiter().GetResult();
+            TestHooks.AttachInstanceHistoryViewModel(shell, history);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var overlay = FindByName(window, "InstanceHistoryOverlay");
+                var detail = FindByName(window, "InstanceHistoryDetailOverlay");
+                Assert.NotNull(overlay);
+                Assert.NotNull(detail);
+
+                history.Show();
+                window.UpdateLayout();
+                Assert.True(history.IsOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var entry = Assert.Single(history.Entries);
+                entry.OpenCommand.Execute(null);
+                window.UpdateLayout();
+
+                Assert.True(history.IsDetailVisible);
+                Assert.Equal(Visibility.Visible, detail!.Visibility);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(history.IsOpen, "The first Escape goes back to the list.");
+                Assert.False(history.IsDetailVisible);
+                Assert.Null(history.SelectedEntry);
+                Assert.Equal(Visibility.Collapsed, detail.Visibility);
+                Assert.Equal(Visibility.Visible, overlay.Visibility);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(history.IsOpen, "The next Escape closes the popup.");
                 Assert.Equal(Visibility.Collapsed, overlay.Visibility);
             }
             finally
@@ -310,6 +364,26 @@ public class PopupEscapeTests
         => new(Path.Combine(
             Path.GetTempPath(),
             "vrc-popup-escape-" + Guid.NewGuid().ToString("N") + ".db"));
+
+    /// <summary>One finished session, so a detail row can be opened.</summary>
+    private static InstanceHistoryStore HistoryWithOneSession()
+    {
+        var store = IsolatedHistory();
+        var start = DateTimeOffset.Now.AddHours(-1);
+        var entry = InstanceHistoryStore.NewFromLog(
+            "usr_escape",
+            "wrld_4432ea9b-729c-46e3-8eaf-846aa0a37fdd:12345~region(eu)",
+            start)!;
+        // Every metadata field is set so the refresh has no world to fetch; a
+        // fetch would await on this dispatcher and never come back.
+        entry.WorldName = "Escape Test World";
+        entry.WorldThumbnailUrl = "https://example.test/world.png";
+        entry.WorldAuthorName = "Creator";
+        entry.GetOrAddPlayer("usr_escape", "Me").StartVisit(start);
+        entry.Close(start.AddMinutes(10));
+        store.Add(entry);
+        return store;
+    }
 
     private static FrameworkElement? FindByName(DependencyObject root, string name)
     {

@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 986 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 987 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.110**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.111**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,17 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.111 changed
+
+- **Escape steps out of a session detail before it closes the history popup.** 1.0.110's
+  `IsOpen` branch closed everything, so reading a session and pressing Escape lost the list. The detail
+  is its own layer (`Panel.ZIndex="33"` over the list's `32`), so `IsDetailVisible` is now checked
+  first and runs the list's `BackCommand`; the `IsOpen` branch then closes the popup on the next
+  press. `InstanceHistoryDetailOverlay` is the detail grid's `x:Name` for the test.
+- **Tests: 987.** `EscapeLeavesTheSessionDetailBeforeItClosesInstanceHistory` opens a real row from a
+  temp store, presses Escape once (detail collapsed, popup open, no selected session) and again (popup
+  closed).
 
 ### What 1.0.110 changed
 
@@ -338,7 +349,10 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    detail, instance history, recent players, friend changes, then friend locations, then browser
    focus. A popup that covers the window and ignores Escape leaves the key live behind its backdrop;
    give it a branch that runs its own close command and sets `e.Handled`, and keep the order so the
-   topmost popup is what closes first. `PopupEscapeTests` pins all five popup branches and the order.
+   topmost popup is what closes first. A popup with layers of its own checks the inner one first: the
+   instance history detail runs `BackCommand` before the popup's `CloseCommand`, so Escape steps back
+   to the list and closes the popup only on the next press. `PopupEscapeTests` pins all five popup
+   branches, the detail step and the order.
 
 
 ### Virtualization: what is real and what is not

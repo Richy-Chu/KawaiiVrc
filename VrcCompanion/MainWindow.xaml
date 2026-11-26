@@ -12251,7 +12251,8 @@
         <!-- ========================================================= -->
         <!-- Instance history details                                   -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="33"
+        <Grid x:Name="InstanceHistoryDetailOverlay"
+              Panel.ZIndex="33"
               AutomationProperties.AutomationId="InstanceHistoryDetailOverlay"
               Visibility="{Binding InstanceHistoryViewModel.IsDetailVisible, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Border Background="#D9060810" />
