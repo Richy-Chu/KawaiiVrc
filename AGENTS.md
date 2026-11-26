@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1018 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1021 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.119**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.120**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,25 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.120 changed
+
+- **Every account row shows that account's VRChat profile picture.** The signed-in header on the
+  Accounts page and both saved-account lists (Accounts page and sign-in screen) draw the account's
+  avatar with `controls:AsyncImage` on top of the letter initial, which stays underneath as the
+  fallback for a row whose picture is not known yet.
+- **The picture is saved with the session.** Each `<accountId>.json` now has an `imageUrl` beside the
+  display name. `MultiAccountService.RegisterAccount` takes it from the user record on sign-in and
+  on an account switch and never overwrites a stored picture with a blank one;
+  `SetAccountImageUrl` fills in accounts saved by an older build.
+- **Legacy rows get their picture without using their cookies.** `MultiAccountViewModel.RefreshAccounts`
+  takes the signed-in row's picture straight from the live user record and looks the remaining rows
+  up read-only through the current session (`GetUserAsync`), so no stored account cookie is ever
+  used or rotated for this. Until that lookup answers, the row keeps its letter.
+- **Tests: 1021.** `SavedAccountSignInTests` pins that a picture survives a restart, that re-saving a
+  session without artwork keeps the stored one, that the live signed-in user fills a row saved
+  before pictures existed, and—in a real window—that the Accounts header, both saved rows and the
+  sign-in list each render an `AsyncImage` carrying the right URL.
 
 ### What 1.0.119 changed
 
@@ -522,6 +541,16 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    immediately and a deliberate backdrop click still works. `OverlayBackdropGuardTests` pins the
    timing (through `OverlayBackdropGuard.Clock`, which `TestHooks.ResetAll` resets) and audits every
    `Cursor="Arrow"` element in the XAML, so a new backdrop without the attribute fails the suite.
+
+24. **An account row shows the profile picture, with the letter as fallback.** The picture lives in
+   the account's stored profile (`imageUrl` in `<accountId>.json`) and is captured when the session
+   is saved or switched, from the same `PickAvatarThumbnailUrl` order every list uses.
+   `RegisterAccount(..., imageUrl)` keeps an existing URL when given none, and
+   `SetAccountImageUrl` ignores blanks, so a profile without artwork never erases an icon. All three
+   templates put `controls:AsyncImage` over the `Initial` TextBlock: the signed-in header binds
+   `MultiAccountViewModel.ActiveAccountImageUrl`, the two lists bind `AccountEntry.ImageUrl`, and an
+   empty URL renders nothing so the letter shows. `EveryAccountRowShowsTheProfilesPicture` reads the
+   live visual tree; it and the store cases must keep passing.
 
 
 ### Virtualization: what is real and what is not

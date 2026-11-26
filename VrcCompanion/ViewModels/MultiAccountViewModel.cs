@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
@@ -11,13 +12,16 @@ using VrcCompanion.Services;
 namespace VrcCompanion.ViewModels;
 
 /// <summary>One stored account shown in the Accounts section.</summary>
-public sealed class AccountEntry
+public sealed class AccountEntry : ViewModelBase
 {
-    public AccountEntry(string id, string displayName, bool isActive)
+    private string _imageUrl;
+
+    public AccountEntry(string id, string displayName, bool isActive, string? imageUrl = null)
     {
         Id = id;
         DisplayName = displayName;
         IsActive = isActive;
+        _imageUrl = imageUrl ?? string.Empty;
         Initial = string.IsNullOrWhiteSpace(displayName)
             ? "?"
             : char.ToUpperInvariant(displayName.Trim()[0]).ToString();
@@ -26,6 +30,13 @@ public sealed class AccountEntry
     public string Id { get; }
     public string DisplayName { get; }
     public bool IsActive { get; }
+
+    /// <summary>The account's profile picture; empty falls back to <see cref="Initial"/>.</summary>
+    public string ImageUrl
+    {
+        get => _imageUrl;
+        internal set => SetProperty(ref _imageUrl, value);
+    }
 
     /// <summary>A friendly avatar initial; the raw account id stays internal.</summary>
     public string Initial { get; }
@@ -114,6 +125,14 @@ public sealed class MultiAccountViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// The signed-in user's own profile picture for the Accounts header. It is
+    /// read from the live session, so it is there even for a row saved before
+    /// icons were stored.
+    /// </summary>
+    public string ActiveAccountImageUrl
+        => _api.CurrentUser is { } user ? PickAccountImageUrl(user) : string.Empty;
+
     public string? ErrorMessage
     {
         get => _errorMessage;
@@ -143,7 +162,7 @@ public sealed class MultiAccountViewModel : ViewModelBase
             return;
         }
 
-        _accountService.RegisterAccount(user.Id, cookie, user.DisplayName);
+        _accountService.RegisterAccount(user.Id, cookie, user.DisplayName, PickAccountImageUrl(user));
         _accountService.SwitchToAccount(user.Id);
         RefreshAccounts();
     }
@@ -212,7 +231,8 @@ public sealed class MultiAccountViewModel : ViewModelBase
             _accountService.RegisterAccount(
                 user.Id,
                 _api.CurrentAuthCookie ?? cookie,
-                user.DisplayName);
+                user.DisplayName,
+                PickAccountImageUrl(user));
             _accountService.SwitchToAccount(user.Id);
             RefreshAccounts();
             SessionSwitched?.Invoke(user);
@@ -263,16 +283,96 @@ public sealed class MultiAccountViewModel : ViewModelBase
     /// <summary>Re-reads the stored accounts after a sign-out or a save.</summary>
     internal void Refresh() => RefreshAccounts();
 
+    /// <summary>Builds a rounded avatar URL from a user record, the way every list does.</summary>
+    private static string PickAccountImageUrl(VrcUser user)
+        => ImageUrlHelper.PickAvatarThumbnailUrl(
+            user.UserIcon,
+            user.ProfilePicOverrideThumbnail ?? user.IconUrl,
+            user.CurrentAvatarThumbnailImageUrl,
+            user.CurrentAvatarImageUrl) ?? string.Empty;
+
     private void RefreshAccounts()
     {
         var active = _accountService.ActiveAccountId;
-        Accounts = new ObservableCollection<AccountEntry>(
-            _accountService.AccountIds.Select(id => new AccountEntry(
+        var signedIn = _api.CurrentUser;
+        var entries = new List<AccountEntry>();
+        foreach (var id in _accountService.AccountIds)
+        {
+            var imageUrl = _accountService.GetAccountImageUrl(id);
+            if (imageUrl.Length == 0 &&
+                signedIn is not null &&
+                string.Equals(signedIn.Id, id, StringComparison.Ordinal))
+            {
+                // The signed-in user's picture is already here, so a row saved
+                // before icons were stored gets one without a round-trip.
+                imageUrl = PickAccountImageUrl(signedIn);
+                _accountService.SetAccountImageUrl(id, imageUrl);
+            }
+
+            entries.Add(new AccountEntry(
                 id,
                 _accountService.GetAccountDisplayName(id),
-                string.Equals(id, active, StringComparison.Ordinal))));
+                string.Equals(id, active, StringComparison.Ordinal),
+                imageUrl));
+        }
+
+        Accounts = new ObservableCollection<AccountEntry>(entries);
         OnPropertyChanged(nameof(ActiveAccountLabel));
         OnPropertyChanged(nameof(ActiveAccountInitial));
+        OnPropertyChanged(nameof(ActiveAccountImageUrl));
         OnPropertyChanged(nameof(HasAccounts));
+        FillMissingAccountImages();
+    }
+
+    /// <summary>
+    /// Looks up the pictures of saved accounts that have none stored. The
+    /// signed-in session makes the read-only lookup, so no stored account cookie
+    /// is ever used or rotated for this.
+    /// </summary>
+    private void FillMissingAccountImages()
+    {
+        if (_api.CurrentUser is null)
+        {
+            return;
+        }
+
+        var missing = Accounts
+            .Where(entry => entry.ImageUrl.Length == 0)
+            .Select(entry => entry.Id)
+            .ToArray();
+        if (missing.Length == 0)
+        {
+            return;
+        }
+
+        _ = FillMissingAccountImagesAsync(missing);
+    }
+
+    private async Task FillMissingAccountImagesAsync(string[] accountIds)
+    {
+        foreach (var accountId in accountIds)
+        {
+            try
+            {
+                var user = await _api.GetUserAsync(accountId).ConfigureAwait(true);
+                var imageUrl = user is null ? string.Empty : PickAccountImageUrl(user);
+                if (imageUrl.Length == 0)
+                {
+                    continue;
+                }
+
+                _accountService.SetAccountImageUrl(accountId, imageUrl);
+                var entry = Accounts.FirstOrDefault(
+                    candidate => string.Equals(candidate.Id, accountId, StringComparison.Ordinal));
+                if (entry is not null)
+                {
+                    entry.ImageUrl = imageUrl;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+        }
     }
 }

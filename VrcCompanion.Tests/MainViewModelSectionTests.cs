@@ -587,18 +587,38 @@ public class MainViewModelSectionTests
     [Fact]
     public void ActiveAccountLabelFollowsTheSignedInUserNotStaleStoredState()
     {
-        using var api = new VrcApiClient();
-        TestHooks.SetCurrentUser(api, new VrcUser
+        // A scratch store: the view model reads the signed-in picture into the
+        // saved rows, and no test may write into the real accounts folder.
+        var directory = Path.Combine(Path.GetTempPath(), "vrccompanion-accounts-" + Guid.NewGuid().ToString("N"));
+        try
         {
-            Id = "usr_chebe",
-            DisplayName = "chebe",
-            Username = "chebe"
-        });
+            using var api = new VrcApiClient();
+            TestHooks.SetCurrentUser(api, new VrcUser
+            {
+                Id = "usr_chebe",
+                DisplayName = "chebe",
+                Username = "chebe"
+            });
 
-        var accounts = new MultiAccountViewModel(api);
+            var accounts = new MultiAccountViewModel(api, new MultiAccountService(directory));
 
-        Assert.Equal("chebe", accounts.ActiveAccountLabel);
-        Assert.Equal("C", accounts.ActiveAccountInitial);
+            Assert.Equal("chebe", accounts.ActiveAccountLabel);
+            Assert.Equal("C", accounts.ActiveAccountInitial);
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(directory))
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+                // A leftover scratch folder is not what this case is about.
+            }
+        }
     }
 
     [Fact]

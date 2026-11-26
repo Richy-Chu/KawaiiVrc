@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Threading;
+using VrcCompanion.Controls;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -166,6 +167,137 @@ public class SavedAccountSignInTests
                     // Both stored sessions are still readable after leaving the page.
                     Assert.Equal("cookie-richy", store.GetAuthCookie(RichyId));
                     Assert.Equal("cookie-chebe", store.GetAuthCookie(ChebeId));
+                }
+                finally
+                {
+                    window.Close();
+                }
+            }
+            finally
+            {
+                DeleteDirectory(directory);
+            }
+        });
+    }
+
+    [Fact]
+    public void SavedAccountPicturesSurviveARestartAndAreKeptOnResave()
+    {
+        var directory = NewAccountsDirectory();
+        try
+        {
+            var first = new MultiAccountService(directory);
+            first.RegisterAccount(RichyId, "cookie-richy", "RichyTru", "https://example.test/richy.png");
+            first.SwitchToAccount(RichyId);
+
+            // The picture comes back from disk with the rest of the profile.
+            var reloaded = new MultiAccountService(directory);
+            Assert.Equal("https://example.test/richy.png", reloaded.GetAccountImageUrl(RichyId));
+
+            // Signing that session in again without artwork must not erase the icon.
+            reloaded.RegisterAccount(RichyId, "cookie-richy-2", "RichyTru");
+            Assert.Equal("https://example.test/richy.png", reloaded.GetAccountImageUrl(RichyId));
+            Assert.Equal("RichyTru", reloaded.GetAccountDisplayName(RichyId));
+            Assert.Equal("cookie-richy-2", reloaded.GetAuthCookie(RichyId));
+
+            // A newer picture does replace the stored one.
+            reloaded.RegisterAccount(RichyId, "cookie-richy-2", "RichyTru", "https://example.test/new.png");
+            Assert.Equal("https://example.test/new.png", reloaded.GetAccountImageUrl(RichyId));
+
+            using var api = new VrcApiClient();
+            var accounts = new MultiAccountViewModel(api, new MultiAccountService(directory));
+            Assert.Equal("https://example.test/new.png", accounts.Accounts.Single().ImageUrl);
+        }
+        finally
+        {
+            DeleteDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public void TheSignedInPictureFillsItsRowBeforeAnythingWasStored()
+    {
+        var directory = NewAccountsDirectory();
+        try
+        {
+            var store = new MultiAccountService(directory);
+            store.RegisterAccount(RichyId, "cookie-richy", "RichyTru");
+            store.SwitchToAccount(RichyId);
+
+            using var api = new VrcApiClient();
+            TestHooks.SetCurrentUser(api, new VrcUser
+            {
+                Id = RichyId,
+                DisplayName = "RichyTru",
+                UserIcon = "https://example.test/richy.png"
+            });
+
+            var accounts = new MultiAccountViewModel(api, store);
+
+            Assert.Equal("https://example.test/richy.png", accounts.ActiveAccountImageUrl);
+            Assert.Equal("https://example.test/richy.png", accounts.Accounts.Single().ImageUrl);
+            Assert.Equal("https://example.test/richy.png", store.GetAccountImageUrl(RichyId));
+        }
+        finally
+        {
+            DeleteDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public void EveryAccountRowShowsTheProfilesPicture()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var directory = NewAccountsDirectory();
+            try
+            {
+                var store = new MultiAccountService(directory);
+                store.RegisterAccount(RichyId, "cookie-richy", "RichyTru", "https://example.test/richy.png");
+                store.RegisterAccount(ChebeId, "cookie-chebe", "chebe", "https://example.test/chebe.png");
+                store.SwitchToAccount(RichyId);
+
+                using var api = new VrcApiClient();
+                TestHooks.SetCurrentUser(api, new VrcUser
+                {
+                    Id = RichyId,
+                    DisplayName = "RichyTru",
+                    Username = "RichyTru",
+                    UserIcon = "https://example.test/richy.png"
+                });
+
+                using var shell = new MainViewModel();
+                TestHooks.AttachMultiAccountViewModel(
+                    shell,
+                    new MultiAccountViewModel(api, new MultiAccountService(directory)));
+                TestHooks.SetLoggedIn(shell);
+
+                var window = CreateWindow(shell);
+                try
+                {
+                    window.Show();
+                    shell.SelectedSection = shell.Sections.Single(section => section.Key == "accounts");
+                    Pump(window);
+
+                    // The header shows the signed-in picture and both saved rows
+                    // carry their own, so the letters are only a fallback now.
+                    var icons = FindVisualChildren<AsyncImage>(window)
+                        .Where(image => image.IsVisible && !string.IsNullOrWhiteSpace(image.SourceUrl))
+                        .Select(image => image.SourceUrl!)
+                        .ToArray();
+                    Assert.Equal(2, icons.Count(url => url == "https://example.test/richy.png"));
+                    Assert.Equal(1, icons.Count(url => url == "https://example.test/chebe.png"));
+
+                    // The sign-in screen lists the same accounts with the same pictures.
+                    shell.ReturnToSignIn();
+                    Pump(window);
+
+                    var signInIcons = FindVisualChildren<AsyncImage>(window)
+                        .Where(image => image.IsVisible && !string.IsNullOrWhiteSpace(image.SourceUrl))
+                        .Select(image => image.SourceUrl!)
+                        .ToArray();
+                    Assert.Contains("https://example.test/richy.png", signInIcons);
+                    Assert.Contains("https://example.test/chebe.png", signInIcons);
                 }
                 finally
                 {

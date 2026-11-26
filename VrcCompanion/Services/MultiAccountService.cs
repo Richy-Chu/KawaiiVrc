@@ -82,9 +82,36 @@ public sealed class MultiAccountService : IDisposable
     }
 
     /// <summary>
+    /// The profile picture stored for an account, or an empty string when none
+    /// has been captured yet; the account card then falls back to the initial.
+    /// </summary>
+    public string GetAccountImageUrl(string accountId)
+    {
+        var profile = LoadAccountProfile(accountId);
+        return profile?.ImageUrl ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Stores an account's profile picture. A missing or blank URL is ignored so
+    /// a profile without artwork never erases an icon already saved.
+    /// </summary>
+    public void SetAccountImageUrl(string accountId, string? imageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(accountId) || string.IsNullOrWhiteSpace(imageUrl))
+            return;
+
+        var profile = LoadAccountProfile(accountId);
+        if (profile is null || string.Equals(profile.ImageUrl, imageUrl, StringComparison.Ordinal))
+            return;
+
+        profile.ImageUrl = imageUrl;
+        SaveAccountProfile(accountId, profile);
+    }
+
+    /// <summary>
     /// Register a new account with its auth cookie.
     /// </summary>
-    public void RegisterAccount(string accountId, string authCookie, string? displayName = null)
+    public void RegisterAccount(string accountId, string authCookie, string? displayName = null, string? imageUrl = null)
     {
         if (string.IsNullOrWhiteSpace(accountId) || string.IsNullOrWhiteSpace(authCookie))
             return;
@@ -92,11 +119,15 @@ public sealed class MultiAccountService : IDisposable
         if (!AccountIds.Contains(accountId))
             AccountIds.Add(accountId);
 
+        var existing = LoadAccountProfile(accountId);
+        var name = string.IsNullOrWhiteSpace(displayName) ? existing?.DisplayName : displayName;
+
         SaveAccountProfile(accountId, new StoredAccountProfile
         {
             AccountId = accountId,
-            DisplayName = displayName ?? accountId,
-            RegisteredAt = DateTimeOffset.UtcNow
+            DisplayName = string.IsNullOrWhiteSpace(name) ? accountId : name,
+            ImageUrl = string.IsNullOrWhiteSpace(imageUrl) ? existing?.ImageUrl : imageUrl,
+            RegisteredAt = existing?.RegisteredAt ?? DateTimeOffset.UtcNow
         });
 
         SaveAccountCookie(accountId, authCookie);
@@ -250,6 +281,9 @@ public sealed class MultiAccountService : IDisposable
 
         [JsonPropertyName("displayName")]
         public string DisplayName { get; set; } = string.Empty;
+
+        [JsonPropertyName("imageUrl")]
+        public string? ImageUrl { get; set; }
 
         [JsonPropertyName("registeredAt")]
         public DateTimeOffset RegisteredAt { get; set; }
