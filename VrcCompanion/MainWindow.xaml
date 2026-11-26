@@ -9475,7 +9475,8 @@
 
         <!-- ========================================================= -->
                     <!-- Friend detail popup -->
-                    <Grid Panel.ZIndex="{Binding ProfileZIndex}"
+                    <Grid x:Name="FriendProfileOverlay"
+                          Panel.ZIndex="{Binding ProfileZIndex}"
                           AutomationProperties.AutomationId="FriendProfileOverlay"
                           Visibility="{Binding HasSelectedFriend, Converter={StaticResource BoolToVis}}">
                         <Button Command="{Binding CloseFriendDetailCommand}"
@@ -12553,7 +12554,8 @@
 
         <!-- Launch chooser                                            -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="35"
+        <Grid x:Name="LaunchChooserOverlay"
+              Panel.ZIndex="35"
               Visibility="{Binding IsLaunchChooserOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelLaunchChoiceCommand}"
                     Focusable="False"
@@ -12828,7 +12830,8 @@
         <!-- ========================================================= -->
         <!-- World details modal                                       -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="20"
+        <Grid x:Name="WorldDialogOverlay"
+              Panel.ZIndex="20"
               Visibility="{Binding HasWorldDialog, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Border Background="#B8060810" />
             <Grid Margin="24">
@@ -13271,7 +13274,8 @@
         </Grid>
 
         <!-- Profile invite / request composer -->
-        <Grid Panel.ZIndex="60"
+        <Grid x:Name="InviteComposerOverlay"
+              Panel.ZIndex="60"
               Visibility="{Binding IsInviteComposerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelInviteComposerCommand}"
                     Focusable="False"
@@ -13479,7 +13483,8 @@
         </Grid>
 
         <!-- Decline with a custom message -->
-        <Grid Panel.ZIndex="61"
+        <Grid x:Name="ResponseComposerOverlay"
+              Panel.ZIndex="61"
               Visibility="{Binding IsResponseComposerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelResponseComposerCommand}"
                     Focusable="False"

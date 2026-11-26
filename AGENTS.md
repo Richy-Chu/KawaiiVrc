@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 999 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 1002 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.113**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.114**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,22 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.114 changed
+
+- **The Escape audit is now enforced by the suite.** `EscapeOverlayAuditTests` scans `MainWindow.xaml`
+  and `Controls/ContinuityView.xaml` for every element with a `Panel.ZIndex` and reads the chain back out
+  of `MainWindow.xaml.cs` (`OnPreviewKeyDown` plus the two helpers it calls). It fails when a stacked
+  element has no `x:Name`, when a named one has no entry in the test's branch table, when the flag or
+  command its branch mentions is gone, or when a helper that owns branches is no longer called. The
+  branch table is the one place a new overlay is registered, so adding a popup without a branch is a red
+  suite rather than the next audit.
+- **The five unnamed stacked overlays are named.** `FriendProfileOverlay`, `LaunchChooserOverlay`,
+  `InviteComposerOverlay`, `ResponseComposerOverlay` and `WorldDialogOverlay` had only `Panel.ZIndex`, so
+  the scan could not see them; all 21 stacked layers (20 in `MainWindow.xaml`, 1 in the Continuity view)
+  are covered now.
+- **Tests: 1002.** The real files audit clean, and two synthetic cases prove the guard fails for a new
+  overlay with no branch (while leaving a correct one alone) and for a branch whose command was removed.
 
 ### What 1.0.113 changed
 
@@ -398,7 +414,9 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    details, advanced launch before the launch chooser, group info and the group list before the
    profile, and an open session detail runs `BackCommand` before the history popup's `CloseCommand`.
    A new overlay needs a branch here and a case in `PopupEscapeTests`; if it opens over another
-   popup, put its branch first and test both steps.
+   popup, put its branch first and test both steps. `EscapeOverlayAuditTests` enforces the branch half:
+   it reads every `Panel.ZIndex` element from `MainWindow.xaml` and `Controls/ContinuityView.xaml` and
+   fails when one has no `x:Name` or no entry in its branch table, so this audit cannot drift silently.
    Page-local layers follow the window ones, because one page is shown at a time: Continuity's session
    sheet, people detail and worlds detail in `Controls/ContinuityView.xaml`, then the media picture
    viewer (10), the moderation member card (6), and the boop preview (20). Context has no popup of its
@@ -691,7 +709,7 @@ has gone untouched for the hour, which is how a reused pid stops keeping litter.
 `build/test-profile-guard-red.ps1`, which requires one filtered run to exit 1 on a fabricated
 baseline.
 
-`test-suite.yml` runs on every push and is the only job that runs all 940 tests. When a test
+`test-suite.yml` runs on every push and is the only job that runs all 1002 tests. When a test
 fails, `build/retry-failed-tests.ps1` re-runs only the failed tests once: it plans the filter
 from the run's `trx`, reports what passed on retry as a warning and in the step summary, and the
 job stays green - a flaky test must not redden an otherwise good commit, but it must not be
