@@ -782,7 +782,7 @@
               Visibility="{Binding IsSessionDetailVisible, Converter={StaticResource BoolToVis}}">
             <Button Command="{Binding CloseSessionCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close session">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">

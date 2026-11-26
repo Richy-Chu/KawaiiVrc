@@ -1347,7 +1347,7 @@
                     <Grid Visibility="{Binding HasSelectedNotification, Converter={StaticResource BoolToVis}}">
                         <Button Command="{Binding ClearNotificationSelectionCommand}"
                                 Focusable="False"
-                                Cursor="Arrow"
+                                Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                                 ToolTip="Close">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
@@ -1736,7 +1736,7 @@
                           Visibility="{Binding IsBoopPreviewOpen, Converter={StaticResource BoolToVis}}">
                         <Button Command="{Binding CloseBoopPreviewCommand}"
                                 Focusable="False"
-                                Cursor="Arrow"
+                                Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                                 ToolTip="Close boop attachment">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
@@ -3575,7 +3575,7 @@
                 <Grid Visibility="{Binding GroupViewModel.IsGroupDetailsOpen, Converter={StaticResource BoolToVis}}">
                     <Button Command="{Binding GroupViewModel.CloseGroupDetailsCommand}"
                             Focusable="False"
-                            Cursor="Arrow"
+                            Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                             ToolTip="Close">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
@@ -4315,7 +4315,7 @@
                                   Visibility="{Binding DataContext.GroupViewModel.Moderation.IsMemberCardOpen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
                                 <Button Command="{Binding DataContext.GroupViewModel.Moderation.CloseMemberCardCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                         Focusable="False"
-                                        Cursor="Arrow"
+                                        Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                                         AutomationProperties.Name="Close member card">
                                     <Button.Template>
                                         <ControlTemplate TargetType="Button">
@@ -6396,7 +6396,7 @@
                       Visibility="{Binding MediaViewModel.IsViewerOpen, Converter={StaticResource BoolToVis}}">
                     <Button Command="{Binding MediaViewModel.CloseViewerCommand}"
                             Focusable="False"
-                            Cursor="Arrow"
+                            Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                             ToolTip="Close picture">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
@@ -9601,7 +9601,7 @@
                           Visibility="{Binding HasSelectedFriend, Converter={StaticResource BoolToVis}}">
                         <Button Command="{Binding CloseFriendDetailCommand}"
                                 Focusable="False"
-                                Cursor="Arrow"
+                                Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                                 ToolTip="Close">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
@@ -10594,7 +10594,7 @@
                           Visibility="{Binding IsGroupsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                         <Button Command="{Binding CloseGroupsCommand}"
                                 Focusable="False"
-                                Cursor="Arrow"
+                                Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                                 ToolTip="Close">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
@@ -10768,7 +10768,7 @@
                           Visibility="{Binding GroupViewModel.IsGroupInfoOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                         <Button Command="{Binding GroupViewModel.CloseGroupInfoCommand}"
                                 Focusable="False"
-                                Cursor="Arrow"
+                                Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                                 ToolTip="Close">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
@@ -10970,7 +10970,7 @@
               Visibility="{Binding IsLogoutConfirmationOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelLogoutCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Keep me signed in">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -11017,7 +11017,7 @@
               Visibility="{Binding IsFriendLocationsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CloseFriendLocationsCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -11167,7 +11167,7 @@
               Visibility="{Binding RecentPlayersViewModel.IsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CloseRecentPlayersCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close recent people">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -11517,7 +11517,7 @@
               Panel.ZIndex="24"
               Visibility="{Binding IsFriendChangesOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CloseFriendChangesCommand}"
-                    Focusable="False" Cursor="Arrow" ToolTip="Close">
+                    Focusable="False" Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True" ToolTip="Close">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
                         <Border Background="#C4060810" />
@@ -11633,7 +11633,7 @@
                     Focusable="False"
                     IsTabStop="False"
                     ClickMode="Press"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close avatar details">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -11886,7 +11886,7 @@
               Visibility="{Binding AvatarViewModel.IsSlotPickerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed, TargetNullValue=Collapsed}">
             <Button Command="{Binding AvatarViewModel.CancelFavoriteSlotCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Cancel">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -12080,7 +12080,7 @@
               Visibility="{Binding InstanceHistoryViewModel.IsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding InstanceHistoryViewModel.CloseCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close instance history">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -12707,7 +12707,7 @@
               Visibility="{Binding IsLaunchChooserOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelLaunchChoiceCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -12786,7 +12786,7 @@
               Visibility="{Binding IsAdvancedLaunchOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelAdvancedLaunchCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -13427,7 +13427,7 @@
               Visibility="{Binding IsInviteComposerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelInviteComposerCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -13636,7 +13636,7 @@
               Visibility="{Binding IsResponseComposerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelResponseComposerCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Close">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -13790,7 +13790,7 @@
               Visibility="{Binding UpdateViewModel.IsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding UpdateViewModel.CloseCommand}"
                     Focusable="False"
-                    Cursor="Arrow"
+                    Cursor="Arrow" controls:OverlayBackdropGuard.Protect="True"
                     ToolTip="Later">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">

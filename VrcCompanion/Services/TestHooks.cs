@@ -355,6 +355,7 @@ internal static class TestHooks
         UseCommunityHandler(null);
         ClearLoggedAvatars();
         ResetClock();
+        OverlayBackdropGuard.ResetClock();
         UseUriLauncher(null);
         UseHandlerPathProvider(null);
         UseHandlerLauncher(null);
