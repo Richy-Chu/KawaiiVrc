@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1032 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1038 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.123**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.124**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,19 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.124 changed
+
+- **Every remaining popup list renders a real row in the suite.** `PopupRowRenderTests` opens the
+  real window, puts one item into friend changes, recent players, notifications, group instances and
+  saved accounts, and asserts the row's own button realised and is visible. These lists have no
+  scoped-style use today, but an empty list never instantiates its template, so a future row edit
+  that borrows a style from another overlay would still crash the window at runtime without them.
+- **An instance can be age gated (18+) when it is created.** `WorldDialogViewModel.AgeGate` is a
+  checkbox in the create card (under the instance types, above REGION) and is sent as `ageGate` on
+  `POST /instances` for both personal and group instances. VRChat still decides: a group role needs
+  `group-instance-age-gated-create`, and the API rejects the create if it does not.
+- **Tests: 1038.**
 
 ### What 1.0.123 changed
 
@@ -615,7 +628,8 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    scroll viewer. Using one in a friend-locations row threw `XamlParseException` at the first
    measured row and took the window down (1.0.123). Use the window/App-level style (`GhostButton`,
    `SecondaryButton`, `PrimaryButton`) anywhere else, and render the row in a real window in tests:
-   `FriendLocationsRowTests` exists because an empty popup never instantiates its template.
+   `FriendLocationsRowTests` and `PopupRowRenderTests` exist because an empty popup never
+   instantiates its template.
 
 26. **An account row shows the profile picture, with the letter as fallback.** The picture lives in
    the account's stored profile (`imageUrl` in `<accountId>.json`) and is captured when the session

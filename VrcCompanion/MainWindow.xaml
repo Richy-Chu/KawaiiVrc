@@ -13453,6 +13453,16 @@
                                                     </ListBox.ItemTemplate>
                                                 </ListBox>
 
+                                                <CheckBox Style="{StaticResource FriendlyCheckBox}"
+                                                          Content="Age gated (18+)"
+                                                          IsChecked="{Binding AgeGate, Mode=TwoWay}"
+                                                          Margin="0,2,0,0"
+                                                          ToolTip="Only players who are age-verified 18+ can join this instance." />
+                                                <TextBlock Text="Only age-verified 18+ players can join."
+                                                           Style="{StaticResource MutedText}"
+                                                           FontSize="9.5"
+                                                           Margin="24,2,0,8" />
+
                                                 <TextBlock Text="REGION" Style="{StaticResource FieldLabel}" Margin="0,3,0,5" />
                                                 <ListBox Style="{StaticResource RegionPillList}"
                                                          ItemsSource="{Binding Regions}"

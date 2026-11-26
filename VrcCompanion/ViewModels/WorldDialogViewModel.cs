@@ -241,6 +241,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private InstanceOwnerOption _selectedOwner;
     private bool _isLoadingOwners;
     private bool _ownersLoaded;
+    private bool _ageGate;
     private WorldInstanceItem? _focusInstance;
     // Group details do not change while a world is open, so a refresh reuses them
     // instead of re-querying the same group for every rebuilt row.
@@ -436,6 +437,13 @@ public sealed class WorldDialogViewModel : ViewModelBase
     }
 
     public string SelectedTypeDescription => SelectedType.Description;
+
+    /// <summary>Restricts the new instance to age-verified (18+) players.</summary>
+    public bool AgeGate
+    {
+        get => _ageGate;
+        set => SetProperty(ref _ageGate, value);
+    }
 
     public ObservableCollection<RegionOption> Regions { get; }
 
@@ -689,13 +697,15 @@ public sealed class WorldDialogViewModel : ViewModelBase
                     canRequestInvite: false,
                     cancellationToken,
                     ownerId: owner.GroupId,
-                    groupAccessType: SelectedType.Value)
+                    groupAccessType: SelectedType.Value,
+                    ageGate: AgeGate)
                 : await _api.CreateInstanceAsync(
                     WorldId,
                     SelectedType.Value,
                     SelectedRegion.Value,
                     SelectedType.CanRequestInvite,
-                    cancellationToken);
+                    cancellationToken,
+                    ageGate: AgeGate);
 
             CreatedInstance = instance;
             _ = LoadUpdatedInstancesAsync(cancellationToken);

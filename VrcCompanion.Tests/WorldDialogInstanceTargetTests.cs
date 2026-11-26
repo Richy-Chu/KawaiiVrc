@@ -158,6 +158,38 @@ public class WorldDialogInstanceTargetTests
         Assert.Equal("friends", handler.CreatedType);
         Assert.Equal("usr_me", handler.CreatedOwnerId);
         Assert.Null(handler.CreatedGroupAccessType);
+        Assert.False(handler.CreatedAgeGate);
+    }
+
+    [Fact]
+    public async Task AnAgeGatedGroupInstanceSendsTheEighteenPlusFlag()
+    {
+        using var handler = new WorldHandler();
+        using var api = new VrcApiClient(null, handler);
+        TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared);
+
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
+        Settle.Until(
+            () => !dialog.IsLoadingOwners && dialog.Owners.Any(owner => owner.IsGroup),
+            "the group owners never arrived");
+
+        dialog.SelectedOwner = dialog.Owners.Single(owner => owner.Label == "Test Group");
+        Assert.False(dialog.AgeGate);
+        dialog.AgeGate = true;
+
+        await dialog.CreateInstanceAsync(CancellationToken.None);
+
+        Assert.True(handler.CreatedAgeGate);
+        Assert.Equal("grp_abc", handler.CreatedOwnerId);
+
+        // The checkbox is a toggle: unticking it has to reach the next create too.
+        dialog.AgeGate = false;
+        await dialog.CreateInstanceAsync(CancellationToken.None);
+        Assert.False(handler.CreatedAgeGate);
     }
 
     [Fact]
@@ -258,6 +290,7 @@ public class WorldDialogInstanceTargetTests
         public string? CreatedOwnerId { get; private set; }
         public string? CreatedGroupAccessType { get; private set; }
         public bool CreatedCanRequestInvite { get; private set; }
+        public bool CreatedAgeGate { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -287,6 +320,7 @@ public class WorldDialogInstanceTargetTests
                     : null;
                 CreatedCanRequestInvite = root.TryGetProperty("canRequestInvite", out var canRequest) &&
                                           canRequest.GetBoolean();
+                CreatedAgeGate = root.TryGetProperty("ageGate", out var ageGate) && ageGate.GetBoolean();
 
                 var instanceId = string.Equals(CreatedType, "group", StringComparison.Ordinal)
                     ? $"88888~group({CreatedOwnerId})~groupAccessType({CreatedGroupAccessType})~region(us)"

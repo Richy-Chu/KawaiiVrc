@@ -1429,7 +1429,8 @@ public sealed class VrcApiClient : IDisposable
         bool canRequestInvite,
         CancellationToken cancellationToken = default,
         string? ownerId = null,
-        string? groupAccessType = null)
+        string? groupAccessType = null,
+        bool ageGate = false)
     {
         var isGroup = string.Equals(type, "group", StringComparison.OrdinalIgnoreCase);
         var isPublic = string.Equals(type, "public", StringComparison.OrdinalIgnoreCase);
@@ -1452,7 +1453,9 @@ public sealed class VrcApiClient : IDisposable
             ["worldId"] = worldId,
             ["type"] = type,
             ["region"] = region,
-            ["canRequestInvite"] = isGroup ? false : canRequestInvite
+            ["canRequestInvite"] = isGroup ? false : canRequestInvite,
+            // Only age-verified (18+) players may join an age-gated instance.
+            ["ageGate"] = ageGate
         };
         if (resolvedOwnerId is not null)
         {
