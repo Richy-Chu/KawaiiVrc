@@ -9479,12 +9479,30 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // The popup can show someone who is not in the friend list at all: a recent
+        // player, a group member, a name from instance history. A refresh that cannot
+        // find their row must not close the profile that is being read (1.0.128).
+        if (keepDetail is not null)
+        {
+            if (_selectedFriend is not null)
+            {
+                _selectedFriend = null;
+                OnPropertyChanged(nameof(SelectedFriend));
+            }
+
+            RaiseCommandStates();
+            return;
+        }
+
         if (_selectedFriend is not null)
         {
             SelectedFriend = null;
             SelectedFriendDetail = null;
         }
     }
+
+    /// <summary>Test seam: runs the friend-refresh selection restore without a server poll.</summary>
+    internal void RestoreFriendsSelectionForTests() => RestoreSelection(_selectedFriend, _friendDetail);
 
     private bool FilterFriend(object item)
     {

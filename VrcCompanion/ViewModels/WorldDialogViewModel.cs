@@ -935,12 +935,14 @@ public sealed class WorldDialogViewModel : ViewModelBase
             // The membership list's myMember is not always complete; the permissions
             // endpoint is. Without this a moderator's role looked like one with no
             // age-gated (or public) instance rights at all.
+            IReadOnlyDictionary<string, IReadOnlyList<string>>? reportedPermissions = null;
+            string? permissionsError = null;
             try
             {
-                var permissions = await _api.GetMyGroupPermissionsAsync(cancellationToken);
+                reportedPermissions = await _api.GetMyGroupPermissionsAsync(cancellationToken);
                 foreach (var group in groups)
                 {
-                    if (permissions.TryGetValue(group.EffectiveId, out var allowed))
+                    if (reportedPermissions.TryGetValue(group.EffectiveId, out var allowed))
                     {
                         group.MyMember ??= new GroupMember();
                         group.MyMember.Permissions = allowed.ToList();
@@ -953,8 +955,11 @@ public sealed class WorldDialogViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
+                permissionsError = ex.Message;
                 Debug.WriteLine($"world dialog group permissions: {ex.Message}");
             }
+
+            GroupPermissionDiagnostics.Record(groups, reportedPermissions, permissionsError);
 
             if (cancellationToken.IsCancellationRequested)
             {
