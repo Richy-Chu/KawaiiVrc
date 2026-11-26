@@ -3220,6 +3220,35 @@ public sealed class VrcApiClient : IDisposable
     }
 
     /// <summary>
+    /// The account's own permissions in every group it belongs to. GET users/{id}/groups
+    /// (the membership list) does not reliably carry them, so anything that decides what
+    /// a role may create - the world dialog's access kinds and its age-gate option - reads
+    /// this endpoint instead. A failure is the caller's to ignore: the list's answer is
+    /// still usable, just less certain.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetMyGroupPermissionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (CurrentUser is null || string.IsNullOrWhiteSpace(CurrentUser.Id))
+        {
+            return new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        }
+
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            $"users/{Uri.EscapeDataString(CurrentUser.Id)}/groups/permissions",
+            null,
+            cancellationToken);
+        var permissions = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(body, JsonOptions);
+        return permissions is null
+            ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            : permissions.ToDictionary(
+                pair => pair.Key,
+                pair => (IReadOnlyList<string>)pair.Value,
+                StringComparer.Ordinal);
+    }
+
+    /// <summary>
     /// Every group on another user's profile. The profile payload only carries a
     /// handful of groups (its count can be much higher), so the user groups
     /// endpoint supplies the full membership list.

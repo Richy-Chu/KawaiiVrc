@@ -197,6 +197,12 @@ public class WorldDialogInstanceTargetTests
         dialog.AgeGate = true;
         Assert.False(dialog.AgeGate);
 
+        // VRChat's group list can omit myMember.permissions; the dedicated permissions
+        // endpoint fills them in, so a role that may age gate is not hidden.
+        dialog.SelectedOwner = dialog.Owners.Single(owner => owner.Label == "Role Permissions From The Server");
+        Assert.True(dialog.HasAgeGateOption);
+        Assert.False(dialog.ShowAgeGateUnavailable);
+
         dialog.SelectedOwner = dialog.Owners[0];
         Assert.True(dialog.HasAgeGateOption);
     }
@@ -430,6 +436,12 @@ public class WorldDialogInstanceTargetTests
                         "myMember": { "permissions": ["group-instance-public-create"] }
                       },
                       {
+                        "id": "grp_permissions_only",
+                        "name": "Role Permissions From The Server",
+                        "membershipStatus": "member",
+                        "myMember": { "permissions": ["group-instance-public-create"] }
+                      },
+                      {
                         "id": "grp_none",
                         "name": "No Create Permission",
                         "membershipStatus": "member",
@@ -447,6 +459,21 @@ public class WorldDialogInstanceTargetTests
                         "membershipStatus": "member"
                       }
                     ]
+                    """);
+            }
+
+            if (method == HttpMethod.Get && path.EndsWith("/groups/permissions", StringComparison.Ordinal))
+            {
+                // The dedicated endpoint is the one that carries the role's real rights;
+                // grp_permissions_only proves the list's myMember was incomplete.
+                return await Json("""
+                    {
+                      "grp_abc": ["group-instance-plus-create", "group-instance-restricted-create", "group-instance-age-gated-create"],
+                      "grp_no_age_gate": ["group-instance-public-create"],
+                      "grp_permissions_only": ["group-instance-public-create", "group-instance-age-gated-create"],
+                      "grp_none": ["group-instance-join"],
+                      "grp_empty": []
+                    }
                     """);
             }
 

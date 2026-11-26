@@ -932,6 +932,35 @@ public sealed class WorldDialogViewModel : ViewModelBase
                 return;
             }
 
+            // The membership list's myMember is not always complete; the permissions
+            // endpoint is. Without this a moderator's role looked like one with no
+            // age-gated (or public) instance rights at all.
+            try
+            {
+                var permissions = await _api.GetMyGroupPermissionsAsync(cancellationToken);
+                foreach (var group in groups)
+                {
+                    if (permissions.TryGetValue(group.EffectiveId, out var allowed))
+                    {
+                        group.MyMember ??= new GroupMember();
+                        group.MyMember.Permissions = allowed.ToList();
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"world dialog group permissions: {ex.Message}");
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             foreach (var group in groups
                          .Where(group => group.IsMember || string.IsNullOrWhiteSpace(group.MembershipStatus))
                          .OrderBy(group => group.Name, StringComparer.CurrentCultureIgnoreCase))
@@ -943,7 +972,13 @@ public sealed class WorldDialogViewModel : ViewModelBase
                 }
 
                 var label = string.IsNullOrWhiteSpace(group.Name) ? "Group" : group.Name;
-                var ageGateAllowed = group.MyMember?.Permissions?.Contains("group-instance-age-gated-create") == true;
+                // An unknown role is left to VRChat to judge, the same way the access
+                // list is; only a known role without the permission hides the option.
+                var permissions = group.MyMember?.Permissions;
+                var ageGateAllowed = group.MyMember is null ||
+                                     permissions is null ||
+                                     permissions.Contains("*") ||
+                                     permissions.Contains("group-instance-age-gated-create");
                 Owners.Add(new InstanceOwnerOption(
                     label,
                     group.EffectiveId,
@@ -1200,6 +1235,11 @@ internal static class InstancePresentation
         }
 
         var permissions = group.MyMember.Permissions ?? new List<string>();
+        if (permissions.Contains("*"))
+        {
+            return new[] { "public", "plus", "members" };
+        }
+
         var allowed = new List<string>();
         if (permissions.Contains("group-instance-public-create") ||
             permissions.Contains("group-instance-open-create"))

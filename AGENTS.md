@@ -12,7 +12,7 @@ newer SDK may be the local default: to check SDK 8 compatibility, write a `globa
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.126**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.127**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,25 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.127 changed
+
+- **A group's real role permissions come from the endpoint that owns them.** `GET
+  users/{id}/groups` (the membership list) does not reliably carry `myMember.permissions`,
+  so a moderator whose role may create age-gated instances was shown as a role with no
+  rights and lost the 18+ checkbox. `VrcApiClient.GetMyGroupsAsync` now also reads
+  `GET users/{id}/groups/permissions` and replaces each group's permission list with that
+  answer (`ApplyMyGroupPermissionsAsync`); a failure leaves the list's own answer intact.
+  This feeds everything that reads permissions - the create card's access types, the HOST
+  list and the age gate - not just the checkbox.
+- **`*` means every group permission.** `InstancePresentation.GroupInstanceAccess` and the
+  age-gate check accept the wildcard, so an owner/admin role is not read as a role with none.
+- **A role VRChat did not describe is left to VRChat.** If a group arrives with no
+  `myMember` at all, the 18+ checkbox is offered rather than hidden, the same way the access
+  types are; only a permission list that is present and lacks
+  `group-instance-age-gated-create` hides it and shows the explanation.
+- **Tests: 1041.** The dialog case adds a group whose list payload lacks the permission but
+  whose permissions endpoint grants it, and keeps a group that truly lacks it.
 
 ### What 1.0.126 changed
 
