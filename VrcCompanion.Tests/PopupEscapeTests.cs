@@ -20,7 +20,8 @@ namespace VrcCompanion.Tests;
 /// (50), avatar details (40), launch chooser (35), profile groups and group info
 /// (ProfileZIndex + 1), friend profile (30/34) with instance history (32),
 /// recent players (25), friend changes (24), friend locations (23), boop preview
-/// (20), world dialog (20).
+/// (20), world dialog (20), then the Instance page itself, which is a popup
+/// section and leaves through its own Close button's command.
 /// </summary>
 [Collection(Seams.Collection)]
 [ResetSeams]
@@ -252,6 +253,74 @@ public class PopupEscapeTests
                 Assert.True(escape.Handled, "Escape should close the friend changes popup.");
                 Assert.False(shell.IsFriendChangesOpen);
                 Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheInstancePage()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var before = shell.SelectedSection;
+                shell.OpenInstanceCommand.Execute(null);
+                window.UpdateLayout();
+
+                Assert.Equal("instance", shell.SelectedSection.Key);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the instance page.");
+                Assert.Same(before, shell.SelectedSection);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheProfileBeforeTheInstancePage()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var profile = Profile();
+            TestHooks.AttachFriendDetail(shell, profile);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var before = shell.SelectedSection;
+                shell.OpenInstanceCommand.Execute(null);
+                window.UpdateLayout();
+
+                Assert.Equal("instance", shell.SelectedSection.Key);
+                Assert.True(shell.HasSelectedFriend);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(shell.HasSelectedFriend, "The profile sits over the instance page.");
+                Assert.Equal("instance", shell.SelectedSection.Key);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.Same(before, shell.SelectedSection);
             }
             finally
             {

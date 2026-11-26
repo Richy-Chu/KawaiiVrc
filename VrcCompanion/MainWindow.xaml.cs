@@ -372,6 +372,17 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // The Instance page is a popup over the section it was opened from:
+            // its Close button runs CloseInstanceCommand, and Escape leaves it the
+            // same way. It comes last because a profile or world dialog opened
+            // from it sits on top and has to close first.
+            if (_viewModel.SelectedSection.Key == "instance")
+            {
+                _viewModel.CloseInstanceCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (FindVisibleBrowser() is { } focusedBrowser &&
                 focusedBrowser.TryCancelAddressEdit())
             {
