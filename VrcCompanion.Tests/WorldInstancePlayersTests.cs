@@ -585,7 +585,12 @@ public class WorldInstancePlayersTests
                 Capacity = 50,
                 Type = "public"
             };
-            var instanceViewModel = new InstanceViewModel(api, ImageLoader.Shared);
+            // An isolated log keeps this window test off the reader's real VRChat log; the
+            // dialog's live-instance timer must not clear the seeded instance.
+            var instanceViewModel = new InstanceViewModel(
+                api,
+                ImageLoader.Shared,
+                new VrChatLogPlayerService(() => string.Empty, () => false));
             TestHooks.SetInstance(instanceViewModel, live);
             TestHooks.AttachInstanceViewModel(shell, instanceViewModel);
 

@@ -1972,6 +1972,26 @@
                                                            FontWeight="SemiBold"
                                                            Foreground="{StaticResource TextBrush}" />
                                             </Border>
+                                            <Border HorizontalAlignment="Right"
+                                                    VerticalAlignment="Top"
+                                                    Background="#CC0B0D12"
+                                                    CornerRadius="7"
+                                                    Padding="7,3"
+                                                    Margin="8"
+                                                    Visibility="{Binding IsCurrentWorld, Converter={StaticResource BoolToVis}}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE707;"
+                                                               FontFamily="Segoe MDL2 Assets"
+                                                               FontSize="8.5"
+                                                               Foreground="{StaticResource GreenBrush}"
+                                                               VerticalAlignment="Center"
+                                                               Margin="0,0,3,0" />
+                                                    <TextBlock Text="{Binding CurrentWorldText}"
+                                                               FontSize="9"
+                                                               FontWeight="Bold"
+                                                               Foreground="{StaticResource GreenBrush}" />
+                                                </StackPanel>
+                                            </Border>
                                         </Grid>
 
                                         <TextBlock Text="{Binding Name}"

@@ -530,8 +530,12 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private readonly Action<string, string, string>? _openUserProfile;
     private readonly Func<string, CancellationToken, Task<IReadOnlyList<InstanceRosterPlayer>?>>? _liveRoster;
     private readonly Func<VrcInstance?>? _currentInstance;
+    private readonly Func<CancellationToken, Task>? _refreshLiveState;
     private WorldInstanceItem? _selectedInstance;
     private DispatcherTimer? _playerRefreshTimer;
+    private DispatcherTimer? _liveRefreshTimer;
+    private CancellationTokenSource? _liveCancellation;
+    private bool _liveRefreshing;
     private CancellationTokenSource? _playersCancellation;
     private WorldInstanceItem? _syntheticCurrentInstance;
     private string? _currentLocation;
@@ -542,6 +546,13 @@ public sealed class WorldDialogViewModel : ViewModelBase
     /// ticks never overlap, and the timer only runs while the panel is open.
     /// </summary>
     internal static TimeSpan PlayersRefreshInterval { get; set; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// How often the dialog re-checks which instance the account is in, with the Players
+    /// panel closed. Reading the game log is a local file tail; VRChat is only called when
+    /// the instance actually changes.
+    /// </summary>
+    internal static TimeSpan LiveStateRefreshInterval { get; set; } = TimeSpan.FromSeconds(15);
     private InstanceOwnerOption _selectedOwner;
     private bool _isLoadingOwners;
     private bool _ownersLoaded;
@@ -559,7 +570,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
         string? focusNote = null,
         Action<string, string, string>? openUserProfile = null,
         Func<string, CancellationToken, Task<IReadOnlyList<InstanceRosterPlayer>?>>? liveRoster = null,
-        Func<VrcInstance?>? currentInstance = null)
+        Func<VrcInstance?>? currentInstance = null,
+        Func<CancellationToken, Task>? refreshLiveState = null)
     {
         _summary = summary;
         _api = api;
@@ -569,6 +581,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
         _openUserProfile = openUserProfile;
         _liveRoster = liveRoster;
         _currentInstance = currentInstance;
+        _refreshLiveState = refreshLiveState;
         HeroImage = summary.Image;
 
         InstanceTypes = new ObservableCollection<InstanceTypeOption>(PersonalInstanceTypes);
@@ -923,6 +936,75 @@ public sealed class WorldDialogViewModel : ViewModelBase
     /// <summary>Re-checks "you are here" against the live instance, adding or removing the row.</summary>
     internal void RefreshCurrentInstance() => SyncCurrentInstanceRow();
 
+    /// <summary>
+    /// Keeps "you are here" honest while the dialog is open, whether or not the Players
+    /// panel is: the provider re-reads the live instance, then the label follows it.
+    /// </summary>
+    internal async Task RefreshLiveStateAsync()
+    {
+        if (_refreshLiveState is null || _liveRefreshing)
+        {
+            return;
+        }
+
+        _liveRefreshing = true;
+        try
+        {
+            await _refreshLiveState(_liveCancellation?.Token ?? CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            // The dialog closed mid-read.
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("world dialog live instance: " + ex.Message);
+        }
+        finally
+        {
+            _liveRefreshing = false;
+            if (!(_liveCancellation?.IsCancellationRequested ?? false))
+            {
+                SyncCurrentInstanceRow();
+            }
+        }
+    }
+
+    internal bool IsLiveRefreshRunning => _liveRefreshTimer?.IsEnabled == true;
+
+    private void StartLiveRefresh()
+    {
+        if (_refreshLiveState is null)
+        {
+            return;
+        }
+
+        _liveCancellation ??= new CancellationTokenSource();
+        if (_liveRefreshTimer is null)
+        {
+            _liveRefreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = LiveStateRefreshInterval
+            };
+            _liveRefreshTimer.Tick += (_, _) => _ = RefreshLiveStateAsync();
+        }
+
+        _liveRefreshTimer.Interval = LiveStateRefreshInterval;
+        _liveRefreshTimer.Start();
+        // The dialog opens on a world the reader may already be in; do not make the
+        // label wait for the first tick.
+        _ = RefreshLiveStateAsync();
+    }
+
+    /// <summary>Stops the current-instance timer; the dialog calls this when it closes.</summary>
+    public void StopLiveRefresh()
+    {
+        _liveRefreshTimer?.Stop();
+        _liveCancellation?.Cancel();
+        _liveCancellation?.Dispose();
+        _liveCancellation = null;
+    }
+
     internal bool IsPlayerRefreshRunning => _playerRefreshTimer?.IsEnabled == true;
 
     /// <summary>Stops the timer; the dialog calls this when it closes.</summary>
@@ -1244,6 +1326,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
 
             World = world;
             RebuildInstances(cancellationToken);
+            StartLiveRefresh();
             _ = LoadHeroImageAsync(world, cancellationToken);
         }
         catch (OperationCanceledException)

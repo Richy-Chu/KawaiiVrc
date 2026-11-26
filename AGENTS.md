@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1063 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1066 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.132**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.133**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,27 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.133 changed
+
+- **The world dialog's own current-instance timer.** "You are here" used to move only when the
+  Players panel refreshed. `WorldDialogViewModel` now takes a `refreshLiveState` provider and
+  runs `StartLiveRefresh` for the whole life of the dialog (15 s, `LiveStateRefreshInterval`),
+  calling `InstanceViewModel.RefreshLiveStateAsync` and then `SyncCurrentInstanceRow`. Do not
+  tie this to `ShowInstancePlayersAsync` or the panel timer: the label has to clear when the
+  reader leaves with the panel closed, and `StopLiveRefresh` is called beside
+  `StopPlayerRefresh` when the dialog is replaced or closed.
+- **Leave detection uses the log while the game runs.** `RefreshLiveStateAsync` treats the game
+  log as authoritative whenever `IsGameRunning`: no location in the log means the reader left,
+  even if the API's user record has not caught up. VRChat is only asked when the instance
+  actually changed (or to load it the first time); otherwise the log snapshot is applied.
+- **World search marks the world you are in.** `WorldItem.IsCurrentWorld` comes from the live
+  instance's `WorldId` in `PublishWorldsPage`/`RefreshWorldResultMarkers`, and the world card
+  shows a green "YOU'RE HERE" badge. The marker is refreshed whenever `InstanceViewModel`
+  raises `Instance`, so leaving clears the badge without re-running the search.
+- **Tests: 1066.** `WorldCurrentInstanceTests` covers leaving with the Players panel closed
+  (a real game log, the dialog's 100 ms test timer), the search marker on `Worlds`, and a real
+  window showing exactly one YOU'RE HERE badge.
 
 ### What 1.0.132 changed
 

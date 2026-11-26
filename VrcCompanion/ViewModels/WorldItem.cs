@@ -10,6 +10,7 @@ public sealed class WorldItem : ViewModelBase
     private readonly VrcWorld _world;
     private ImageSource? _image;
     private bool _isFavorite;
+    private bool _isCurrentWorld;
 
     public WorldItem(VrcWorld world)
     {
@@ -29,6 +30,15 @@ public sealed class WorldItem : ViewModelBase
     }
 
     public string FavoriteGlyph => IsFavorite ? "\uE735" : "\uE734";
+
+    /// <summary>The world this account is in right now, marked in search results.</summary>
+    public bool IsCurrentWorld
+    {
+        get => _isCurrentWorld;
+        set => SetProperty(ref _isCurrentWorld, value);
+    }
+
+    public string CurrentWorldText => "YOU'RE HERE";
 
     public string Id => _world.Id;
 

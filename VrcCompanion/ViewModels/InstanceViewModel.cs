@@ -819,6 +819,73 @@ public sealed class InstanceViewModel : ViewModelBase
         return true;
     }
 
+    /// <summary>
+    /// Re-reads which instance the account is in instead of assuming the dialog's world: the
+    /// world dialog's own timer uses it, so "You are here" clears on a leave even with the
+    /// Players panel closed. VRChat is only called when the instance actually changed.
+    /// </summary>
+    internal async Task<VrcInstance?> RefreshLiveStateAsync(
+        VrcUser currentUser,
+        IReadOnlyList<FriendItem> friends,
+        CancellationToken cancellationToken = default)
+    {
+        _lastCurrentUser = currentUser;
+        _lastFriends = friends.ToList();
+
+        var snapshot = await Task.Run(() => _logService.Poll(), cancellationToken);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+
+        var logLocation = snapshot is not null && LaunchService.IsLocation(snapshot.Location)
+            ? snapshot.Location
+            : null;
+        // While the game is running its log is the truth: no location there means the reader
+        // left, even if the API's user record has not caught up yet. With the game closed the
+        // API's location is used, and when neither source knows anything the loaded instance is
+        // left alone rather than cleared on missing evidence.
+        string? effective;
+        if (_logService.IsGameRunning)
+        {
+            effective = logLocation;
+        }
+        else if (LaunchService.IsLocation(currentUser.Location))
+        {
+            effective = currentUser.Location;
+        }
+        else
+        {
+            effective = Instance?.Location ?? logLocation;
+        }
+
+        if (!LaunchService.IsLocation(effective))
+        {
+            if (Instance is not null)
+            {
+                await LoadAsync(currentUser, friends, cancellationToken);
+            }
+
+            return Instance;
+        }
+
+        var unchanged = Instance is not null && SameInstance(Instance.Location, effective);
+        if (!unchanged)
+        {
+            // A join, a leave or a world switch: the full load already handles all three
+            // (including clearing the instance when the log found no room).
+            await LoadAsync(currentUser, friends, cancellationToken);
+            return Instance;
+        }
+
+        if (snapshot is not null && SameInstance(snapshot.Location, effective))
+        {
+            ApplyLogSnapshot(snapshot);
+        }
+
+        return Instance;
+    }
+
     internal static string BuildLogSignature(VrChatLogSnapshot? snapshot)
     {
         if (snapshot is null || !LaunchService.IsLocation(snapshot.Location))

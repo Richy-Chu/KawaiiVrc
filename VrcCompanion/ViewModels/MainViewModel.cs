@@ -2836,6 +2836,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         InstanceViewModel.PropertyChanged += (_, args) =>
         {
             if (string.IsNullOrEmpty(args.PropertyName) ||
+                args.PropertyName == nameof(InstanceViewModel.Instance))
+            {
+                RefreshWorldResultMarkers();
+            }
+
+            if (string.IsNullOrEmpty(args.PropertyName) ||
                 args.PropertyName == nameof(InstanceViewModel.IsLoading))
             {
                 RefreshInstanceCommand.RaiseCanExecuteChanged();
@@ -4322,6 +4328,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         return new WorldsPage(worlds, worlds.Count >= VrcApiClient.WorldsPageSize);
     }
 
+    /// <summary>Keeps the YOU'RE HERE badge on world results in step with the live instance.</summary>
+    private void RefreshWorldResultMarkers()
+    {
+        var currentWorldId = InstanceViewModel?.Instance?.WorldId;
+        foreach (var world in Worlds)
+        {
+            world.IsCurrentWorld = !string.IsNullOrWhiteSpace(currentWorldId) &&
+                                   string.Equals(world.Id, currentWorldId, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     /// <summary>
     /// Shows one page of worlds. Only this page is published, so the previous
     /// page's cards and decoded thumbnails leave the grid instead of piling up
@@ -4329,10 +4346,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void PublishWorldsPage(int page, WorldsPage data)
     {
+        var currentWorldId = InstanceViewModel?.Instance?.WorldId;
         var rows = data.Worlds
             .Select(world => new WorldItem(world)
             {
-                IsFavorite = _favoriteWorlds.Contains(world.Id)
+                IsFavorite = _favoriteWorlds.Contains(world.Id),
+                IsCurrentWorld = !string.IsNullOrWhiteSpace(currentWorldId) &&
+                                 string.Equals(world.Id, currentWorldId, StringComparison.OrdinalIgnoreCase)
             })
             .OrderByDescending(world => world.IsFavorite)
             .ToList();
@@ -4572,6 +4592,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         WorldDialog?.StopPlayerRefresh();
+        WorldDialog?.StopLiveRefresh();
         var dialog = new WorldDialogViewModel(
             world,
             _api,
@@ -4580,42 +4601,34 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             focusNote,
             openUserProfile: OpenUserProfile,
             liveRoster: LiveInstanceRosterAsync,
-            currentInstance: () => InstanceViewModel?.Instance);
+            currentInstance: () => InstanceViewModel?.Instance,
+            refreshLiveState: RefreshLiveStateForDialogAsync);
         WorldDialog = dialog;
         ClearInfo();
         _ = dialog.LoadAsync(forceRefresh: false, cancellation.Token);
-        _ = SyncWorldDialogCurrentInstanceAsync(dialog);
     }
 
     /// <summary>
-    /// Makes sure the world dialog can say which instance you are in even when the Instance
-    /// page was never opened: reads the live instance once, then labels (or adds) its row.
+    /// The world dialog's own live-instance poll. Unlike the Players panel it runs for the
+    /// whole life of the dialog, so a leave clears "You are here" even when the panel is shut;
+    /// it also loads the instance once when the Instance page was never opened.
     /// </summary>
-    private async Task SyncWorldDialogCurrentInstanceAsync(WorldDialogViewModel dialog)
+    private async Task RefreshLiveStateForDialogAsync(CancellationToken cancellationToken)
     {
-        try
+        var viewModel = InstanceViewModel;
+        var user = CurrentUser;
+        if (viewModel is null || user is null)
         {
-            var viewModel = InstanceViewModel;
-            var user = CurrentUser;
-            if (viewModel is not null && user is not null && viewModel.Instance is null)
-            {
-                await viewModel.LoadAsync(user, Friends);
-            }
+            return;
+        }
 
-            if (ReferenceEquals(WorldDialog, dialog))
-            {
-                dialog.RefreshCurrentInstance();
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine("world dialog current instance: " + ex.Message);
-        }
+        await viewModel.RefreshLiveStateAsync(user, Friends, cancellationToken);
     }
 
     private void CloseWorldDialog()
     {
         WorldDialog?.StopPlayerRefresh();
+        WorldDialog?.StopLiveRefresh();
         _worldDialogCancellation?.Cancel();
         _worldDialogCancellation?.Dispose();
         _worldDialogCancellation = null;
