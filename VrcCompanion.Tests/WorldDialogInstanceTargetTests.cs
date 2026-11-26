@@ -161,6 +161,33 @@ public class WorldDialogInstanceTargetTests
     }
 
     [Fact]
+    public async Task ARejectedGroupInstanceExplainsItselfBesideTheButton()
+    {
+        using var handler = new WorldHandler { FailCreate = true };
+        using var api = new VrcApiClient(null, handler);
+        TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared);
+
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
+        Settle.Until(
+            () => !dialog.IsLoadingOwners && dialog.Owners.Any(owner => owner.IsGroup),
+            "the group owners never arrived");
+
+        dialog.SelectedOwner = dialog.Owners.Single(owner => owner.Label == "Test Group");
+        var instance = await dialog.CreateInstanceAsync(CancellationToken.None);
+
+        Assert.Null(instance);
+        Assert.True(dialog.HasCreateError);
+        Assert.Contains("permission", dialog.CreateError!, StringComparison.OrdinalIgnoreCase);
+
+        // A create failure is not a world-load failure; the left banner stays quiet.
+        Assert.False(dialog.HasError);
+    }
+
+    [Fact]
     public void OpeningAProfileRowLoadsThatWorldAndPinsItsInstance()
     {
         using var handler = new WorldHandler();
@@ -225,6 +252,8 @@ public class WorldDialogInstanceTargetTests
 
     private sealed class WorldHandler : HttpMessageHandler
     {
+        public bool FailCreate { get; set; }
+
         public string? CreatedType { get; private set; }
         public string? CreatedOwnerId { get; private set; }
         public string? CreatedGroupAccessType { get; private set; }
@@ -239,6 +268,13 @@ public class WorldDialogInstanceTargetTests
 
             if (method == HttpMethod.Post && path.EndsWith("/instances", StringComparison.Ordinal))
             {
+                if (FailCreate)
+                {
+                    return await Json(
+                        """{"error":{"message":"You do not have permission to create this instance"}}""",
+                        HttpStatusCode.Forbidden);
+                }
+
                 var json = request.Content is null
                     ? "{}"
                     : await request.Content.ReadAsStringAsync(cancellationToken);
@@ -325,8 +361,10 @@ public class WorldDialogInstanceTargetTests
             return await Json("[]");
         }
 
-        private static Task<HttpResponseMessage> Json(string json)
-            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        private static Task<HttpResponseMessage> Json(
+            string json,
+            HttpStatusCode status = HttpStatusCode.OK)
+            => Task.FromResult(new HttpResponseMessage(status)
             {
                 Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
             });

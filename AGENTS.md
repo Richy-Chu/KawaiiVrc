@@ -6,7 +6,7 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1030 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1031 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
@@ -154,9 +154,10 @@ file inline and never freed it.
 - **The world dialog is never opened underneath the popup that asked for it.** The friend profile
   (z 30/34) and friend locations (23) sit above it (20), so `OpenWorld` closes a selected friend
   profile and the friend-locations list before showing the dialog.
-- **Tests: 1030.** `WorldDialogInstanceTargetTests` pins the pinned invite row, no duplicate of a
+- **Tests: 1031.** `WorldDialogInstanceTargetTests` pins the pinned invite row, no duplicate of a
   listed instance, permission-filtered owners, the group create payload, the personal owner, the
-  profile-location command, the popup closing, and that non-world locations are not offered.
+  profile-location command, the popup closing, the inline create error, and that non-world
+  locations are not offered.
 
 ### What 1.0.121 changed
 

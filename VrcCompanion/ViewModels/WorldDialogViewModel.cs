@@ -233,6 +233,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private string _joinInstanceInput = string.Empty;
     private VrcInstance? _createdInstance;
     private string? _errorMessage;
+    private string? _createError;
     private bool _isLoading;
     private bool _isCreating;
     private readonly string? _focusLocation;
@@ -345,6 +346,21 @@ public sealed class WorldDialogViewModel : ViewModelBase
     }
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
+
+    /// <summary>VRChat's answer when creating an instance fails, shown by the button.</summary>
+    public string? CreateError
+    {
+        get => _createError;
+        private set
+        {
+            if (SetProperty(ref _createError, value))
+            {
+                OnPropertyChanged(nameof(HasCreateError));
+            }
+        }
+    }
+
+    public bool HasCreateError => !string.IsNullOrWhiteSpace(CreateError);
 
     public ObservableCollection<WorldInstanceItem> Instances { get; }
 
@@ -659,6 +675,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
     {
         IsCreating = true;
         ErrorMessage = null;
+        CreateError = null;
         try
         {
             var owner = SelectedOwner;
@@ -690,18 +707,18 @@ public sealed class WorldDialogViewModel : ViewModelBase
         }
         catch (VrcApiException ex)
         {
-            ErrorMessage = ex.Message;
+            CreateError = ex.Message;
             return null;
         }
         catch (System.Net.Http.HttpRequestException)
         {
-            ErrorMessage = "Could not reach VRChat to create the instance.";
+            CreateError = "Could not reach VRChat to create the instance.";
             return null;
         }
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
-            ErrorMessage = "Could not create that instance.";
+            CreateError = "Could not create that instance.";
             return null;
         }
         finally

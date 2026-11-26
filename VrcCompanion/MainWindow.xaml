@@ -13471,6 +13471,14 @@
                                                         Margin="0,6,0,0"
                                                         Command="{Binding DataContext.CreateInstanceCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
 
+                                                <!-- VRChat's answer for a group the role cannot create for belongs beside the button. -->
+                                                <TextBlock Text="{Binding CreateError}"
+                                                           Foreground="{StaticResource ErrorTextBrush}"
+                                                           FontSize="10"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,6,0,0"
+                                                           Visibility="{Binding HasCreateError, Converter={StaticResource BoolToVis}}" />
+
                                                 <Border Background="{StaticResource AccentSoftBrush}"
                                                         BorderBrush="{StaticResource AccentBrush}"
                                                         BorderThickness="1"
