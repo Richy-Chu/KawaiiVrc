@@ -12,7 +12,7 @@ newer SDK may be the local default: to check SDK 8 compatibility, write a `globa
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.133**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.134**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,23 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.134 changed
+
+- **The current world no longer waits for the Instance page.** `WorldItem.IsCurrentWorld` used to
+  come only from `InstanceViewModel.Instance`, which loads on the Instance page or an instance
+  panel, so a fresh launch showed no YOU'RE HERE badge. `MainViewModel.ResolveCurrentWorldIdAsync`
+  now falls back to `CurrentUser.Location`, then to the game log (`Task.Run` around process
+  probing and `Poll`, like the other log readers), and `FetchWorldsPageAsync` prepends the
+  current world's record to page 1 when VRChat's popularity page does not include it. Do not
+  reintroduce an instance load just to mark the badge.
+- **The current world is the first search result.** `PublishWorldsPage` marks from
+  `KnownCurrentWorldId` and sorts `IsCurrentWorld` above favorites; `RefreshWorldResultMarkers`
+  uses the same fallback so a late instance load still updates the badge. A failed
+  `GetWorldAsync` for the current world is swallowed (the page still shows).
+- **Tests: 1066.** The search-marker and window-badge cases in `WorldCurrentInstanceTests` were
+  changed to start with no loaded instance and with the current world absent from the search
+  response, then assert it is the first row and the only badge.
 
 ### What 1.0.133 changed
 

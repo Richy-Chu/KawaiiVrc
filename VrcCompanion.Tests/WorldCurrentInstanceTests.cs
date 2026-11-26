@@ -26,6 +26,7 @@ public class WorldCurrentInstanceTests
 {
     private const string WorldId = "wrld_4432ea9b-729c-46e3-8eaf-846aa0a37fdd";
     private const string OtherWorldId = "wrld_00000000-0000-0000-0000-000000000002";
+    private const string ThirdWorldId = "wrld_00000000-0000-0000-0000-000000000003";
     private const string InstanceId = "12345~region(us)";
 
     [Fact]
@@ -120,12 +121,18 @@ public class WorldCurrentInstanceTests
             Location = $"{WorldId}:{InstanceId}"
         });
         TestHooks.SetLoggedIn(shell);
-        TestHooks.AttachInstanceViewModel(shell, LiveViewModel(api));
+
+        // Launch condition: no Instance page was ever opened, so nothing has loaded the
+        // live instance. The world still has to be marked and come first.
+        Assert.Null(shell.InstanceViewModel?.Instance);
 
         await shell.SearchWorldsAsync(string.Empty);
 
-        Assert.True(shell.Worlds.Single(world => world.Id == WorldId).IsCurrentWorld);
-        Assert.False(shell.Worlds.Single(world => world.Id != WorldId).IsCurrentWorld);
+        Assert.Equal(WorldId, shell.Worlds[0].Id);
+        Assert.True(shell.Worlds[0].IsCurrentWorld);
+        Assert.All(
+            shell.Worlds.Skip(1),
+            world => Assert.False(world.IsCurrentWorld));
     }
 
     [Fact]
@@ -143,7 +150,6 @@ public class WorldCurrentInstanceTests
                 Location = $"{WorldId}:{InstanceId}"
             });
             TestHooks.SetLoggedIn(shell);
-            TestHooks.AttachInstanceViewModel(shell, LiveViewModel(api));
 
             var window = new MainWindow(shell, initializeOnLoad: false)
             {
@@ -167,6 +173,7 @@ public class WorldCurrentInstanceTests
                 window.UpdateLayout();
                 window.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
 
+                Assert.Equal(WorldId, shell.Worlds[0].Id);
                 var badges = FindVisualChildren<TextBlock>(window)
                     .Where(text => text.Text == "YOU'RE HERE" && text.IsVisible)
                     .ToList();
@@ -177,21 +184,6 @@ public class WorldCurrentInstanceTests
                 window.Close();
             }
         });
-    }
-
-    private static InstanceViewModel LiveViewModel(VrcApiClient api)
-    {
-        var viewModel = new InstanceViewModel(api, ImageLoader.Shared);
-        TestHooks.SetInstance(viewModel, new VrcInstance
-        {
-            WorldId = WorldId,
-            InstanceId = InstanceId,
-            Location = $"{WorldId}:{InstanceId}",
-            UserCount = 9,
-            Capacity = 50,
-            Type = "public"
-        });
-        return viewModel;
     }
 
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
@@ -225,8 +217,8 @@ public class WorldCurrentInstanceTests
             {
                 return Task.FromResult(Json($$"""
                     [
-                      { "id": "{{WorldId}}", "name": "Popcorn Palace", "authorName": "spacebaar" },
-                      { "id": "{{OtherWorldId}}", "name": "Moonlit Meadow", "authorName": "spacebaar" }
+                      { "id": "{{OtherWorldId}}", "name": "Moonlit Meadow", "authorName": "spacebaar" },
+                      { "id": "{{ThirdWorldId}}", "name": "Third Star", "authorName": "spacebaar" }
                     ]
                     """));
             }

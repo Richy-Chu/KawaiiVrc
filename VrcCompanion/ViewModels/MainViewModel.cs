@@ -56,6 +56,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _initialized;
     private bool _worldsLoaded;
     private readonly Dictionary<int, WorldsPage> _worldsPages = new();
+    private string? _currentWorldId;
+    private VrcWorld? _currentWorldDetails;
     private string _worldsQuery = string.Empty;
     private int _worldsPage = 1;
     private bool _worldsHasNext;
@@ -4325,13 +4327,104 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private async Task<WorldsPage> FetchWorldsPageAsync(string query, int page)
     {
         var worlds = await _api.SearchWorldsAsync(query, page);
-        return new WorldsPage(worlds, worlds.Count >= VrcApiClient.WorldsPageSize);
+        var hasNext = worlds.Count >= VrcApiClient.WorldsPageSize;
+        var rows = worlds.ToList();
+
+        // The world the account is standing in comes first, even when it is not in the
+        // popularity page the reader landed on, so it never needs a search to be found.
+        if (page == 1)
+        {
+            var current = await CurrentWorldForResultsAsync();
+            if (current is not null)
+            {
+                rows.RemoveAll(world => string.Equals(world.Id, current.Id, StringComparison.OrdinalIgnoreCase));
+                rows.Insert(0, current);
+            }
+        }
+
+        return new WorldsPage(rows, hasNext);
     }
+
+    /// <summary>
+    /// The world this account is in, from the live instance when it is loaded, otherwise from
+    /// the account's own location, otherwise from the game log. The world dialog's instance
+    /// load is not required, so launch (no Instance page visited) still marks correctly.
+    /// </summary>
+    private async Task<string?> ResolveCurrentWorldIdAsync()
+    {
+        var worldId = InstanceViewModel?.Instance?.WorldId;
+        if (string.IsNullOrWhiteSpace(worldId))
+        {
+            worldId = LaunchService.GetWorldIdFromLocation(CurrentUser?.Location);
+        }
+
+        if (string.IsNullOrWhiteSpace(worldId))
+        {
+            try
+            {
+                // Process probing and the log tail both stay off the UI thread, the way
+                // 1.0.83 moved the other log readers.
+                var snapshot = await Task.Run(() => _logPlayerService.IsGameRunning
+                    ? _logPlayerService.Poll()
+                    : null);
+                worldId = LaunchService.GetWorldIdFromLocation(snapshot?.Location);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("current world from log: " + ex.Message);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(worldId))
+        {
+            _currentWorldId = worldId;
+        }
+
+        return _currentWorldId;
+    }
+
+    /// <summary>The resolved current world's full record, fetched once for the first page.</summary>
+    private async Task<VrcWorld?> CurrentWorldForResultsAsync()
+    {
+        var worldId = await ResolveCurrentWorldIdAsync();
+        if (string.IsNullOrWhiteSpace(worldId))
+        {
+            return null;
+        }
+
+        if (_currentWorldDetails is { } cached &&
+            string.Equals(cached.Id, worldId, StringComparison.OrdinalIgnoreCase))
+        {
+            return cached;
+        }
+
+        try
+        {
+            var world = await _api.GetWorldAsync(worldId);
+            if (world is not null)
+            {
+                _currentWorldDetails = world;
+            }
+
+            return world;
+        }
+        catch (Exception ex)
+        {
+            // A failed detail read must not fail the whole search; the badge simply waits.
+            Debug.WriteLine("current world details: " + ex.Message);
+            return null;
+        }
+    }
+
+    private string? KnownCurrentWorldId()
+        => InstanceViewModel?.Instance?.WorldId
+           ?? LaunchService.GetWorldIdFromLocation(CurrentUser?.Location)
+           ?? _currentWorldId;
 
     /// <summary>Keeps the YOU'RE HERE badge on world results in step with the live instance.</summary>
     private void RefreshWorldResultMarkers()
     {
-        var currentWorldId = InstanceViewModel?.Instance?.WorldId;
+        var currentWorldId = KnownCurrentWorldId();
         foreach (var world in Worlds)
         {
             world.IsCurrentWorld = !string.IsNullOrWhiteSpace(currentWorldId) &&
@@ -4346,7 +4439,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void PublishWorldsPage(int page, WorldsPage data)
     {
-        var currentWorldId = InstanceViewModel?.Instance?.WorldId;
+        var currentWorldId = KnownCurrentWorldId();
         var rows = data.Worlds
             .Select(world => new WorldItem(world)
             {
@@ -4354,7 +4447,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 IsCurrentWorld = !string.IsNullOrWhiteSpace(currentWorldId) &&
                                  string.Equals(world.Id, currentWorldId, StringComparison.OrdinalIgnoreCase)
             })
-            .OrderByDescending(world => world.IsFavorite)
+            .OrderByDescending(world => world.IsCurrentWorld)
+            .ThenByDescending(world => world.IsFavorite)
             .ToList();
 
         Worlds.Clear();
