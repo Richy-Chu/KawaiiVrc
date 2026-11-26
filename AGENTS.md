@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1053 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1059 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.130**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.131**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,35 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.131 changed
+
+- **The Players panel refreshes itself while it is open.** `WorldDialogViewModel` starts a
+  `DispatcherTimer` when the panel opens and calls `RefreshOpenPlayersAsync` every
+  `PlayersRefreshInterval` (20 s, assert it stays >= 15 s in `WorldInstancePlayersTests`); a
+  tick never overlaps a read (`_playersLoading`), a quiet refresh keeps the last good list when
+  a read fails, and `StopPlayerRefresh` runs from the panel's Close button, `RebuildInstances`
+  and `MainViewModel.CloseWorldDialog` (plus before a new dialog replaces the old one). Do not
+  poll per row and do not leave the timer running after the dialog closes.
+- **Your own instance is named from the game log.** VRChat returns `users` only for instances
+  the account created (docs: `Instance.users` - "present on instances created by the requesting
+  user"), so an arbitrary public instance can answer with a count and no names. `MainViewModel`
+  passes `liveRoster: LiveInstanceRoster` into the dialog; it maps `InstanceViewModel.Players`
+  (the log roster, already self-first) to `InstanceRosterPlayer` rows with the friend/self
+  badges and friend avatars, and returns null for any other location so the panel falls back to
+  the API. `PlayersFromLiveRoster`/`IsLiveInstance` mark that case.
+- **When VRChat will not share a list, the panel says so.** `WorldInstanceItem.PlayersNote`
+  explains it (it is not an error), while `PlayersError` is kept for a closed or unreachable
+  instance. `ApplyLiveInstance` updates the row's count, capacity, region and type from each
+  read, including `UserCountAlt` - `Occupants` prefers `userCount`, so setting only `n_users`
+  left the row stale.
+- **The header no longer repeats itself.** `SelectedInstance.DetailText` already ends in the
+  occupancy, so the panel binds it alone instead of adding `OccupancyText` again; the player
+  list is inside a 320 px `ScrollViewer`, and rows sort self, friends, then name.
+- **Tests: 1059.** `WorldInstancePlayersTests` covers the quiet refresh (a join appears, a
+  failed read keeps the list), the log roster path (no `/instances/` request at all), the
+  "only shares" note with the live count, the timer starting and stopping, `LiveInstanceRoster`
+  in the shell, and a real window where a quiet refresh draws a new name into the open panel.
 
 ### What 1.0.130 changed
 

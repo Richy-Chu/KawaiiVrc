@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Windows.Media;
+using System.Windows.Threading;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 
@@ -65,19 +66,56 @@ public sealed class InstanceOwnerOption
 }
 
 /// <summary>One person in an instance opened from world details.</summary>
+/// <summary>One person in an instance this account is in, named by the game's own log.</summary>
+public sealed record InstanceRosterPlayer(
+    string UserId,
+    string DisplayName,
+    string AvatarUrl,
+    bool IsFriend,
+    bool IsSelf);
+
 public sealed class WorldInstancePlayerItem
 {
-    public WorldInstancePlayerItem(VrcUser user, Action<WorldInstancePlayerItem>? openProfile)
+    public WorldInstancePlayerItem(VrcUser user, Action<WorldInstancePlayerItem>? openProfile, bool isSelf = false)
+        : this(
+            user.Id ?? string.Empty,
+            string.IsNullOrWhiteSpace(user.DisplayName) ? "Unknown player" : user.DisplayName.Trim(),
+            ImageUrlHelper.PickAvatarThumbnailUrl(
+                user.UserIcon,
+                user.ProfilePicOverrideThumbnail ?? user.IconUrl,
+                user.CurrentAvatarThumbnailImageUrl,
+                user.CurrentAvatarImageUrl,
+                64) ?? string.Empty,
+            user.IsFriend,
+            isSelf,
+            openProfile)
     {
-        UserId = user.Id ?? string.Empty;
-        DisplayName = string.IsNullOrWhiteSpace(user.DisplayName) ? "Unknown player" : user.DisplayName.Trim();
-        AvatarUrl = ImageUrlHelper.PickAvatarThumbnailUrl(
-            user.UserIcon,
-            user.ProfilePicOverrideThumbnail ?? user.IconUrl,
-            user.CurrentAvatarThumbnailImageUrl,
-            user.CurrentAvatarImageUrl,
-            64) ?? string.Empty;
-        IsFriend = user.IsFriend;
+    }
+
+    public WorldInstancePlayerItem(InstanceRosterPlayer player, Action<WorldInstancePlayerItem>? openProfile)
+        : this(
+            player.UserId,
+            player.DisplayName,
+            player.AvatarUrl,
+            player.IsFriend,
+            player.IsSelf,
+            openProfile)
+    {
+    }
+
+    private WorldInstancePlayerItem(
+        string userId,
+        string displayName,
+        string avatarUrl,
+        bool isFriend,
+        bool isSelf,
+        Action<WorldInstancePlayerItem>? openProfile)
+    {
+        UserId = userId ?? string.Empty;
+        DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Unknown player" : displayName.Trim();
+        AvatarUrl = avatarUrl ?? string.Empty;
+        IsFriend = !isSelf && isFriend;
+        IsSelf = isSelf;
         OpenProfileCommand = new RelayCommand(
             () => openProfile?.Invoke(this),
             () => CanOpenProfile);
@@ -88,8 +126,17 @@ public sealed class WorldInstancePlayerItem
     public string AvatarUrl { get; }
     public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarUrl);
     public bool IsFriend { get; }
+    public bool IsSelf { get; }
     public bool CanOpenProfile => !string.IsNullOrWhiteSpace(UserId);
     public RelayCommand OpenProfileCommand { get; }
+
+    /// <summary>True when both rows draw the same person the same way, so a refresh keeps them.</summary>
+    public bool SameAs(WorldInstancePlayerItem other)
+        => string.Equals(UserId, other.UserId, StringComparison.Ordinal) &&
+           string.Equals(DisplayName, other.DisplayName, StringComparison.Ordinal) &&
+           string.Equals(AvatarUrl, other.AvatarUrl, StringComparison.Ordinal) &&
+           IsFriend == other.IsFriend &&
+           IsSelf == other.IsSelf;
 }
 
 public sealed class RegionOption
@@ -162,19 +209,56 @@ public sealed class WorldInstanceItem : ViewModelBase
 
     public bool HasPlayersError => !string.IsNullOrWhiteSpace(PlayersError);
 
+    private string? _playersNote;
+    /// <summary>An explanation, not a failure: VRChat only shares some instances' lists.</summary>
+    public string? PlayersNote
+    {
+        get => _playersNote;
+        private set
+        {
+            if (SetProperty(ref _playersNote, value))
+            {
+                OnPropertyChanged(nameof(HasPlayersNote));
+                RaisePlayerState();
+            }
+        }
+    }
+
+    public bool HasPlayersNote => !string.IsNullOrWhiteSpace(PlayersNote);
+
     public bool HasPlayers => Players.Count > 0;
 
-    public bool ShowNoPlayers => !IsLoadingPlayers && !HasPlayersError && !HasPlayers;
+    public bool ShowNoPlayers => !IsLoadingPlayers && !HasPlayersError && !HasPlayers && !HasPlayersNote;
 
-    /// <summary>True once a real player list came back, so reopening does not refetch it.</summary>
+    /// <summary>True once a real player list came back; a quiet refresh still replaces it.</summary>
     public bool PlayersLoaded { get; private set; }
 
-    public void SetPlayers(IReadOnlyList<VrcUser> users, Action<WorldInstancePlayerItem>? openProfile)
+    /// <summary>True when the names came from the running game's own log (your instance).</summary>
+    public bool PlayersFromLiveRoster { get; private set; }
+
+    public bool IsLiveInstance => PlayersFromLiveRoster;
+
+    public DateTimeOffset? PlayersUpdatedAt { get; private set; }
+
+    public void SetPlayers(IReadOnlyList<WorldInstancePlayerItem> players, bool fromLiveRoster)
     {
-        Players.Clear();
-        foreach (var user in users)
+        var same = players.Count == Players.Count &&
+                   players.Zip(Players, (next, current) => next.SameAs(current)).All(equal => equal);
+
+        if (!same)
         {
-            Players.Add(new WorldInstancePlayerItem(user, openProfile));
+            Players.Clear();
+            foreach (var player in players)
+            {
+                Players.Add(player);
+            }
+        }
+
+        if (PlayersFromLiveRoster != fromLiveRoster)
+        {
+            PlayersFromLiveRoster = fromLiveRoster;
+            OnPropertyChanged(nameof(PlayersFromLiveRoster));
+            OnPropertyChanged(nameof(IsLiveInstance));
         }
 
         PlayersLoaded = true;
@@ -185,9 +269,86 @@ public sealed class WorldInstanceItem : ViewModelBase
 
     public void SetPlayersError(string message)
     {
-        Players.Clear();
+        if (!HasPlayers)
+        {
+            Players.Clear();
+            OnPropertyChanged(nameof(HasPlayers));
+        }
+
         PlayersError = message;
-        OnPropertyChanged(nameof(HasPlayers));
+        PlayersNote = null;
+        RaisePlayerState();
+    }
+
+    public void SetPlayersNote(string? note)
+    {
+        PlayersError = null;
+        PlayersNote = note;
+        RaisePlayerState();
+    }
+
+    public void MarkPlayersUpdated(DateTimeOffset at)
+    {
+        PlayersUpdatedAt = at;
+        OnPropertyChanged(nameof(PlayersUpdatedAt));
+    }
+
+    /// <summary>
+    /// Takes the live count, region and capacity from the instance endpoint so a
+    /// quiet refresh updates the row without replacing it.
+    /// </summary>
+    public void ApplyLiveInstance(VrcInstance live)
+    {
+        if (live.UserCount > 0 || live.Users.Count > 0)
+        {
+            var count = live.UserCount > 0 ? live.UserCount : live.Users.Count;
+            Instance.UserCount = count;
+            Instance.UserCountAlt = count;
+        }
+        else if (live.UserCountAlt > 0)
+        {
+            Instance.UserCount = live.UserCountAlt;
+            Instance.UserCountAlt = live.UserCountAlt;
+        }
+
+        if (live.Capacity > 0)
+        {
+            Instance.Capacity = live.Capacity;
+        }
+        if (live.RecommendedCapacity > 0)
+        {
+            Instance.RecommendedCapacity = live.RecommendedCapacity;
+        }
+        if (!string.IsNullOrWhiteSpace(live.Region))
+        {
+            Instance.Region = live.Region;
+        }
+        if (!string.IsNullOrWhiteSpace(live.Type))
+        {
+            Instance.Type = live.Type;
+        }
+
+        OnPropertyChanged(nameof(Occupants));
+        OnPropertyChanged(nameof(OccupancyText));
+        OnPropertyChanged(nameof(DetailText));
+        OnPropertyChanged(nameof(RegionLabel));
+        OnPropertyChanged(nameof(AccessLabel));
+        OnPropertyChanged(nameof(Title));
+    }
+
+    /// <summary>The log roster is the real head count; keep the row's number with it.</summary>
+    public void ApplyRosterCount(int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        Instance.UserCount = count;
+        Instance.UserCountAlt = count;
+        OnPropertyChanged(nameof(Occupants));
+        OnPropertyChanged(nameof(OccupancyText));
+        OnPropertyChanged(nameof(DetailText));
     }
 
     public void BeginPlayerLoad()
@@ -202,6 +363,7 @@ public sealed class WorldInstanceItem : ViewModelBase
     {
         OnPropertyChanged(nameof(HasPlayers));
         OnPropertyChanged(nameof(HasPlayersError));
+        OnPropertyChanged(nameof(HasPlayersNote));
         OnPropertyChanged(nameof(ShowNoPlayers));
     }
 
@@ -355,7 +517,16 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private readonly string? _focusLocation;
     private readonly string? _focusNote;
     private readonly Action<string, string, string>? _openUserProfile;
+    private readonly Func<string, IReadOnlyList<InstanceRosterPlayer>?>? _liveRoster;
     private WorldInstanceItem? _selectedInstance;
+    private DispatcherTimer? _playerRefreshTimer;
+    private bool _playersLoading;
+
+    /// <summary>
+    /// How often the open instance is re-read. Every tick is one API call at most,
+    /// ticks never overlap, and the timer only runs while the panel is open.
+    /// </summary>
+    internal static TimeSpan PlayersRefreshInterval { get; set; } = TimeSpan.FromSeconds(20);
     private InstanceOwnerOption _selectedOwner;
     private bool _isLoadingOwners;
     private bool _ownersLoaded;
@@ -371,7 +542,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
         ImageLoader images,
         string? focusLocation = null,
         string? focusNote = null,
-        Action<string, string, string>? openUserProfile = null)
+        Action<string, string, string>? openUserProfile = null,
+        Func<string, IReadOnlyList<InstanceRosterPlayer>?>? liveRoster = null)
     {
         _summary = summary;
         _api = api;
@@ -379,6 +551,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
         _focusLocation = focusLocation;
         _focusNote = focusNote;
         _openUserProfile = openUserProfile;
+        _liveRoster = liveRoster;
         HeroImage = summary.Image;
 
         InstanceTypes = new ObservableCollection<InstanceTypeOption>(PersonalInstanceTypes);
@@ -415,7 +588,14 @@ public sealed class WorldDialogViewModel : ViewModelBase
                 }
             },
             item => item is not null && item.CanJoin);
-        CloseInstancePlayersCommand = new RelayCommand(() => SelectedInstance = null);
+        CloseInstancePlayersCommand = new RelayCommand(() =>
+        {
+            StopPlayerRefresh();
+            SelectedInstance = null;
+        });
+        RefreshInstancePlayersCommand = new RelayCommand(
+            () => _ = RefreshOpenPlayersAsync(),
+            () => SelectedInstance is not null && !_playersLoading);
 
         Instances = new ObservableCollection<WorldInstanceItem>();
     }
@@ -510,6 +690,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
             if (SetProperty(ref _selectedInstance, value))
             {
                 OnPropertyChanged(nameof(HasSelectedInstance));
+                OnPropertyChanged(nameof(PlayersRefreshText));
+                RefreshInstancePlayersCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -520,46 +702,187 @@ public sealed class WorldDialogViewModel : ViewModelBase
 
     public RelayCommand CloseInstancePlayersCommand { get; }
 
+    public RelayCommand RefreshInstancePlayersCommand { get; }
+
+    private bool _isRefreshingPlayers;
+    public bool IsRefreshingPlayers
+    {
+        get => _isRefreshingPlayers;
+        private set
+        {
+            if (SetProperty(ref _isRefreshingPlayers, value))
+            {
+                OnPropertyChanged(nameof(PlayersRefreshText));
+            }
+        }
+    }
+
+    public string PlayersRefreshText
+    {
+        get
+        {
+            if (_isRefreshingPlayers)
+            {
+                return "Refreshing…";
+            }
+
+            return SelectedInstance?.PlayersUpdatedAt is { } at
+                ? $"Updated {at:HH:mm:ss}"
+                : string.Empty;
+        }
+    }
+
+    public string PlayersRefreshHint
+        => $"Refreshes every {PlayersRefreshInterval.TotalSeconds:0} s while open";
+
     /// <summary>
-    /// Reads the instance itself (region, capacity and, when VRChat shares it, the
-    /// user list). A pinned invite is not in the world's visible instances, so the
-    /// instance endpoint is what makes its people available.
+    /// Shows who is in an instance. The game's own log is the only complete source for an
+    /// instance this account is in (VRChat returns users only for instances it created), so
+    /// that roster is preferred; otherwise the instance endpoint is read. While the panel is
+    /// open a timer re-reads it, which is how joins and leaves show up without reopening.
     /// </summary>
     public async Task ShowInstancePlayersAsync(WorldInstanceItem item)
     {
         SelectedInstance = item;
-        if (item.PlayersLoaded)
+        StartPlayerRefresh();
+        await LoadPlayersAsync(item, announce: !item.PlayersLoaded);
+    }
+
+    /// <summary>Re-reads the open instance without closing anything. Also the timer's tick.</summary>
+    public Task RefreshOpenPlayersAsync()
+        => SelectedInstance is { } item ? LoadPlayersAsync(item, announce: false) : Task.CompletedTask;
+
+    private async Task LoadPlayersAsync(WorldInstanceItem item, bool announce)
+    {
+        if (_playersLoading)
         {
             return;
         }
 
-        item.BeginPlayerLoad();
+        _playersLoading = true;
+        if (announce)
+        {
+            item.BeginPlayerLoad();
+        }
+        else
+        {
+            IsRefreshingPlayers = true;
+        }
+
         try
         {
+            var roster = _liveRoster?.Invoke(item.Location);
+            if (roster is not null)
+            {
+                var players = OrderPlayers(
+                    roster.Select(player => new WorldInstancePlayerItem(player, OpenProfile)));
+                item.SetPlayers(players, fromLiveRoster: true);
+                item.ApplyRosterCount(roster.Count);
+                item.SetPlayersNote(null);
+                item.MarkPlayersUpdated(DateTimeOffset.Now);
+                return;
+            }
+
             var instance = await _api.GetInstanceAsync(item.Location);
             if (instance is null)
             {
                 item.SetPlayersError("VRChat could not load this instance. It may have closed.");
+                StopPlayerRefresh();
                 return;
             }
 
-            item.SetPlayers(
-                instance.Users,
-                player => _openUserProfile?.Invoke(player.UserId, player.DisplayName, player.AvatarUrl));
+            item.ApplyLiveInstance(instance);
+            if (instance.Users.Count > 0)
+            {
+                var selfId = _api.CurrentUser?.Id;
+                var players = OrderPlayers(instance.Users.Select(user => new WorldInstancePlayerItem(
+                    user,
+                    OpenProfile,
+                    isSelf: !string.IsNullOrWhiteSpace(selfId) &&
+                            string.Equals(user.Id, selfId, StringComparison.Ordinal))));
+                item.SetPlayers(players, fromLiveRoster: false);
+                item.SetPlayersNote(null);
+            }
+            else if (!item.HasPlayers)
+            {
+                item.SetPlayers(Array.Empty<WorldInstancePlayerItem>(), fromLiveRoster: false);
+                item.SetPlayersNote(
+                    "VRChat only shares the player list for an instance you are in or created. " +
+                    "The count above comes from VRChat; join to see who is here.");
+            }
+
+            item.MarkPlayersUpdated(DateTimeOffset.Now);
         }
         catch (VrcApiException ex)
         {
-            item.SetPlayersError(ex.Message);
+            ReportPlayerError(item, ex.Message, announce);
         }
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
-            item.SetPlayersError("Could not reach VRChat to load this instance's players.");
+            ReportPlayerError(item, "Could not reach VRChat to load this instance's players.", announce);
         }
         finally
         {
+            _playersLoading = false;
+            IsRefreshingPlayers = false;
             item.EndPlayerLoad();
+            OnPropertyChanged(nameof(PlayersRefreshText));
+            RefreshInstancePlayersCommand.RaiseCanExecuteChanged();
         }
+    }
+
+    private void ReportPlayerError(WorldInstanceItem item, string message, bool announce)
+    {
+        if (announce || !item.HasPlayers)
+        {
+            item.SetPlayersError(message);
+        }
+    }
+
+    private void OpenProfile(WorldInstancePlayerItem player)
+        => _openUserProfile?.Invoke(player.UserId, player.DisplayName, player.AvatarUrl);
+
+    /// <summary>You first, then friends, then everyone else by name - easy to scan.</summary>
+    private static List<WorldInstancePlayerItem> OrderPlayers(IEnumerable<WorldInstancePlayerItem> players)
+        => players
+            .OrderByDescending(player => player.IsSelf)
+            .ThenByDescending(player => player.IsFriend)
+            .ThenBy(player => player.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+    private void StartPlayerRefresh()
+    {
+        if (_playerRefreshTimer is null)
+        {
+            _playerRefreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = PlayersRefreshInterval
+            };
+            _playerRefreshTimer.Tick += (_, _) =>
+            {
+                if (SelectedInstance is null)
+                {
+                    StopPlayerRefresh();
+                    return;
+                }
+
+                _ = RefreshOpenPlayersAsync();
+            };
+        }
+
+        _playerRefreshTimer.Interval = PlayersRefreshInterval;
+        _playerRefreshTimer.Start();
+        OnPropertyChanged(nameof(PlayersRefreshHint));
+    }
+
+    internal bool IsPlayerRefreshRunning => _playerRefreshTimer?.IsEnabled == true;
+
+    /// <summary>Stops the timer; the dialog calls this when it closes.</summary>
+    public void StopPlayerRefresh()
+    {
+        _playerRefreshTimer?.Stop();
+        RefreshInstancePlayersCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>The instance this dialog was opened for, pinned at the top of the list.</summary>
@@ -1013,6 +1336,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
 
     private void RebuildInstances(CancellationToken cancellationToken = default)
     {
+        StopPlayerRefresh();
         Instances.Clear();
         FocusInstance = null;
         SelectedInstance = null;

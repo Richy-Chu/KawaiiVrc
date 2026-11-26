@@ -13369,6 +13369,7 @@
                                                                 <ColumnDefinition Width="*" />
                                                                 <ColumnDefinition Width="Auto" />
                                                                 <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="Auto" />
                                                             </Grid.ColumnDefinitions>
                                                             <StackPanel>
                                                                 <TextBlock Text="{Binding SelectedInstance.Title}"
@@ -13376,24 +13377,39 @@
                                                                            FontWeight="SemiBold"
                                                                            Foreground="{StaticResource TextBrush}"
                                                                            TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock FontSize="10"
+                                                                <TextBlock Text="{Binding SelectedInstance.DetailText}"
+                                                                           FontSize="10"
+                                                                           Foreground="{StaticResource MutedBrush}"
+                                                                           TextWrapping="Wrap"
+                                                                           Margin="0,2,0,0" />
+                                                                <TextBlock FontSize="9.5"
                                                                            Foreground="{StaticResource MutedBrush}"
                                                                            Margin="0,2,0,0">
-                                                                    <Run Text="{Binding SelectedInstance.DetailText, Mode=OneWay}" />
+                                                                    <Run Text="{Binding PlayersRefreshText, Mode=OneWay}"
+                                                                         Foreground="{StaticResource AccentHoverBrush}" />
                                                                     <Run Text=" · " />
-                                                                    <Run Text="{Binding SelectedInstance.OccupancyText, Mode=OneWay}" />
+                                                                    <Run Text="{Binding PlayersRefreshHint, Mode=OneWay}" />
                                                                 </TextBlock>
                                                             </StackPanel>
                                                             <Button Grid.Column="1"
+                                                                    Style="{StaticResource GhostButton}"
+                                                                    Content="Refresh"
+                                                                    Padding="8,4"
+                                                                    FontSize="10"
+                                                                    Margin="10,0,4,0"
+                                                                    VerticalAlignment="Center"
+                                                                    Command="{Binding RefreshInstancePlayersCommand}"
+                                                                    ToolTip="Read this instance again now (it also refreshes on its own while open)" />
+                                                            <Button Grid.Column="2"
                                                                     Style="{StaticResource SecondaryButton}"
                                                                     Content="Join"
                                                                     Padding="13,5"
                                                                     FontSize="10.5"
-                                                                    Margin="10,0,6,0"
+                                                                    Margin="0,0,6,0"
                                                                     VerticalAlignment="Center"
                                                                     Command="{Binding DataContext.JoinWorldInstanceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                     CommandParameter="{Binding SelectedInstance}" />
-                                                            <Button Grid.Column="2"
+                                                            <Button Grid.Column="3"
                                                                     Style="{StaticResource GhostButton}"
                                                                     Content="Close"
                                                                     Padding="6,4"
@@ -13412,14 +13428,22 @@
                                                                    TextWrapping="Wrap"
                                                                    Margin="0,8,0,2"
                                                                    Visibility="{Binding SelectedInstance.HasPlayersError, Converter={StaticResource BoolToVis}}" />
-                                                        <TextBlock Text="VRChat did not share this instance's player list."
+                                                        <TextBlock Text="{Binding SelectedInstance.PlayersNote}"
+                                                                   Style="{StaticResource MutedText}"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,8,0,2"
+                                                                   Visibility="{Binding SelectedInstance.HasPlayersNote, Converter={StaticResource BoolToVis}}" />
+                                                        <TextBlock Text="Nobody is listed in this instance right now."
                                                                    Style="{StaticResource MutedText}"
                                                                    TextWrapping="Wrap"
                                                                    Margin="0,8,0,2"
                                                                    Visibility="{Binding SelectedInstance.ShowNoPlayers, Converter={StaticResource BoolToVis}}" />
 
-                                                        <ItemsControl ItemsSource="{Binding SelectedInstance.Players}"
+                                                        <ScrollViewer MaxHeight="320"
+                                                                      VerticalScrollBarVisibility="Auto"
+                                                                      HorizontalScrollBarVisibility="Disabled"
                                                                       Margin="0,6,0,0">
+                                                        <ItemsControl ItemsSource="{Binding SelectedInstance.Players}">
                                                             <ItemsControl.ItemTemplate>
                                                                 <DataTemplate>
                                                                     <Border Background="{StaticResource InputBrush}"
@@ -13458,14 +13482,21 @@
                                                                                            FontWeight="SemiBold"
                                                                                            Foreground="{StaticResource TextBrush}"
                                                                                            TextTrimming="CharacterEllipsis" />
-                                                                                <Border Style="{StaticResource TagChip}"
-                                                                                        HorizontalAlignment="Left"
-                                                                                        Margin="0,2,0,0"
-                                                                                        Visibility="{Binding IsFriend, Converter={StaticResource BoolToVis}}">
-                                                                                    <TextBlock Text="FRIEND"
-                                                                                               Style="{StaticResource TagText}"
-                                                                                               Foreground="{StaticResource AccentHoverBrush}" />
-                                                                                </Border>
+                                                                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                                                    <Border Style="{StaticResource TagChip}"
+                                                                                            Margin="0,0,4,0"
+                                                                                            Visibility="{Binding IsSelf, Converter={StaticResource BoolToVis}}">
+                                                                                        <TextBlock Text="YOU"
+                                                                                                   Style="{StaticResource TagText}"
+                                                                                                   Foreground="{StaticResource GreenBrush}" />
+                                                                                    </Border>
+                                                                                    <Border Style="{StaticResource TagChip}"
+                                                                                            Visibility="{Binding IsFriend, Converter={StaticResource BoolToVis}}">
+                                                                                        <TextBlock Text="FRIEND"
+                                                                                                   Style="{StaticResource TagText}"
+                                                                                                   Foreground="{StaticResource AccentHoverBrush}" />
+                                                                                    </Border>
+                                                                                </StackPanel>
                                                                             </StackPanel>
                                                                             <Button Grid.Column="2"
                                                                                     Style="{StaticResource SecondaryButton}"
@@ -13480,6 +13511,7 @@
                                                                 </DataTemplate>
                                                             </ItemsControl.ItemTemplate>
                                                         </ItemsControl>
+                                                        </ScrollViewer>
                                                     </StackPanel>
                                                 </Border>
                                             </StackPanel>

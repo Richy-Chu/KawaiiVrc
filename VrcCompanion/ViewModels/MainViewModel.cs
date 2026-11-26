@@ -4571,13 +4571,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             IsFriendLocationsOpen = false;
         }
 
+        WorldDialog?.StopPlayerRefresh();
         var dialog = new WorldDialogViewModel(
             world,
             _api,
             _images,
             focusLocation,
             focusNote,
-            openUserProfile: OpenUserProfile);
+            openUserProfile: OpenUserProfile,
+            liveRoster: LiveInstanceRoster);
         WorldDialog = dialog;
         ClearInfo();
         _ = dialog.LoadAsync(forceRefresh: false, cancellation.Token);
@@ -4585,10 +4587,64 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private void CloseWorldDialog()
     {
+        WorldDialog?.StopPlayerRefresh();
         _worldDialogCancellation?.Cancel();
         _worldDialogCancellation?.Dispose();
         _worldDialogCancellation = null;
         WorldDialog = null;
+    }
+
+    /// <summary>
+    /// The people in an instance this account is actually in, from the game log.
+    /// VRChat returns a user list only for instances the account created, so this
+    /// is the one source that can name everyone else; null means "not my instance".
+    /// </summary>
+    internal IReadOnlyList<InstanceRosterPlayer>? LiveInstanceRoster(string location)
+    {
+        var viewModel = InstanceViewModel;
+        var instance = viewModel?.Instance;
+        if (instance is null || viewModel!.Players.Count == 0)
+        {
+            return null;
+        }
+
+        if (!SameInstanceLocation(instance.Location, location))
+        {
+            return null;
+        }
+
+
+        var friendById = Friends
+            .Where(friend => !string.IsNullOrWhiteSpace(friend.Id))
+            .GroupBy(friend => friend.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
+        return viewModel.Players
+            .Select(player =>
+            {
+                var user = player.User;
+                if (user is null && friendById.TryGetValue(player.UserId, out var friend))
+                {
+                    user = friend.User;
+                }
+
+                var avatar = user is null
+                    ? string.Empty
+                    : ImageUrlHelper.PickAvatarThumbnailUrl(
+                        user.UserIcon,
+                        user.ProfilePicOverrideThumbnail ?? user.IconUrl,
+                        user.CurrentAvatarThumbnailImageUrl,
+                        user.CurrentAvatarImageUrl,
+                        64) ?? string.Empty;
+
+                return new InstanceRosterPlayer(
+                    player.UserId,
+                    player.DisplayName,
+                    avatar,
+                    player.IsFriend,
+                    player.IsSelf);
+            })
+            .ToList();
     }
 
     private async Task RefreshWorldDialogAsync()
