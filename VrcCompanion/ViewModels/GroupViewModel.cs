@@ -332,6 +332,13 @@ public sealed class GroupViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Test seam: opens the group info popup without a group request.</summary>
+    internal void OpenGroupInfoForTests(Group group)
+    {
+        GroupInfo = group;
+        IsGroupInfoOpen = true;
+    }
+
     public bool IsGroupInfoOpen
     {
         get => _isGroupInfoOpen;

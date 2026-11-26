@@ -476,6 +476,18 @@ public sealed class UpdateViewModel : ViewModelBase
         IsOpen = true;
     }
 
+    /// <summary>
+    /// Test seam: shows the popup for a version without an update check. Ready, so
+    /// Close does not record a skipped version in the settings file.
+    /// </summary>
+    internal void ShowForTests(string version)
+    {
+        _latestVersion = version;
+        HasUpdate = true;
+        IsReady = true;
+        IsOpen = true;
+    }
+
     private void Close()
     {
         if (IsDownloading)

@@ -11,11 +11,14 @@ using Xunit;
 namespace VrcCompanion.Tests;
 
 /// <summary>
-/// Five full-window popups share a dim backdrop, and Escape used to do nothing to
-/// any of them. They are in the window's Escape chain now, in their z-order:
-/// avatar details (40) over instance history (32) over recent players (25) over
-/// friend changes (24) over friend locations (23), so one press closes the popup
-/// on top.
+/// The window's popups share a dim backdrop, and Escape used to do nothing to
+/// several of them. Every overlay in MainWindow.xaml is in the Escape chain now,
+/// in its z-order, so one press closes the popup (or inner layer) on top:
+/// update (400), advanced launch (62), composers (61/60), favorite slot picker
+/// (50), avatar details (40), launch chooser (35), profile groups and group info
+/// (ProfileZIndex + 1), friend profile (30/34) with instance history (32),
+/// recent players (25), friend changes (24), friend locations (23), boop preview
+/// (20), world dialog (20).
 /// </summary>
 [Collection(Seams.Collection)]
 [ResetSeams]
@@ -256,6 +259,275 @@ public class PopupEscapeTests
     }
 
     [Fact]
+    public void EscapeClosesTheUpdatePrompt()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var overlay = FindByName(window, "UpdateOverlay");
+                Assert.NotNull(overlay);
+
+                shell.UpdateViewModel.ShowForTests("9.9.9");
+                window.UpdateLayout();
+
+                Assert.True(shell.UpdateViewModel.IsOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the update prompt.");
+                Assert.False(shell.UpdateViewModel.IsOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheAdvancedLaunchPanel()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var overlay = FindByName(window, "AdvancedLaunchOverlay");
+                Assert.NotNull(overlay);
+
+                shell.OpenAdvancedLaunchCommand.Execute(null);
+                window.UpdateLayout();
+
+                Assert.True(shell.IsAdvancedLaunchOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the advanced launch panel.");
+                Assert.False(shell.IsAdvancedLaunchOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheFavoriteSlotPickerBeforeTheAvatarDetails()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var avatars = new AvatarViewModel(IsolatedApi());
+            TestHooks.AttachAvatarViewModel(shell, avatars);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                avatars.ShowAvatarDetails(new Avatar { Id = "avtr_escape", Name = "Escape Test" });
+                avatars.OpenSlotPickerForTests("avtr_escape");
+                window.UpdateLayout();
+
+                Assert.True(avatars.IsSlotPickerOpen);
+                Assert.True(avatars.IsAvatarDetailsOpen);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(avatars.IsSlotPickerOpen, "The slot picker (50) is on top.");
+                Assert.True(avatars.IsAvatarDetailsOpen);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(avatars.IsAvatarDetailsOpen);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheProfileGroupsBeforeTheProfile()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var profile = Profile();
+            TestHooks.AttachFriendDetail(shell, profile);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var overlay = FindByName(window, "ProfileGroupsOverlay");
+                Assert.NotNull(overlay);
+
+                profile.OpenGroupsCommand.Execute(null);
+                window.UpdateLayout();
+
+                Assert.True(profile.IsGroupsOpen);
+                Assert.True(shell.HasSelectedFriend);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(profile.IsGroupsOpen, "The group list sits above the profile.");
+                Assert.True(shell.HasSelectedFriend);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(shell.HasSelectedFriend);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheGroupInfoPopup()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var groups = new GroupViewModel(IsolatedApi());
+            TestHooks.AttachGroupViewModel(shell, groups);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var overlay = FindByName(window, "GroupInfoOverlay");
+                Assert.NotNull(overlay);
+
+                groups.OpenGroupInfoForTests(new Group { Id = "grp_escape", Name = "Escape Group" });
+                window.UpdateLayout();
+
+                Assert.True(groups.IsGroupInfoOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the group info popup.");
+                Assert.False(groups.IsGroupInfoOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheBoopPreview()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                // The preview lives inside the notifications page, so the page has
+                // to be the shown section before its overlay is in the tree.
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "notifications");
+                window.UpdateLayout();
+
+                var overlay = FindByName(window, "BoopPreviewOverlay");
+                Assert.NotNull(overlay);
+
+                var notification = new NotificationItem(new VrcNotification
+                {
+                    Id = "not_escape",
+                    Type = "boop",
+                    SenderUserId = "usr_escape"
+                });
+                notification.ApplyBoopAttachment("Happy", "https://example.test/boop.png", "emoji");
+                shell.OpenBoopPreviewCommand.Execute(notification);
+                window.UpdateLayout();
+
+                Assert.True(shell.IsBoopPreviewOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the boop preview.");
+                Assert.False(shell.IsBoopPreviewOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesHistoryBeforeTheProfileThatOpenedIt()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var profile = Profile();
+            TestHooks.AttachFriendDetail(shell, profile);
+            using var history = new InstanceHistoryViewModel(IsolatedApi(), HistoryWithOneSession());
+            TestHooks.AttachInstanceHistoryViewModel(shell, history);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                history.Show();
+                history.CanReturnToProfile = true;
+                window.UpdateLayout();
+
+                Assert.True(history.IsOpen);
+                Assert.True(shell.HasSelectedFriend);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(history.IsOpen, "History (32) sits above the profile (30) that opened it.");
+                Assert.True(shell.HasSelectedFriend);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(shell.HasSelectedFriend);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void OnePressClosesThePopupOnTopOnly()
     {
         WpfTestHost.Run(() =>
@@ -339,6 +611,18 @@ public class PopupEscapeTests
         window.RaiseEvent(escape);
         return escape;
     }
+
+    private static FriendDetailViewModel Profile()
+        => new(
+            new FriendItem(new VrcUser
+            {
+                Id = "usr_escape",
+                DisplayName = "Escape Test",
+                Username = "escape",
+                IsFriend = true
+            }),
+            IsolatedApi(),
+            ImageLoader.Shared);
 
     private static MainWindow CreateWindow(MainViewModel shell)
         => new(shell, initializeOnLoad: false)

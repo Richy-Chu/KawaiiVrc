@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 987 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 994 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.111**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.112**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,29 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.112 changed
+
+- **Every window overlay answers Escape, in z-order.** An audit of all 19 `Panel.ZIndex` overlays in
+  `MainWindow.xaml` found eight without a branch and one pair in the wrong order. Added branches for
+  the update prompt (400, `CloseCommand`), advanced launch (62, `CancelAdvancedLaunchCommand`),
+  favorite slot picker (50, `CancelFavoriteSlotCommand`), group info (`ProfileZIndex + 1`,
+  `CloseGroupInfoCommand`), the profile's group list (`ProfileZIndex + 1`, `CloseGroupsCommand`), the
+  boop preview (20, `CloseBoopPreviewCommand`) and the world dialog's siblings; the media viewer
+  (10) and the moderation member card (6) stay outside the chain because they live inside their
+  pages.
+- **The profile and instance history now compare z-indexes.** The profile is 30 normally and 34 when
+  a history row opened it; the history popup is 32. The chain used to check the profile first, which
+  closed the profile underneath when `OpenInstanceHistoryFor` had opened the list over it. It now
+  reads `ProfileZIndex` (constant `InstanceHistoryOverlayZIndex = 32`) and closes the higher layer
+  first.
+- **The overlays are named.** `BoopPreviewOverlay`, `ProfileGroupsOverlay`, `GroupInfoOverlay`,
+  `FavoriteSlotPickerOverlay`, `AdvancedLaunchOverlay` and `UpdateOverlay` are `x:Name`s now, so the
+  tests find them in a real window.
+- **Tests: 994.** Seven new cases in `PopupEscapeTests`, three of them pairs: the slot picker before
+  avatar details, the profile's group list before the profile, and history before the profile that
+  opened it. `UpdateViewModel.ShowForTests` and `GroupViewModel.OpenGroupInfoForTests` are the seams
+  for the two popups whose real open path needs an update check or a group request.
 
 ### What 1.0.111 changed
 
@@ -344,15 +367,22 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    `OnPreviewKeyDown` so it runs before the overlays underneath. `SignOutConfirmationTests` pins all
    of it, including `EscapeCancelsTheConfirmationAndNeverSignsOut`.
 
-21. **A full-window popup needs an Escape branch.** The chain in `OnPreviewKeyDown` currently runs
-   the sign-out card, the composers, avatar details, the launch chooser, the world dialog, the friend
-   detail, instance history, recent players, friend changes, then friend locations, then browser
-   focus. A popup that covers the window and ignores Escape leaves the key live behind its backdrop;
-   give it a branch that runs its own close command and sets `e.Handled`, and keep the order so the
-   topmost popup is what closes first. A popup with layers of its own checks the inner one first: the
-   instance history detail runs `BackCommand` before the popup's `CloseCommand`, so Escape steps back
-   to the list and closes the popup only on the next press. `PopupEscapeTests` pins all five popup
-   branches, the detail step and the order.
+21. **Every overlay answers Escape, in z-order.** `MainWindow.OnPreviewKeyDown` closes the topmost
+   layer only, and the chain is the audit: sign-out card (30, keep it first - it is opened last and
+   its backdrop blocks the window, so nothing above it can also be open), update prompt (400),
+   advanced launch (62), response composer (61), invite composer (60), favorite slot picker (50),
+   avatar details (40), launch chooser (35), group info and the profile's group list
+   (`ProfileZIndex + 1`, the profile's own layers), then the friend profile (30/34) and instance
+   history (32) in whichever order `ProfileZIndex` against `InstanceHistoryOverlayZIndex` picks,
+   recent players (25), friend changes (24), friend locations (23), boop preview (20), world dialog
+   (20), then browser focus. Inner layers close before their parent: the slot picker before avatar
+   details, advanced launch before the launch chooser, group info and the group list before the
+   profile, and an open session detail runs `BackCommand` before the history popup's `CloseCommand`.
+   A new overlay needs a branch here and a case in `PopupEscapeTests`; if it opens over another
+   popup, put its branch first and test both steps.
+   The media picture viewer (10) and the group moderation member card (6) are deliberately still
+   outside the chain: they are page-local rather than window overlays, and a test needs the Media or
+   Groups page loaded. Do not claim the audit is complete without them.
 
 
 ### Virtualization: what is real and what is not

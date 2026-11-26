@@ -205,6 +205,9 @@ public partial class MainWindow : Window
         Topmost = false;
     }
 
+    /// <summary>Panel.ZIndex the instance history overlay uses in MainWindow.xaml.</summary>
+    private const int InstanceHistoryOverlayZIndex = 32;
+
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         if (TryHandleBrowserFocusShortcut(e))
@@ -224,6 +227,22 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // 400: the update prompt sits above every other overlay.
+            if (_viewModel.UpdateViewModel is { IsOpen: true } update)
+            {
+                update.CloseCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            // 62: the advanced launch panel opens over the launch chooser (35).
+            if (_viewModel.IsAdvancedLaunchOpen)
+            {
+                _viewModel.CancelAdvancedLaunchCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (_viewModel.IsInviteComposerOpen)
             {
                 _viewModel.CancelInviteComposerCommand.Execute(null);
@@ -234,6 +253,14 @@ public partial class MainWindow : Window
             if (_viewModel.IsResponseComposerOpen)
             {
                 _viewModel.CancelResponseComposerCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            // 50: the favorite slot picker opens over the avatar detail (40).
+            if (_viewModel.AvatarViewModel is { IsSlotPickerOpen: true } slotPicker)
+            {
+                slotPicker.CancelFavoriteSlotCommand.Execute(null);
                 e.Handled = true;
                 return;
             }
@@ -254,6 +281,14 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // 20: the boop preview is the modal inside the notifications page.
+            if (_viewModel.IsBoopPreviewOpen)
+            {
+                _viewModel.CloseBoopPreviewCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (_viewModel.HasWorldDialog)
             {
                 _viewModel.CloseWorldDialogCommand.Execute(null);
@@ -261,27 +296,15 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (_viewModel.HasSelectedFriend)
+            // The friend profile is 30 normally and 34 when a history row opened
+            // it; the history popup is 32. Whichever is higher closes first, and
+            // each has its own inner layers (the profile's group popups, the open
+            // session detail) that go before it.
+            var profileAboveHistory = _viewModel.ProfileZIndex > InstanceHistoryOverlayZIndex;
+            if ((profileAboveHistory && TryCloseFriendProfileLayers()) ||
+                TryCloseInstanceHistoryLayers() ||
+                (!profileAboveHistory && TryCloseFriendProfileLayers()))
             {
-                _viewModel.CloseFriendDetailCommand.Execute(null);
-                e.Handled = true;
-                return;
-            }
-
-            // Instance history (32) sits over the friend popups below it and under
-            // a profile opened from one of its rows, which the branch above handles.
-            // An open session detail is a layer of its own: the first Escape goes
-            // back to the list and the next one closes the popup.
-            if (_viewModel.InstanceHistoryViewModel is { IsDetailVisible: true } historyDetail)
-            {
-                historyDetail.BackCommand.Execute(null);
-                e.Handled = true;
-                return;
-            }
-
-            if (_viewModel.InstanceHistoryViewModel is { IsOpen: true } history)
-            {
-                history.CloseCommand.Execute(null);
                 e.Handled = true;
                 return;
             }
@@ -326,6 +349,54 @@ public partial class MainWindow : Window
         }
 
         base.OnPreviewKeyDown(e);
+    }
+
+    /// <summary>
+    /// The profile's own popups sit one z-index above it and close first, then the
+    /// profile itself.
+    /// </summary>
+    private bool TryCloseFriendProfileLayers()
+    {
+        if (_viewModel.GroupViewModel is { IsGroupInfoOpen: true } groupInfo)
+        {
+            groupInfo.CloseGroupInfoCommand.Execute(null);
+            return true;
+        }
+
+        if (_viewModel.SelectedFriendDetail is { IsGroupsOpen: true } profileGroups)
+        {
+            profileGroups.CloseGroupsCommand.Execute(null);
+            return true;
+        }
+
+        if (_viewModel.HasSelectedFriend)
+        {
+            _viewModel.CloseFriendDetailCommand.Execute(null);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// An open session detail goes back to the list first; the popup closes on the
+    /// next press.
+    /// </summary>
+    private bool TryCloseInstanceHistoryLayers()
+    {
+        if (_viewModel.InstanceHistoryViewModel is { IsDetailVisible: true } detail)
+        {
+            detail.BackCommand.Execute(null);
+            return true;
+        }
+
+        if (_viewModel.InstanceHistoryViewModel is { IsOpen: true } history)
+        {
+            history.CloseCommand.Execute(null);
+            return true;
+        }
+
+        return false;
     }
 
     private void ChatboxMessageBox_KeyDown(object sender, KeyEventArgs e)

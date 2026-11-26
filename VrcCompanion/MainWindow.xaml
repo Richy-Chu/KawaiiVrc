@@ -1731,7 +1731,8 @@
                      </Grid>
 
                     <!-- Enlarged boop attachment -->
-                    <Grid Panel.ZIndex="20"
+                    <Grid x:Name="BoopPreviewOverlay"
+                          Panel.ZIndex="20"
                           Visibility="{Binding IsBoopPreviewOpen, Converter={StaticResource BoolToVis}}">
                         <Button Command="{Binding CloseBoopPreviewCommand}"
                                 Focusable="False"
@@ -10435,7 +10436,8 @@
                     </Grid>
 
                     <!-- All groups on the open friend profile -->
-                    <Grid Panel.ZIndex="{Binding DataContext.ProfilePopupZIndex, RelativeSource={RelativeSource AncestorType=Window}}"
+                    <Grid x:Name="ProfileGroupsOverlay"
+                          Panel.ZIndex="{Binding DataContext.ProfilePopupZIndex, RelativeSource={RelativeSource AncestorType=Window}}"
                           AutomationProperties.AutomationId="ProfileGroupsOverlay"
                           Background="Transparent"
                           DataContext="{Binding SelectedFriendDetail}"
@@ -10610,7 +10612,8 @@
                     </Grid>
 
                     <!-- Group info popup (from any group chip) -->
-                    <Grid Panel.ZIndex="{Binding ProfilePopupZIndex}"
+                    <Grid x:Name="GroupInfoOverlay"
+                          Panel.ZIndex="{Binding ProfilePopupZIndex}"
                           AutomationProperties.AutomationId="GroupInfoOverlay"
                           Visibility="{Binding GroupViewModel.IsGroupInfoOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                         <Button Command="{Binding GroupViewModel.CloseGroupInfoCommand}"
@@ -11728,7 +11731,8 @@
         </Grid>
 
         <!-- Which favourite slot?                                     -->
-        <Grid Panel.ZIndex="50"
+        <Grid x:Name="FavoriteSlotPickerOverlay"
+              Panel.ZIndex="50"
               Visibility="{Binding AvatarViewModel.IsSlotPickerOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed, TargetNullValue=Collapsed}">
             <Button Command="{Binding AvatarViewModel.CancelFavoriteSlotCommand}"
                     Focusable="False"
@@ -12626,7 +12630,8 @@
         </Grid>
 
         <!-- Advanced launch profiles -->
-        <Grid Panel.ZIndex="62"
+        <Grid x:Name="AdvancedLaunchOverlay"
+              Panel.ZIndex="62"
               Visibility="{Binding IsAdvancedLaunchOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding CancelAdvancedLaunchCommand}"
                     Focusable="False"
@@ -13625,7 +13630,8 @@
         <!-- ========================================================= -->
         <!-- Update popup                                              -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="400"
+        <Grid x:Name="UpdateOverlay"
+              Panel.ZIndex="400"
               AutomationProperties.AutomationId="UpdateOverlay"
               Visibility="{Binding UpdateViewModel.IsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding UpdateViewModel.CloseCommand}"
