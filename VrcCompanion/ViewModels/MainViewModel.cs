@@ -1254,6 +1254,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             _currentUser = value;
             OnPropertyChanged(nameof(CurrentUser));
+            OnPropertyChanged(nameof(ProfileImageUrl));
             SyncDevToolsAccount(value?.Id);
         }
     }
@@ -1285,6 +1286,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         get => _avatarImage;
         private set => SetProperty(ref _avatarImage, value);
     }
+
+    /// <summary>
+    /// The signed-in user's own profile picture. The sidebar account card draws it
+    /// over its letter, which stays as the fallback while there is nothing to load.
+    /// </summary>
+    public string ProfileImageUrl => CurrentUser is { } user
+        ? ImageUrlHelper.PickAvatarThumbnailUrl(
+            user.UserIcon,
+            user.ProfilePicOverrideThumbnail ?? user.IconUrl,
+            user.CurrentAvatarThumbnailImageUrl,
+            user.CurrentAvatarImageUrl) ?? string.Empty
+        : string.Empty;
 
     public string BioText => string.IsNullOrWhiteSpace(CurrentUser?.Bio)
         ? "No bio set."

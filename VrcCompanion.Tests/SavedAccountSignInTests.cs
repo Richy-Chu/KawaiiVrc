@@ -311,6 +311,69 @@ public class SavedAccountSignInTests
         });
     }
 
+    [Fact]
+    public void TheSidebarAccountCardShowsTheSignedInPicture()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var directory = NewAccountsDirectory();
+            try
+            {
+                var store = new MultiAccountService(directory);
+                store.RegisterAccount(RichyId, "cookie-richy", "RichyTru", "https://example.test/richy.png");
+                store.SwitchToAccount(RichyId);
+
+                using var api = new VrcApiClient();
+                TestHooks.SetCurrentUser(api, new VrcUser
+                {
+                    Id = RichyId,
+                    DisplayName = "RichyTru",
+                    Username = "RichyTru",
+                    UserIcon = "https://example.test/richy.png"
+                });
+
+                using var shell = new MainViewModel();
+                TestHooks.SetCurrentUser(shell, new VrcUser
+                {
+                    Id = RichyId,
+                    DisplayName = "RichyTru",
+                    Username = "RichyTru",
+                    UserIcon = "https://example.test/richy.png"
+                });
+                TestHooks.AttachMultiAccountViewModel(
+                    shell,
+                    new MultiAccountViewModel(api, new MultiAccountService(directory)));
+                TestHooks.SetLoggedIn(shell);
+
+                var window = CreateWindow(shell);
+                try
+                {
+                    window.Show();
+                    Pump(window);
+
+                    // The sidebar card sits under the nav on every page, so its letter
+                    // has to be covered by the picture the same way the account rows are.
+                    var card = FindVisualChildren<Button>(window)
+                        .SingleOrDefault(button => ReferenceEquals(button.Command, shell.OpenOwnProfileCommand));
+                    Assert.True(card is not null, "The sidebar account card was not in the window.");
+
+                    var picture = FindVisualChildren<AsyncImage>(card!)
+                        .SingleOrDefault(image => image.SourceUrl == "https://example.test/richy.png");
+                    Assert.True(picture is not null, "The sidebar card has no picture for the signed-in user.");
+                    Assert.True(picture!.IsVisible, "The sidebar card's picture is not shown.");
+                }
+                finally
+                {
+                    window.Close();
+                }
+            }
+            finally
+            {
+                DeleteDirectory(directory);
+            }
+        });
+    }
+
     private static string NewAccountsDirectory()
         => Path.Combine(Path.GetTempPath(), "vrccompanion-accounts-" + Guid.NewGuid().ToString("N"));
 

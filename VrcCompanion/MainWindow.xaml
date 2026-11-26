@@ -8651,12 +8651,17 @@
                                     <Border Width="34" Height="34"
                                             CornerRadius="17"
                                             Background="{StaticResource AccentSoftBrush}">
-                                        <TextBlock Text="{Binding AvatarInitial}"
-                                                   FontSize="13"
-                                                   FontWeight="SemiBold"
-                                                   Foreground="{StaticResource AccentHoverBrush}"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center" />
+                                        <Grid>
+                                            <TextBlock Text="{Binding AvatarInitial}"
+                                                       FontSize="13"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{StaticResource AccentHoverBrush}"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                            <controls:AsyncImage SourceUrl="{Binding ProfileImageUrl}"
+                                                                 DecodeWidth="68"
+                                                                 CornerRadius="17" />
+                                        </Grid>
                                     </Border>
                                     <StackPanel Grid.Column="1"
                                                 Margin="10,0,0,0"
