@@ -64,6 +64,34 @@ public sealed class InstanceOwnerOption
     public bool HasThumbnail => !string.IsNullOrWhiteSpace(ThumbnailUrl);
 }
 
+/// <summary>One person in an instance opened from world details.</summary>
+public sealed class WorldInstancePlayerItem
+{
+    public WorldInstancePlayerItem(VrcUser user, Action<WorldInstancePlayerItem>? openProfile)
+    {
+        UserId = user.Id ?? string.Empty;
+        DisplayName = string.IsNullOrWhiteSpace(user.DisplayName) ? "Unknown player" : user.DisplayName.Trim();
+        AvatarUrl = ImageUrlHelper.PickAvatarThumbnailUrl(
+            user.UserIcon,
+            user.ProfilePicOverrideThumbnail ?? user.IconUrl,
+            user.CurrentAvatarThumbnailImageUrl,
+            user.CurrentAvatarImageUrl,
+            64) ?? string.Empty;
+        IsFriend = user.IsFriend;
+        OpenProfileCommand = new RelayCommand(
+            () => openProfile?.Invoke(this),
+            () => CanOpenProfile);
+    }
+
+    public string UserId { get; }
+    public string DisplayName { get; }
+    public string AvatarUrl { get; }
+    public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarUrl);
+    public bool IsFriend { get; }
+    public bool CanOpenProfile => !string.IsNullOrWhiteSpace(UserId);
+    public RelayCommand OpenProfileCommand { get; }
+}
+
 public sealed class RegionOption
 {
     public RegionOption(string label, string value, string detail)
@@ -87,12 +115,94 @@ public sealed class WorldInstanceItem : ViewModelBase
     private string? _groupJoinState;
     private string? _focusNote;
 
-    public WorldInstanceItem(VrcInstance instance, string worldId, string? focusNote = null)
+    public WorldInstanceItem(
+        VrcInstance instance,
+        string worldId,
+        string? focusNote = null,
+        Action<WorldInstanceItem>? viewPlayers = null)
     {
         Instance = instance;
         WorldId = worldId;
         _focusNote = focusNote;
         GroupId = ParseGroupId(instance.InstanceId) ?? ParseGroupId(instance.Location);
+        ViewPlayersCommand = new RelayCommand(() => viewPlayers?.Invoke(this), () => CanJoin);
+    }
+
+    /// <summary>Asks the world dialog to show who is in this instance.</summary>
+    public RelayCommand ViewPlayersCommand { get; }
+
+    public ObservableCollection<WorldInstancePlayerItem> Players { get; } = new();
+
+    private bool _isLoadingPlayers;
+    public bool IsLoadingPlayers
+    {
+        get => _isLoadingPlayers;
+        private set
+        {
+            if (SetProperty(ref _isLoadingPlayers, value))
+            {
+                RaisePlayerState();
+            }
+        }
+    }
+
+    private string? _playersError;
+    public string? PlayersError
+    {
+        get => _playersError;
+        private set
+        {
+            if (SetProperty(ref _playersError, value))
+            {
+                OnPropertyChanged(nameof(HasPlayersError));
+                RaisePlayerState();
+            }
+        }
+    }
+
+    public bool HasPlayersError => !string.IsNullOrWhiteSpace(PlayersError);
+
+    public bool HasPlayers => Players.Count > 0;
+
+    public bool ShowNoPlayers => !IsLoadingPlayers && !HasPlayersError && !HasPlayers;
+
+    /// <summary>True once a real player list came back, so reopening does not refetch it.</summary>
+    public bool PlayersLoaded { get; private set; }
+
+    public void SetPlayers(IReadOnlyList<VrcUser> users, Action<WorldInstancePlayerItem>? openProfile)
+    {
+        Players.Clear();
+        foreach (var user in users)
+        {
+            Players.Add(new WorldInstancePlayerItem(user, openProfile));
+        }
+
+        PlayersLoaded = true;
+        PlayersError = null;
+        OnPropertyChanged(nameof(HasPlayers));
+        RaisePlayerState();
+    }
+
+    public void SetPlayersError(string message)
+    {
+        Players.Clear();
+        PlayersError = message;
+        OnPropertyChanged(nameof(HasPlayers));
+    }
+
+    public void BeginPlayerLoad()
+    {
+        PlayersError = null;
+        IsLoadingPlayers = true;
+    }
+
+    public void EndPlayerLoad() => IsLoadingPlayers = false;
+
+    private void RaisePlayerState()
+    {
+        OnPropertyChanged(nameof(HasPlayers));
+        OnPropertyChanged(nameof(HasPlayersError));
+        OnPropertyChanged(nameof(ShowNoPlayers));
     }
 
     public VrcInstance Instance { get; }
@@ -244,6 +354,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private bool _isCreating;
     private readonly string? _focusLocation;
     private readonly string? _focusNote;
+    private readonly Action<string, string, string>? _openUserProfile;
+    private WorldInstanceItem? _selectedInstance;
     private InstanceOwnerOption _selectedOwner;
     private bool _isLoadingOwners;
     private bool _ownersLoaded;
@@ -258,13 +370,15 @@ public sealed class WorldDialogViewModel : ViewModelBase
         VrcApiClient api,
         ImageLoader images,
         string? focusLocation = null,
-        string? focusNote = null)
+        string? focusNote = null,
+        Action<string, string, string>? openUserProfile = null)
     {
         _summary = summary;
         _api = api;
         _images = images;
         _focusLocation = focusLocation;
         _focusNote = focusNote;
+        _openUserProfile = openUserProfile;
         HeroImage = summary.Image;
 
         InstanceTypes = new ObservableCollection<InstanceTypeOption>(PersonalInstanceTypes);
@@ -292,6 +406,16 @@ public sealed class WorldDialogViewModel : ViewModelBase
         UsePersonalInstanceCommand = new RelayCommand(
             () => SelectedOwner = Owners[0],
             () => IsGroupOwner);
+        ShowInstancePlayersCommand = new RelayCommand<WorldInstanceItem>(
+            item =>
+            {
+                if (item is not null)
+                {
+                    _ = ShowInstancePlayersAsync(item);
+                }
+            },
+            item => item is not null && item.CanJoin);
+        CloseInstancePlayersCommand = new RelayCommand(() => SelectedInstance = null);
 
         Instances = new ObservableCollection<WorldInstanceItem>();
     }
@@ -376,6 +500,67 @@ public sealed class WorldDialogViewModel : ViewModelBase
     public ObservableCollection<WorldInstanceItem> Instances { get; }
 
     public bool HasActiveInstances => Instances.Count > 0;
+
+    /// <summary>The instance whose player list is open below the active instances.</summary>
+    public WorldInstanceItem? SelectedInstance
+    {
+        get => _selectedInstance;
+        private set
+        {
+            if (SetProperty(ref _selectedInstance, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedInstance));
+            }
+        }
+    }
+
+    public bool HasSelectedInstance => _selectedInstance is not null;
+
+    public RelayCommand<WorldInstanceItem> ShowInstancePlayersCommand { get; }
+
+    public RelayCommand CloseInstancePlayersCommand { get; }
+
+    /// <summary>
+    /// Reads the instance itself (region, capacity and, when VRChat shares it, the
+    /// user list). A pinned invite is not in the world's visible instances, so the
+    /// instance endpoint is what makes its people available.
+    /// </summary>
+    public async Task ShowInstancePlayersAsync(WorldInstanceItem item)
+    {
+        SelectedInstance = item;
+        if (item.PlayersLoaded)
+        {
+            return;
+        }
+
+        item.BeginPlayerLoad();
+        try
+        {
+            var instance = await _api.GetInstanceAsync(item.Location);
+            if (instance is null)
+            {
+                item.SetPlayersError("VRChat could not load this instance. It may have closed.");
+                return;
+            }
+
+            item.SetPlayers(
+                instance.Users,
+                player => _openUserProfile?.Invoke(player.UserId, player.DisplayName, player.AvatarUrl));
+        }
+        catch (VrcApiException ex)
+        {
+            item.SetPlayersError(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            item.SetPlayersError("Could not reach VRChat to load this instance's players.");
+        }
+        finally
+        {
+            item.EndPlayerLoad();
+        }
+    }
 
     /// <summary>The instance this dialog was opened for, pinned at the top of the list.</summary>
     public WorldInstanceItem? FocusInstance
@@ -830,6 +1015,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
     {
         Instances.Clear();
         FocusInstance = null;
+        SelectedInstance = null;
         if (World is null)
         {
             OnPropertyChanged(nameof(HasActiveInstances));
@@ -840,7 +1026,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
             .Where(item => !string.IsNullOrWhiteSpace(item.InstanceId))
             .OrderByDescending(item => item.Occupants)
             .Take(12)
-            .Select(instance => new WorldInstanceItem(instance, World.Id))
+            .Select(instance => new WorldInstanceItem(instance, World.Id, viewPlayers: ShowInstancePlayers))
             .ToList();
 
         var added = new List<WorldInstanceItem>();
@@ -863,6 +1049,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasActiveInstances));
         GroupHydration = HydrateGroupsAsync(added, cancellationToken);
     }
+
+    private void ShowInstancePlayers(WorldInstanceItem item) => _ = ShowInstancePlayersAsync(item);
 
     private WorldInstanceItem? BuildFocusInstance(List<WorldInstanceItem> listed)
     {
@@ -900,7 +1088,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
                     WorldId = World?.Id ?? _summary.Id,
                     Location = _focusLocation ?? string.Empty
                 },
-                World?.Id ?? _summary.Id);
+                World?.Id ?? _summary.Id,
+                viewPlayers: ShowInstancePlayers);
         }
 
         item.MarkFocus(_focusNote);

@@ -1949,7 +1949,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             OnPropertyChanged(nameof(HasSelectedFriend));
             OnPropertyChanged(nameof(SelectedFriendDetail));
-            _ = LoadFriendDetailAsync(value);
+
+            // A cleared list selection only means the row moved (a page change, a
+            // filter, a re-sort). The profile popup is opened and closed by its own
+            // commands, never by SelectedItem, so a refresh cannot take it away.
+            if (value is not null)
+            {
+                _ = LoadFriendDetailAsync(value);
+            }
+
             RaiseCommandStates();
         }
     }
@@ -4563,7 +4571,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             IsFriendLocationsOpen = false;
         }
 
-        var dialog = new WorldDialogViewModel(world, _api, _images, focusLocation, focusNote);
+        var dialog = new WorldDialogViewModel(
+            world,
+            _api,
+            _images,
+            focusLocation,
+            focusNote,
+            openUserProfile: OpenUserProfile);
         WorldDialog = dialog;
         ClearInfo();
         _ = dialog.LoadAsync(forceRefresh: false, cancellation.Token);

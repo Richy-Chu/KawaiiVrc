@@ -163,6 +163,63 @@ public class FriendRefreshKeepsOpenProfilesTests
     }
 
     [Fact]
+    public void PagingAndFilteringTheFriendListKeepTheProfileOpen()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var handler = new OfflineHandler();
+            using var api = new VrcApiClient(null, handler);
+            using var shell = new MainViewModel(api);
+            TestHooks.SetCurrentUser(shell, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+            TestHooks.SetLoggedIn(shell);
+
+            for (var index = 0; index < 30; index++)
+            {
+                var user = User($"usr_{index}", $"Friend {index:00}", online: index % 2 == 0);
+                shell.Friends.Add(new FriendItem(user));
+            }
+
+            shell.FriendsPage.SetSource(shell.Friends, resetPage: true);
+            var opened = shell.FriendsPage.Items[0];
+
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "friends");
+                Pump(window);
+
+                var list = FindVisualChildren<ListBox>(window)
+                    .Single(box => ReferenceEquals(box.ItemsSource, shell.FriendsPage.Items));
+                list.SelectedItem = opened;
+                Settle.Until(
+                    () => shell.SelectedFriendDetail is { } detail && detail.Id == opened.Id,
+                    () => Pump(window),
+                    "the friend profile never opened");
+
+                // The next page replaces the rows, so the ListBox clears its selection.
+                shell.FriendsPage.NextCommand.Execute(null);
+                Pump(window);
+
+                Assert.True(shell.HasSelectedFriend, "Changing the friend list page closed the open profile.");
+                Assert.Equal(opened.Id, shell.SelectedFriendDetail!.Id);
+
+                // And a filter change replaces the rows the same way.
+                shell.SelectedFriendFilter = shell.FriendFilters.First(
+                    filter => !ReferenceEquals(filter, shell.SelectedFriendFilter));
+                Pump(window);
+
+                Assert.True(shell.HasSelectedFriend, "Changing the friend filter closed the open profile.");
+                Assert.Equal(opened.Id, shell.SelectedFriendDetail!.Id);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void RepublishingTheSamePageDoesNotClearItsRows()
     {
         var page = new PagedList<string>();

@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1049 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1053 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.129**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.130**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,31 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.130 changed
+
+- **The friend profile is no longer tied to the friend list's selection.** `SelectedFriend`'s
+  setter used to load `null` into `SelectedFriendDetail` whenever the list cleared its
+  selection, which happens on every page change, filter change and re-sort. It now keeps the
+  open detail; `CloseFriendDetailCommand`, `ClearFriendSelection` and opening another profile
+  are the only ways the popup closes. A page change or filter change can never close it.
+  `FriendRefreshKeepsOpenProfilesTests.PagingAndFilteringTheFriendListKeepTheProfileOpen`
+  opens a profile through the real ListBox, pages to the next page and changes the filter.
+- **Active instances list their players.** Each `WorldInstanceItem` under "Active instances"
+  has a **Players** button that reads the instance via `VrcApiClient.GetInstanceAsync` and shows
+  capacity/occupancy plus `WorldInstancePlayerItem` rows (avatar, name, FRIEND chip). Each row's
+  Profile button calls the same `MainViewModel.OpenUserProfile` the friend list uses, wired
+  through `WorldDialogViewModel`'s `openUserProfile` constructor argument; Join passes the
+  selected instance's location to `JoinWorldInstanceCommand`. The panel is inline in the
+  Active instances card - do not turn it into a new `Panel.ZIndex` overlay without giving it a
+  name and a branch in `EscapeOverlayAuditTests`. Player lists are loaded once per instance
+  (`PlayersLoaded`), and a run with none or a failed lookup says so.
+- **`Run` bindings in the instance panel are `Mode=OneWay`.** `Run.Text` defaults to TwoWay, so
+  binding it to the read-only `DetailText`/`OccupancyText` faulted the load with
+  "A TwoWay or OneWayToSource binding cannot work on the read-only property".
+- **Tests: 1053.** `WorldInstancePlayersTests` covers the API-to-player mapping, the item's
+  Players command, the failure/empty case, and a real window that clicks Players and finds the
+  player's name, avatar and Profile button. Counts in earlier sections are per release.
 
 ### What 1.0.129 changed
 
