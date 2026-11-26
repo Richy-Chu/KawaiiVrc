@@ -138,10 +138,22 @@ public sealed class PagedList<T> : ViewModelBase, IPagedList
         var start = _pageIndex * PageSize;
         var take = Math.Max(0, Math.Min(PageSize, _source.Count - start));
 
-        Items.Clear();
-        for (var index = 0; index < take; index++)
+        // A poll republishes the same page every few seconds. Clearing and re-adding
+        // it made the bound ListBox drop its SelectedItem, which surfaced as an open
+        // profile or popup closing by itself. Only touch the items when they differ.
+        var same = Items.Count == take;
+        for (var index = 0; same && index < take; index++)
         {
-            Items.Add(_source[start + index]);
+            same = EqualityComparer<T>.Default.Equals(Items[index], _source[start + index]);
+        }
+
+        if (!same)
+        {
+            Items.Clear();
+            for (var index = 0; index < take; index++)
+            {
+                Items.Add(_source[start + index]);
+            }
         }
 
         OnPropertyChanged(nameof(PageCount));

@@ -3285,10 +3285,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 }
             }
 
+            // UpdateFriends refreshes the friend view itself; refreshing again cleared
+            // the bound list a second time and dropped the open profile's selection.
             UpdateFriends(friends, keepMissing: true);
             ActivityFeedViewModel?.ApplyOnlineFriends(friends, offlineIds);
-            RefreshFriendsView();
-
         }
         catch (Exception ex)
         {
@@ -9373,11 +9373,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         _friendsSignature = signature;
 
-        // The list is rebuilt underneath the user, so hold on to whatever popup
-        // is open and put the highlight back once the rows exist again.
-        var keepSelected = _selectedFriend;
-        var keepDetail = _friendDetail;
-
         // A first fill (or a large account catching up) is swapped in one go.
         // Thousands of individual row notifications are what made this crawl.
         if (Friends is RangeObservableCollection<FriendItem> range &&
@@ -9391,7 +9386,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         RefreshFriendsView();
-        RestoreSelection(keepSelected, keepDetail);
         InstanceViewModel?.ApplyFriends(Friends.ToList());
         PublishFriendDirectory();
     }
@@ -9503,6 +9497,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     /// <summary>Test seam: runs the friend-refresh selection restore without a server poll.</summary>
     internal void RestoreFriendsSelectionForTests() => RestoreSelection(_selectedFriend, _friendDetail);
+
+    /// <summary>Test seam: applies the same friend snapshot merge the online poll runs.</summary>
+    internal void RunFriendPollForTests(IReadOnlyList<VrcUser> users)
+    {
+        var onlineIds = new HashSet<string>(users.Select(user => user.Id), StringComparer.Ordinal);
+        foreach (var friend in Friends)
+        {
+            if (!onlineIds.Contains(friend.Id))
+            {
+                friend.MarkOffline();
+            }
+        }
+
+        UpdateFriends(users, keepMissing: true);
+    }
 
     private bool FilterFriend(object item)
     {
@@ -9629,6 +9638,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private void RefreshFriendsView(bool resetPage = false)
     {
+        // Republishing the page clears the bound ListBox's SelectedItem, and with it
+        // SelectedFriend. Hold the open profile first, then put its highlight back, so
+        // a poll, a filter or a re-sort cannot close the popup being read.
+        var keepSelected = _selectedFriend;
+        var keepDetail = _friendDetail;
+
         _friendsView.Refresh();
         _friendLocationsView.Refresh();
         // Presence refreshes keep the page being read; a filter or search starts over.
@@ -9637,6 +9652,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         UpdateFriendsSummary();
         OnPropertyChanged(nameof(FriendLocationsSummary));
         OnPropertyChanged(nameof(HasFriendLocations));
+
+        RestoreSelection(keepSelected, keepDetail);
     }
 
     private void UpdateFriendsSummary()
