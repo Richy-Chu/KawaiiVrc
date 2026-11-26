@@ -11180,8 +11180,9 @@
                                                 </Button>
                                                 <StackPanel Grid.Column="1" Orientation="Horizontal"
                                                             VerticalAlignment="Center" Margin="10,0,0,0">
+                                                    <!-- A window-level style: ProfileGhostButton lives inside the profile's own scroll viewer. -->
                                                     <Button Content="Details"
-                                                            Style="{StaticResource ProfileGhostButton}"
+                                                            Style="{StaticResource GhostButton}"
                                                             Padding="9,6" FontSize="10"
                                                             Margin="0,0,6,0"
                                                             Command="{Binding DataContext.OpenWorldDetailsForLocationCommand, RelativeSource={RelativeSource AncestorType=Window}}"

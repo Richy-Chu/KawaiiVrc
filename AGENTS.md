@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1031 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1032 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.122**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.123**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,19 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.123 changed
+
+- **The friend-locations row crashed the window with `XamlParseException`.** 1.0.122's new Details
+  button used `ProfileGhostButton`, but that style is declared in the friend profile's
+  `ScrollViewer.Resources` (line ~9664) and only exists inside that subtree; the row template threw
+  `Cannot find resource named 'ProfileGhostButton'` the first time a friend row was measured. The
+  button uses the window-level `GhostButton` now. Nothing else in 1.0.122 used a scoped style.
+- **A row template is rendered by the suite.** `FriendLocationsRowTests` opens the real window with
+  one friend-locations row and asserts the row's Details button exists and its command accepts the
+  row's location. An empty popup never instantiates the template, which is why the crash got past
+  `PopupEscapeTests`; do not test this popup with no rows.
+- **Tests: 1032.**
 
 ### What 1.0.122 changed
 
@@ -596,7 +609,15 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    `grp_…` id as `ownerId`, and `groupAccessType` - never as a user-owned `hidden`/`friends`
    instance.
 
-25. **An account row shows the profile picture, with the letter as fallback.** The picture lives in
+25. **A style used in a row comes from a scope that row can see.** `ProfileGhostButton`,
+   `ProfileSecondaryButton`, `ProfilePrimaryButton`, `ProfileSectionLabel` and `ProfileMutedText` are
+   declared inside the friend profile's `ScrollViewer.Resources`, so they exist only under that
+   scroll viewer. Using one in a friend-locations row threw `XamlParseException` at the first
+   measured row and took the window down (1.0.123). Use the window/App-level style (`GhostButton`,
+   `SecondaryButton`, `PrimaryButton`) anywhere else, and render the row in a real window in tests:
+   `FriendLocationsRowTests` exists because an empty popup never instantiates its template.
+
+26. **An account row shows the profile picture, with the letter as fallback.** The picture lives in
    the account's stored profile (`imageUrl` in `<accountId>.json`) and is captured when the session
    is saved or switched, from the same `PickAvatarThumbnailUrl` order every list uses.
    `RegisterAccount(..., imageUrl)` keeps an existing URL when given none, and
