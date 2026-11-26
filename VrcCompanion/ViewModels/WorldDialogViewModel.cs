@@ -35,13 +35,15 @@ public sealed class InstanceOwnerOption
         string? groupId,
         string description,
         IReadOnlyList<string> accessTypes,
-        string thumbnailUrl = "")
+        string thumbnailUrl = "",
+        bool ageGateAllowed = false)
     {
         Label = label;
         GroupId = groupId;
         Description = description;
         AccessTypes = accessTypes;
         ThumbnailUrl = thumbnailUrl;
+        AgeGateAllowed = ageGateAllowed;
     }
 
     public string Label { get; }
@@ -52,6 +54,10 @@ public sealed class InstanceOwnerOption
     public IReadOnlyList<string> AccessTypes { get; }
 
     public string ThumbnailUrl { get; }
+
+    /// <summary>True for the account; for a group, its role needs
+    /// `group-instance-age-gated-create` before the dialog offers the option.</summary>
+    public bool AgeGateAllowed { get; }
 
     public bool IsGroup => !string.IsNullOrWhiteSpace(GroupId);
 
@@ -279,9 +285,13 @@ public sealed class WorldDialogViewModel : ViewModelBase
                 "Just you",
                 null,
                 "A personal instance you own",
-                Array.Empty<string>())
+                Array.Empty<string>(),
+                ageGateAllowed: true)
         };
         _selectedOwner = Owners[0];
+        UsePersonalInstanceCommand = new RelayCommand(
+            () => SelectedOwner = Owners[0],
+            () => IsGroupOwner);
 
         Instances = new ObservableCollection<WorldInstanceItem>();
     }
@@ -391,11 +401,35 @@ public sealed class WorldDialogViewModel : ViewModelBase
             OnPropertyChanged(nameof(SelectedOwner));
             OnPropertyChanged(nameof(IsGroupOwner));
             OnPropertyChanged(nameof(CreateButtonText));
+            OnPropertyChanged(nameof(HasAgeGateOption));
+            OnPropertyChanged(nameof(ShowAgeGateUnavailable));
+            UsePersonalInstanceCommand.RaiseCanExecuteChanged();
+
+            // A group whose role cannot create age-gated instances must not carry a
+            // tick from the account over into a create VRChat will reject.
+            if (!HasAgeGateOption && _ageGate)
+            {
+                _ageGate = false;
+                OnPropertyChanged(nameof(AgeGate));
+            }
+
             RebuildInstanceTypes();
         }
     }
 
     public bool IsGroupOwner => _selectedOwner.IsGroup;
+
+    /// <summary>The account always offers the option; a group only when its role has
+    /// `group-instance-age-gated-create`.</summary>
+    public bool HasAgeGateOption => !_selectedOwner.IsGroup || _selectedOwner.AgeGateAllowed;
+
+    public bool ShowAgeGateUnavailable => !HasAgeGateOption;
+
+    public string AgeGateUnavailableText =>
+        "This group's role can't create age-gated instances, so the 18+ option is off. " +
+        "A group moderator can grant it the age-gated instance permission.";
+
+    public RelayCommand UsePersonalInstanceCommand { get; }
 
     public string CreateButtonText => IsGroupOwner
         ? $"Create for {_selectedOwner.Label}"
@@ -442,7 +476,15 @@ public sealed class WorldDialogViewModel : ViewModelBase
     public bool AgeGate
     {
         get => _ageGate;
-        set => SetProperty(ref _ageGate, value);
+        set
+        {
+            if (value && !HasAgeGateOption)
+            {
+                return;
+            }
+
+            SetProperty(ref _ageGate, value);
+        }
     }
 
     public ObservableCollection<RegionOption> Regions { get; }
@@ -901,12 +943,14 @@ public sealed class WorldDialogViewModel : ViewModelBase
                 }
 
                 var label = string.IsNullOrWhiteSpace(group.Name) ? "Group" : group.Name;
+                var ageGateAllowed = group.MyMember?.Permissions?.Contains("group-instance-age-gated-create") == true;
                 Owners.Add(new InstanceOwnerOption(
                     label,
                     group.EffectiveId,
                     $"Hosted by {label}",
                     access,
-                    group.ThumbnailUrl));
+                    group.ThumbnailUrl,
+                    ageGateAllowed));
             }
         }
         catch (OperationCanceledException)

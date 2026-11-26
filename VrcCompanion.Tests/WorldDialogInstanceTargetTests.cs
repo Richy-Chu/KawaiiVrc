@@ -162,6 +162,79 @@ public class WorldDialogInstanceTargetTests
     }
 
     [Fact]
+    public async Task AgeGateIsOfferedOnlyWhenTheGroupsRoleAllowsIt()
+    {
+        using var handler = new WorldHandler();
+        using var api = new VrcApiClient(null, handler);
+        TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared);
+
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
+        Settle.Until(
+            () => !dialog.IsLoadingOwners && dialog.Owners.Count(owner => owner.IsGroup) > 1,
+            "the group owners never arrived");
+
+        // The account can always age gate its own instance.
+        Assert.True(dialog.HasAgeGateOption);
+        Assert.False(dialog.ShowAgeGateUnavailable);
+
+        dialog.SelectedOwner = dialog.Owners.Single(owner => owner.Label == "Test Group");
+        Assert.True(dialog.HasAgeGateOption);
+        dialog.AgeGate = true;
+
+        // Selecting a group whose role lacks the permission drops the tick and explains
+        // why, instead of sending a flag VRChat would reject.
+        dialog.SelectedOwner = dialog.Owners.Single(owner => owner.Label == "No Age Gate Group");
+        Assert.False(dialog.HasAgeGateOption);
+        Assert.True(dialog.ShowAgeGateUnavailable);
+        Assert.False(dialog.AgeGate);
+        Assert.Contains("permission", dialog.AgeGateUnavailableText, StringComparison.OrdinalIgnoreCase);
+
+        // Ticking it programmatically for that group does nothing.
+        dialog.AgeGate = true;
+        Assert.False(dialog.AgeGate);
+
+        dialog.SelectedOwner = dialog.Owners[0];
+        Assert.True(dialog.HasAgeGateOption);
+    }
+
+    [Fact]
+    public async Task ChoosingTheAccountAgainGoesBackToAPersonalInstance()
+    {
+        using var handler = new WorldHandler();
+        using var api = new VrcApiClient(null, handler);
+        TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared);
+
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
+        Settle.Until(
+            () => !dialog.IsLoadingOwners && dialog.Owners.Any(owner => owner.IsGroup),
+            "the group owners never arrived");
+
+        dialog.SelectedOwner = dialog.Owners.Single(owner => owner.Label == "Test Group");
+        Assert.True(dialog.IsGroupOwner);
+        Assert.Equal("Create for Test Group", dialog.CreateButtonText);
+        Assert.True(dialog.UsePersonalInstanceCommand.CanExecute(null));
+
+        dialog.UsePersonalInstanceCommand.Execute(null);
+
+        Assert.False(dialog.IsGroupOwner);
+        Assert.Same(dialog.Owners[0], dialog.SelectedOwner);
+        Assert.Equal("Create instance", dialog.CreateButtonText);
+        Assert.Equal(
+            new[] { "Public", "Friends+", "Friends", "Invite+", "Invite" },
+            dialog.InstanceTypes.Select(type => type.Label));
+        Assert.True(dialog.HasAgeGateOption);
+        Assert.False(dialog.UsePersonalInstanceCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task AnAgeGatedGroupInstanceSendsTheEighteenPlusFlag()
     {
         using var handler = new WorldHandler();
@@ -347,8 +420,14 @@ public class WorldDialogInstanceTargetTests
                         "name": "Test Group",
                         "membershipStatus": "member",
                         "myMember": {
-                          "permissions": ["group-instance-plus-create", "group-instance-restricted-create"]
+                          "permissions": ["group-instance-plus-create", "group-instance-restricted-create", "group-instance-age-gated-create"]
                         }
+                      },
+                      {
+                        "id": "grp_no_age_gate",
+                        "name": "No Age Gate Group",
+                        "membershipStatus": "member",
+                        "myMember": { "permissions": ["group-instance-public-create"] }
                       },
                       {
                         "id": "grp_none",

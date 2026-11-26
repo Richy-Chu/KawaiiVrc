@@ -13431,7 +13431,16 @@
                                                            FontSize="9.5"
                                                            Foreground="{StaticResource DimBrush}"
                                                            TextWrapping="Wrap"
-                                                           Margin="0,4,0,8" />
+                                                           Margin="0,4,0,4" />
+                                                <Button Style="{StaticResource GhostButton}"
+                                                        Content="Make a personal instance instead"
+                                                        HorizontalAlignment="Left"
+                                                        Padding="0,2"
+                                                        FontSize="10"
+                                                        Margin="0,0,0,8"
+                                                        Command="{Binding UsePersonalInstanceCommand}"
+                                                        Visibility="{Binding IsGroupOwner, Converter={StaticResource BoolToVis}}"
+                                                        ToolTip="Host the instance yourself again" />
 
                                                 <TextBlock Text="ACCESS" Style="{StaticResource FieldLabel}" />
                                                 <ListBox Style="{StaticResource ChoiceListBox}"
@@ -13453,15 +13462,23 @@
                                                     </ListBox.ItemTemplate>
                                                 </ListBox>
 
-                                                <CheckBox Style="{StaticResource FriendlyCheckBox}"
-                                                          Content="Age gated (18+)"
-                                                          IsChecked="{Binding AgeGate, Mode=TwoWay}"
-                                                          Margin="0,2,0,0"
-                                                          ToolTip="Only players who are age-verified 18+ can join this instance." />
-                                                <TextBlock Text="Only age-verified 18+ players can join."
-                                                           Style="{StaticResource MutedText}"
+                                                <StackPanel Visibility="{Binding HasAgeGateOption, Converter={StaticResource BoolToVis}}">
+                                                    <CheckBox Style="{StaticResource FriendlyCheckBox}"
+                                                              Content="Age gated (18+)"
+                                                              IsChecked="{Binding AgeGate, Mode=TwoWay}"
+                                                              Margin="0,2,0,0"
+                                                              ToolTip="Only players who are age-verified 18+ can join this instance." />
+                                                    <TextBlock Text="Only age-verified 18+ players can join."
+                                                               Style="{StaticResource MutedText}"
+                                                               FontSize="9.5"
+                                                               Margin="24,2,0,8" />
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding AgeGateUnavailableText}"
                                                            FontSize="9.5"
-                                                           Margin="24,2,0,8" />
+                                                           Foreground="{StaticResource DimBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,2,0,8"
+                                                           Visibility="{Binding ShowAgeGateUnavailable, Converter={StaticResource BoolToVis}}" />
 
                                                 <TextBlock Text="REGION" Style="{StaticResource FieldLabel}" Margin="0,3,0,5" />
                                                 <ListBox Style="{StaticResource RegionPillList}"
