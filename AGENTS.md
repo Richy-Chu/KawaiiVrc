@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1004 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 1008 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.115**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.116**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,21 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.116 changed
+
+- **The profile popup says when the account joined VRChat.** A card between the bio links
+  and the groups reads `Member since Mar 2023`, with the exact day as its tooltip. It comes from
+  `VrcUser.date_joined`, which every user record carries - the friend list for friends, the
+  `/users/{id}` record `LoadLiveUserAsync` fetches for strangers opened through
+  `OpenUserProfile`, and the signed-in account itself. `/profile` has no join date, so do not
+  try to read it there. `FriendDetailViewModel.MemberSince`/`MemberSinceText` parse with
+  `DateTimeOffset` and the month is formatted in the current culture.
+- **The card hides itself when there is no usable date.** A missing or unparseable
+  `date_joined` leaves `HasMemberSince` false, so the popup looks exactly as it did before
+  rather than showing an empty row.
+- **Tests: 1008.** `FriendProfileMemberSinceTests` covers a friend's record, a stranger's
+  record arriving through `ApplyUser` after the stub, a missing date and a bad date.
 
 ### What 1.0.115 changed
 

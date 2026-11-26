@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http;
 using System.Windows.Media;
 using System.Windows.Input;
@@ -2342,6 +2343,10 @@ public sealed class FriendDetailViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsActive));
         OnPropertyChanged(nameof(StatusDotBrush));
         OnPropertyChanged(nameof(ActivityText));
+        OnPropertyChanged(nameof(MemberSince));
+        OnPropertyChanged(nameof(HasMemberSince));
+        OnPropertyChanged(nameof(MemberSinceText));
+        OnPropertyChanged(nameof(MemberSinceDetailText));
     }
 
     public VrcProfile? Profile
@@ -2547,6 +2552,41 @@ public sealed class FriendDetailViewModel : ViewModelBase
            ?? (IReadOnlyList<string>)Array.Empty<string>();
 
     public bool HasBioLinks => BioLinks.Count > 0;
+
+    /// <summary>
+    /// When this account joined VRChat. Every user record carries date_joined -
+    /// friends from the friend list, strangers from the /users/{id} record that
+    /// fills their card, and the signed-in account - so one card serves them all.
+    /// The /profile payload has no join date, so it is not read here.
+    /// </summary>
+    public DateTimeOffset? MemberSince => ParseDateJoined(_friend.User.DateJoined);
+
+    public bool HasMemberSince => MemberSince is not null;
+
+    public string MemberSinceText => MemberSince is { } joined
+        ? $"Member since {joined.ToLocalTime().ToString("MMM yyyy", CultureInfo.CurrentCulture)}"
+        : string.Empty;
+
+    /// <summary>The exact day, shown as the card's tooltip.</summary>
+    public string MemberSinceDetailText => MemberSince is { } joined
+        ? $"Joined VRChat on {joined.ToLocalTime().ToString("d MMMM yyyy", CultureInfo.CurrentCulture)}"
+        : string.Empty;
+
+    private static DateTimeOffset? ParseDateJoined(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
+            out var joined)
+            ? joined
+            : null;
+    }
 
     public string TrustLabel => UserPresentation.TrustLabel(
         Profile?.TrustTags is { Count: > 0 } ? Profile.TrustTags : _friend.Tags,

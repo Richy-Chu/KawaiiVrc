@@ -10342,6 +10342,34 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
 
+                                    <Border Style="{StaticResource KawaiiStatCard}"
+                                            Margin="0,14,0,0"
+                                            Visibility="{Binding HasMemberSince, Converter={StaticResource BoolToVis}}"
+                                            ToolTip="{Binding MemberSinceDetailText}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Border Width="30" Height="30"
+                                                    CornerRadius="9"
+                                                    VerticalAlignment="Center"
+                                                    Background="#3860A5FA">
+                                                <TextBlock Text="&#xE787;"
+                                                           FontFamily="Segoe MDL2 Assets"
+                                                           FontSize="12"
+                                                           Foreground="{StaticResource BlueBrush}"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center" />
+                                            </Border>
+                                            <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                                                <TextBlock Text="ON VRCHAT SINCE"
+                                                           Style="{StaticResource KawaiiSectionLabel}" />
+                                                <TextBlock Text="{Binding MemberSinceText}"
+                                                           FontSize="16"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#C9E2FF"
+                                                           Margin="0,3,0,0" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+
                                     <StackPanel Margin="0,14,0,0">
                                         <Grid Margin="0,0,0,6">
                                             <TextBlock Text="GROUPS" Style="{StaticResource ProfileSectionLabel}" VerticalAlignment="Center" />
