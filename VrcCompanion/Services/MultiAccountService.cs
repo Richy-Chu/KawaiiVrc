@@ -32,9 +32,17 @@ public sealed class MultiAccountService : IDisposable
     private string? _activeAccountId;
 
     public MultiAccountService()
+        : this(Path.Combine(UserDataPaths.Directory, AccountsDirectoryName))
     {
-        var baseDir = UserDataPaths.Directory;
-        _accountsDirectory = Path.Combine(baseDir, AccountsDirectoryName);
+    }
+
+    /// <summary>
+    /// Points the store at another folder, so a test can read saved accounts
+    /// without touching the real profile's accounts folder.
+    /// </summary>
+    internal MultiAccountService(string accountsDirectory)
+    {
+        _accountsDirectory = accountsDirectory;
         try
         {
             Directory.CreateDirectory(_accountsDirectory);

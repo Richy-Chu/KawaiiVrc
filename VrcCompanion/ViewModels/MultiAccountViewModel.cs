@@ -46,9 +46,15 @@ public sealed class MultiAccountViewModel : ViewModelBase
     private bool _isBusy;
 
     public MultiAccountViewModel(VrcApiClient api)
+        : this(api, new MultiAccountService())
+    {
+    }
+
+    /// <summary>Takes the store, so tests never read the real profile's accounts.</summary>
+    internal MultiAccountViewModel(VrcApiClient api, MultiAccountService accountService)
     {
         _api = api;
-        _accountService = new MultiAccountService();
+        _accountService = accountService;
 
         LoadAccountsCommand = new RelayCommand(RefreshAccounts);
         SwitchAccountCommand = new AsyncRelayCommand<string>(
@@ -71,6 +77,9 @@ public sealed class MultiAccountViewModel : ViewModelBase
         get => _accounts;
         set => SetProperty(ref _accounts, value);
     }
+
+    /// <summary>Whether the sign-in screen has a saved account to offer.</summary>
+    public bool HasAccounts => Accounts.Count > 0;
 
     public string ActiveAccountLabel
     {
@@ -251,6 +260,9 @@ public sealed class MultiAccountViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Re-reads the stored accounts after a sign-out or a save.</summary>
+    internal void Refresh() => RefreshAccounts();
+
     private void RefreshAccounts()
     {
         var active = _accountService.ActiveAccountId;
@@ -261,5 +273,6 @@ public sealed class MultiAccountViewModel : ViewModelBase
                 string.Equals(id, active, StringComparison.Ordinal))));
         OnPropertyChanged(nameof(ActiveAccountLabel));
         OnPropertyChanged(nameof(ActiveAccountInitial));
+        OnPropertyChanged(nameof(HasAccounts));
     }
 }

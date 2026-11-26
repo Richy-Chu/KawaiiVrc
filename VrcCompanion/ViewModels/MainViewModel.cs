@@ -524,6 +524,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             LogoutAsync,
             () => IsLogoutConfirmationOpen && IsLoggedIn && !IsBusy));
         CancelLogoutCommand = Track(new RelayCommand(CloseLogoutConfirmation));
+        ReturnToSignInCommand = Track(new RelayCommand(ReturnToSignIn, () => IsLoggedIn && !IsBusy));
         VerifyTwoFactorCommand = Track(new AsyncRelayCommand(
             VerifyTwoFactorAsync,
             () => IsTwoFactorRequired && !IsBusy && !string.IsNullOrWhiteSpace(TwoFactorCode)));
@@ -2567,6 +2568,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand LogoutCommand { get; }
     public AsyncRelayCommand ConfirmLogoutCommand { get; }
     public RelayCommand CancelLogoutCommand { get; }
+
+    /// <summary>
+    /// Leaves the signed-in window for the sign-in screen without signing out:
+    /// the live session is parked and stays valid in the saved-accounts list.
+    /// </summary>
+    public RelayCommand ReturnToSignInCommand { get; }
     public AsyncRelayCommand VerifyTwoFactorCommand { get; }
     public AsyncRelayCommand CancelTwoFactorCommand { get; }
     public RelayCommand UseEmailCodeCommand { get; }
@@ -3995,6 +4002,29 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         IsLogoutConfirmationOpen = false;
         RaiseCommandStates();
+    }
+
+    /// <summary>
+    /// Shows the sign-in screen with the saved accounts, without the server-side
+    /// invalidation a sign out performs. The current account is saved fresh first
+    /// (VRChat rotates the cookie), so picking it from the list signs straight
+    /// back in. Sign out stays the path that really ends the session.
+    /// </summary>
+    internal void ReturnToSignIn()
+    {
+        if (!IsLoggedIn || IsBusy)
+        {
+            return;
+        }
+
+        if (RememberSession && CurrentUser is not null)
+        {
+            MultiAccountViewModel?.RememberCurrentAccount(CurrentUser);
+        }
+
+        _api.ParkSession();
+        SignOutLocally(null);
+        MultiAccountViewModel?.Refresh();
     }
 
     internal async Task LogoutAsync()

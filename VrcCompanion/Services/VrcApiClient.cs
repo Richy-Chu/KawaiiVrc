@@ -358,6 +358,19 @@ public sealed class VrcApiClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Drops the in-memory session without telling VRChat, so the stored cookie
+    /// stays valid and the account can be picked again from the saved list.
+    /// Signing out is <see cref="LogoutAsync"/>, which does invalidate it.
+    /// </summary>
+    public void ParkSession()
+    {
+        CurrentUser = null;
+        ClearAuthCookie();
+        ClearCaches();
+        SyncImageAuth();
+    }
+
     // ------------------------------------------------------------- friends
 
     /// <summary>

@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1011 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 1014 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.117**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.118**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,30 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.118 changed
+
+- **The sign-in screen lists the accounts saved on this PC.** A `SAVED ACCOUNTS` block sits above the
+  username box, one compact row per stored account with its display name and a `Sign in` button, and
+  it hides itself when nothing is saved. Each button runs `MultiAccountViewModel.SwitchAccountCommand`
+  - the same command the Accounts page uses - so it checks the stored cookie with `/auth/user` and
+  signs in through the existing `SessionSwitched` path. The block is a `ScrollViewer` capped at
+  150 px so a long list cannot push the password fields out of the card.
+- **The Accounts page has a way back to it.** `Back to sign-in` in the signed-in card runs
+  `MainViewModel.ReturnToSignInCommand`. It re-saves the live cookie when `RememberSession` is on
+  (VRChat rotates it), then `VrcApiClient.ParkSession` drops the in-memory cookie and user and
+  `SignOutLocally` puts the window back on the sign-in screen. `ParkSession` deliberately does not
+  call `auth/logout`, so every saved cookie stays valid and clicking the account signs straight back
+  in. `MultiAccountViewModel.Refresh` repopulates the list for the login screen.
+- **Sign out is unchanged and still ends the session.** `LogoutAsync` calls VRChat and invalidates
+  the cookie; only the parked path keeps sessions usable. A signed-out account whose cookie VRChat
+  has expired reports `That saved session has expired. Sign in with that account again to refresh it.`
+- **Tests: 1014.** `SavedAccountSignInTests` proves the account list and its encrypted cookies come
+  back from a second `MultiAccountService` instance, that `ReturnToSignIn` leaves `IsLoggedIn` false
+  while both cookies are still readable, and - in a real window - that the Accounts page's button
+  reaches the sign-in screen, which shows one row per saved account with each button wired to
+  `SwitchAccountCommand`. `MultiAccountService` gained an internal constructor that takes a folder,
+  so the tests never read the real `%LOCALAPPDATA%\VrcCompanion\accounts`.
 
 ### What 1.0.117 changed
 
@@ -460,6 +484,17 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    viewer (10), the moderation member card (6), and the boop preview (20). Context has no popup of its
    own - its rows open a profile or a Continuity layer, both covered above - so do not add a Context
    branch for a layer that does not exist.
+
+22. **Back to sign-in parks the session; Sign out ends it.** `MainViewModel.ReturnToSignIn` re-saves
+   the current cookie (only when `RememberSession`), calls `VrcApiClient.ParkSession`, then
+   `SignOutLocally`, and never touches `auth/logout`: that call invalidates the cookie, and the saved
+   account could no longer sign itself back in. Do not route `ReturnToSignIn` through
+   `_api.LogoutAsync`, and do not make `LogoutCommand`/`ConfirmLogoutCommand` park instead - rule 20
+   keeps a real sign out behind its confirmation. Both sign-in surfaces run
+   `MultiAccountViewModel.SwitchAccountCommand`, so a saved session has one switch path.
+   `SavedAccountSignInTests` pins the login list, the surviving cookies and the real-window route
+   from the Accounts page; `MultiAccountService`'s internal folder constructor keeps those tests out
+   of the real accounts folder.
 
 
 ### Virtualization: what is real and what is not

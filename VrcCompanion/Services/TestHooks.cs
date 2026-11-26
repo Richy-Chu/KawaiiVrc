@@ -131,6 +131,15 @@ internal static class TestHooks
         method.Invoke(viewModel, Array.Empty<object>());
     }
 
+    /// <summary>
+    /// Attaches the saved-account list, which the shell otherwise builds only inside
+    /// <see cref="MainViewModel.InitializeAsync"/>.
+    /// </summary>
+    public static void AttachMultiAccountViewModel(
+        MainViewModel shell,
+        MultiAccountViewModel accounts)
+        => AttachViewModel(shell, nameof(MainViewModel.MultiAccountViewModel), accounts);
+
     public static void AttachGroupViewModel(MainViewModel shell, GroupViewModel groups)
         => AttachViewModel(shell, nameof(MainViewModel.GroupViewModel), groups);
 
