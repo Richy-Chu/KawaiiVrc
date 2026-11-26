@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 984 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 986 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.109**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.110**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,20 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.110 changed
+
+- **Escape closes instance history and avatar details.** Both are full-window popups but neither was in
+  `OnPreviewKeyDown`'s chain. Avatar details (`Panel.ZIndex="40"`) now closes through
+  `CloseAvatarDetailsCommand` before the launch chooser and the friend detail, and instance history
+  (`32`) closes through `InstanceHistoryViewModel.CloseCommand` after the friend detail (a profile
+  opened from one of its rows sits at `34`, above it) and before the friend popups.
+- **Both overlays are named.** `AvatarDetailsOverlay` and `InstanceHistoryOverlay` are the root grids'
+  `x:Name`s, so `PopupEscapeTests` finds them in a real window and checks them collapsed.
+- **Tests: 986.** `PopupEscapeTests` covers all five popups, and `OnePressClosesThePopupOnTopOnly`
+  opens all five and closes them one press at a time in z-order: avatar details (40), instance history
+  (32), recent players (25), friend changes (24), friend locations (23). Escape closes history as a
+  whole, so an open session detail goes with it - the list's Back button still steps back to the list.
 
 ### What 1.0.109 changed
 
@@ -320,11 +334,11 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    of it, including `EscapeCancelsTheConfirmationAndNeverSignsOut`.
 
 21. **A full-window popup needs an Escape branch.** The chain in `OnPreviewKeyDown` currently runs
-   the sign-out card, the composers, the launch chooser, the world dialog, the friend detail, recent
-   players, friend changes, then friend locations, then browser focus. A popup that covers the window
-   and ignores Escape leaves the key live behind its backdrop; give it a branch that runs its own close
-   command and sets `e.Handled`, and keep the order so the topmost popup is what closes first.
-   `PopupEscapeTests` pins all three branches and the order.
+   the sign-out card, the composers, avatar details, the launch chooser, the world dialog, the friend
+   detail, instance history, recent players, friend changes, then friend locations, then browser
+   focus. A popup that covers the window and ignores Escape leaves the key live behind its backdrop;
+   give it a branch that runs its own close command and sets `e.Handled`, and keep the order so the
+   topmost popup is what closes first. `PopupEscapeTests` pins all five popup branches and the order.
 
 
 ### Virtualization: what is real and what is not

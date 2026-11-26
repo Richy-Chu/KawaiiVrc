@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using VrcCompanion.Models;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
 using Xunit;
@@ -10,16 +11,92 @@ using Xunit;
 namespace VrcCompanion.Tests;
 
 /// <summary>
-/// Friend changes, friend locations and recent players fill the window with a
-/// backdrop, but Escape used to do nothing to them. They are in the same chain as
-/// the sign-out card now, in their z-order: recent players (25) sits over friend
-/// changes (24), which sits over friend locations (23), so one press closes the
-/// popup on top.
+/// Five full-window popups share a dim backdrop, but Escape used to do nothing to
+/// any of them. They are in the window's Escape chain now, in their z-order:
+/// avatar details (40) over instance history (32) over recent players (25) over
+/// friend changes (24) over friend locations (23), so one press closes the popup
+/// on top.
 /// </summary>
 [Collection(Seams.Collection)]
 [ResetSeams]
 public class PopupEscapeTests
 {
+    [Fact]
+    public void EscapeClosesTheAvatarDetailsPopup()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var avatars = new AvatarViewModel(IsolatedApi());
+            TestHooks.AttachAvatarViewModel(shell, avatars);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var overlay = FindByName(window, "AvatarDetailsOverlay");
+                Assert.NotNull(overlay);
+
+                avatars.ShowAvatarDetails(new Avatar
+                {
+                    Id = "avtr_escape",
+                    Name = "Escape Test"
+                });
+                window.UpdateLayout();
+
+                Assert.True(avatars.IsAvatarDetailsOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the avatar details popup.");
+                Assert.False(avatars.IsAvatarDetailsOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheInstanceHistoryPopup()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            using var history = new InstanceHistoryViewModel(IsolatedApi(), IsolatedHistory());
+            TestHooks.AttachInstanceHistoryViewModel(shell, history);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                var overlay = FindByName(window, "InstanceHistoryOverlay");
+                Assert.NotNull(overlay);
+
+                history.Show();
+                window.UpdateLayout();
+
+                Assert.True(history.IsOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the instance history popup.");
+                Assert.False(history.IsOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     [Fact]
     public void EscapeClosesTheFriendLocationsPopup()
     {
@@ -131,16 +208,24 @@ public class PopupEscapeTests
         {
             using var shell = new MainViewModel(IsolatedApi());
             TestHooks.SetLoggedIn(shell);
+            var avatars = new AvatarViewModel(IsolatedApi());
+            TestHooks.AttachAvatarViewModel(shell, avatars);
+            using var history = new InstanceHistoryViewModel(IsolatedApi(), IsolatedHistory());
+            TestHooks.AttachInstanceHistoryViewModel(shell, history);
             var recent = new RecentPlayersViewModel(IsolatedApi(), IsolatedHistory());
             TestHooks.AttachRecentPlayersViewModel(shell, recent);
             var window = CreateWindow(shell);
             window.Show();
             try
             {
+                avatars.ShowAvatarDetails(new Avatar { Id = "avtr_escape", Name = "Escape Test" });
+                history.Show();
                 recent.Show("usr_escape", Array.Empty<string>());
                 shell.OpenFriendChangesCommand.Execute(null);
                 shell.OpenFriendLocationsCommand.Execute(null);
                 window.UpdateLayout();
+                Assert.True(avatars.IsAvatarDetailsOpen);
+                Assert.True(history.IsOpen);
                 Assert.True(recent.IsOpen);
                 Assert.True(shell.IsFriendChangesOpen);
                 Assert.True(shell.IsFriendLocationsOpen);
@@ -148,15 +233,32 @@ public class PopupEscapeTests
                 RaiseEscape(window);
                 window.UpdateLayout();
 
-                Assert.False(recent.IsOpen);
-                Assert.True(shell.IsFriendChangesOpen, "One press closes only the popup on top.");
+                Assert.False(avatars.IsAvatarDetailsOpen, "Avatar details (40) is on top.");
+                Assert.True(history.IsOpen);
+                Assert.True(recent.IsOpen);
+                Assert.True(shell.IsFriendChangesOpen);
                 Assert.True(shell.IsFriendLocationsOpen);
 
                 RaiseEscape(window);
                 window.UpdateLayout();
 
-                Assert.False(shell.IsFriendChangesOpen);
+                Assert.False(history.IsOpen, "Instance history (32) is next.");
+                Assert.True(recent.IsOpen);
+                Assert.True(shell.IsFriendChangesOpen);
                 Assert.True(shell.IsFriendLocationsOpen);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(recent.IsOpen, "Recent players (25) is next.");
+                Assert.True(shell.IsFriendChangesOpen);
+                Assert.True(shell.IsFriendLocationsOpen);
+
+                RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.False(shell.IsFriendChangesOpen, "Friend changes (24) is next.");
+                Assert.True(shell.IsFriendLocationsOpen, "One press closes only the popup on top.");
 
                 RaiseEscape(window);
                 window.UpdateLayout();

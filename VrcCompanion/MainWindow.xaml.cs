@@ -238,6 +238,15 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // Avatar details (40) sits above the launch chooser and the friend
+            // detail; Escape closes that layer and leaves the page behind it.
+            if (_viewModel.AvatarViewModel is { IsAvatarDetailsOpen: true } avatarDetails)
+            {
+                avatarDetails.CloseAvatarDetailsCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (_viewModel.IsLaunchChooserOpen)
             {
                 _viewModel.CancelLaunchChoiceCommand.Execute(null);
@@ -255,6 +264,15 @@ public partial class MainWindow : Window
             if (_viewModel.HasSelectedFriend)
             {
                 _viewModel.CloseFriendDetailCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            // Instance history (32) sits over the friend popups below it and under
+            // a profile opened from one of its rows, which the branch above handles.
+            if (_viewModel.InstanceHistoryViewModel is { IsOpen: true } history)
+            {
+                history.CloseCommand.Execute(null);
                 e.Handled = true;
                 return;
             }

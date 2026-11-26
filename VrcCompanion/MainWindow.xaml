@@ -11473,7 +11473,8 @@
         <!-- ========================================================= -->
         <!-- Avatar detail popup (Avatars, Favourites, Avatar Search)  -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="40"
+        <Grid x:Name="AvatarDetailsOverlay"
+              Panel.ZIndex="40"
               Visibility="{Binding AvatarViewModel.IsAvatarDetailsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed, TargetNullValue=Collapsed}">
             <Button Command="{Binding AvatarViewModel.CloseAvatarDetailsCommand}"
                     Focusable="False"
@@ -11919,7 +11920,8 @@
         <!-- ========================================================= -->
         <!-- Instance history                                           -->
         <!-- ========================================================= -->
-        <Grid Panel.ZIndex="32"
+        <Grid x:Name="InstanceHistoryOverlay"
+              Panel.ZIndex="32"
               AutomationProperties.AutomationId="InstanceHistoryOverlay"
               Visibility="{Binding InstanceHistoryViewModel.IsOpen, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
             <Button Command="{Binding InstanceHistoryViewModel.CloseCommand}"
