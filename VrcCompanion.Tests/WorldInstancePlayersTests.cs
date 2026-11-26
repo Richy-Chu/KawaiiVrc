@@ -233,9 +233,10 @@ public class WorldInstancePlayersTests
             api,
             ImageLoader.Shared,
             openUserProfile: (id, name, avatar) => opened = (id, name, avatar),
-            liveRoster: requested => string.Equals(requested, location, StringComparison.Ordinal)
-                ? roster
-                : null);
+            liveRoster: (requested, _) => Task.FromResult(
+                string.Equals(requested, location, StringComparison.Ordinal)
+                    ? roster
+                    : (IReadOnlyList<InstanceRosterPlayer>?)null));
         await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
         var instance = Assert.Single(dialog.Instances);
 
@@ -382,46 +383,291 @@ public class WorldInstancePlayersTests
     }
 
     [Fact]
-    public void YourOwnInstanceIsNamedFromTheGameLogByTheShell()
+    public void TheShellPollsTheLogForTheRosterEvenOnAnotherPage()
+    {
+        WpfTestHost.RunAsync(async () =>
+        {
+        var logPath = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "vrccompanion-world-players-" + Guid.NewGuid().ToString("N") + ".log");
+        try
+        {
+            var location = $"{WorldId}:{InstanceId}";
+            System.IO.File.WriteAllText(logPath, string.Join('\n', new[]
+            {
+                $"2026.11.14 12:00:00 Log - [Behaviour] Joining {location}",
+                "2026.11.14 12:00:01 Log - [Behaviour] OnPlayerJoined Me (usr_00000000-0000-0000-0000-000000000001)",
+                "2026.11.14 12:00:02 Log - [Behaviour] OnPlayerJoined Log Only (usr_00000000-0000-0000-0000-000000000002)",
+                string.Empty
+            }));
+
+            using var handler = new InstanceHandler();
+            using var api = new VrcApiClient(null, handler);
+            TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+            var instanceViewModel = new InstanceViewModel(
+                api,
+                ImageLoader.Shared,
+                new VrChatLogPlayerService(() => logPath, () => true));
+
+            var currentUser = new VrcUser
+            {
+                Id = "usr_00000000-0000-0000-0000-000000000001",
+                DisplayName = "Me",
+                Location = "offline"
+            };
+            await instanceViewModel.LoadAsync(currentUser, Array.Empty<FriendItem>());
+
+            // The Instance page is not the open section: its own log timer is stopped.
+            instanceViewModel.SetActive(false);
+
+            using var shell = new MainViewModel(api);
+            TestHooks.SetCurrentUser(shell, currentUser);
+            TestHooks.SetLoggedIn(shell);
+            TestHooks.AttachInstanceViewModel(shell, instanceViewModel);
+
+            Assert.NotNull(instanceViewModel.Instance);
+            Assert.True(
+                instanceViewModel.Players.Count > 0,
+                "The instance page never built a roster from the game log.");
+
+            var roster = await shell.LiveInstanceRosterAsync(location);
+            Assert.NotNull(roster);
+            Assert.Contains(roster!, player => player.DisplayName == "Me" && player.IsSelf);
+            Assert.Contains(
+                roster!,
+                player => player.DisplayName == "Log Only" && player.UserId.EndsWith("0002"));
+
+            // Someone joins while the panel is open on another page: the panel's own
+            // poll is what finds them, because the Instance page timer is still off.
+            System.IO.File.AppendAllText(
+                logPath,
+                "2026.11.14 12:03:00 Log - [Behaviour] OnPlayerJoined Late Owl (usr_00000000-0000-0000-0000-000000000003)\n");
+            roster = await shell.LiveInstanceRosterAsync(location);
+            Assert.NotNull(roster);
+            Assert.Contains(roster!, player => player.DisplayName == "Late Owl");
+            Assert.True(instanceViewModel.Players.Any(player => player.DisplayName == "Late Owl"));
+
+            Assert.Null(await shell.LiveInstanceRosterAsync($"{WorldId}:99999~region(eu)"));
+        }
+        finally
+        {
+            System.IO.File.Delete(logPath);
+        }
+        });
+    }
+
+    [Fact]
+    public async Task TheWorldDialogPinsTheInstanceYouAreInAndDropsItWhenYouLeave()
     {
         using var handler = new InstanceHandler();
+        handler.SlimInstances = new()
+        {
+            ($"11111~region(us)", 4),
+            ($"22222~region(us)", 9)
+        };
         using var api = new VrcApiClient(null, handler);
-        using var shell = new MainViewModel(api);
         TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_me", DisplayName = "Me" });
-        var instanceViewModel = new InstanceViewModel(api, ImageLoader.Shared);
-        var location = $"{WorldId}:{InstanceId}";
-        TestHooks.SetInstance(instanceViewModel, new VrcInstance
+
+        VrcInstance? live = new()
         {
             WorldId = WorldId,
-            InstanceId = InstanceId,
-            Location = location
-        });
-
-        var friendUser = new VrcUser
-        {
-            Id = "usr_friend",
-            DisplayName = "Friend",
-            UserIcon = "https://example.test/friend.png",
-            IsFriend = true
+            InstanceId = "33333~region(us)",
+            Location = $"{WorldId}:33333~region(us)",
+            UserCount = 3,
+            Capacity = 50,
+            Type = "groupPublic"
         };
-        instanceViewModel.Players.Add(new InstancePlayerItem(
-            new VrcUser { Id = "usr_me", DisplayName = "Me" }, isFriend: false, isSelf: true));
-        instanceViewModel.Players.Add(new InstancePlayerItem(friendUser, isFriend: true, isSelf: false));
-        instanceViewModel.Players.Add(new InstancePlayerItem("usr_log", "Log Only", isFriend: false, isSelf: false));
-        shell.Friends.Add(new FriendItem(friendUser));
-        TestHooks.AttachInstanceViewModel(shell, instanceViewModel);
 
-        var roster = shell.LiveInstanceRoster(location);
-        Assert.NotNull(roster);
-        Assert.Equal(3, roster!.Count);
-        Assert.True(roster.Single(player => player.UserId == "usr_me").IsSelf);
-        var friend = roster.Single(player => player.UserId == "usr_friend");
-        Assert.True(friend.IsFriend);
-        Assert.Equal("https://example.test/friend.png", friend.AvatarUrl);
-        Assert.Equal(string.Empty, roster.Single(player => player.UserId == "usr_log").AvatarUrl);
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared,
+            currentInstance: () => live);
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
 
-        Assert.Null(shell.LiveInstanceRoster($"{WorldId}:99999~region(eu)"));
+        // VRChat's world payload did not list the instance the reader is in, so the
+        // dialog adds it, pins it above the fuller rooms and labels it.
+        Assert.Equal($"{WorldId}:33333~region(us)", dialog.Instances[0].Location);
+        Assert.True(dialog.Instances[0].IsCurrent);
+        Assert.False(dialog.Instances[1].IsCurrent);
+
+        await dialog.ShowInstancePlayersAsync(dialog.Instances[1]);
+
+        // Leaving the instance clears the label and removes the row it added.
+        live = null;
+        await dialog.RefreshOpenPlayersAsync();
+        Assert.DoesNotContain(dialog.Instances, item => item.IsCurrent);
+        Assert.DoesNotContain(dialog.Instances, item => item.Location.EndsWith("33333~region(us)"));
+        dialog.StopPlayerRefresh();
     }
+
+    [Fact]
+    public void OpeningAWorldMarksTheLiveInstanceEvenWhenTheInstancePageWasNeverOpened()
+    {
+        WpfTestHost.RunAsync(async () =>
+        {
+            var logPath = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "vrccompanion-world-current-" + Guid.NewGuid().ToString("N") + ".log");
+            try
+            {
+                var location = $"{WorldId}:{InstanceId}";
+                System.IO.File.WriteAllText(logPath, string.Join('\n', new[]
+                {
+                    $"2026.11.14 12:00:00 Log - [Behaviour] Joining {location}",
+                    "2026.11.14 12:00:01 Log - [Behaviour] OnPlayerJoined Me (usr_00000000-0000-0000-0000-000000000001)",
+                    string.Empty
+                }));
+
+                using var handler = new InstanceHandler();
+                using var api = new VrcApiClient(null, handler);
+                using var shell = new MainViewModel(api);
+                var me = new VrcUser
+                {
+                    Id = "usr_00000000-0000-0000-0000-000000000001",
+                    DisplayName = "Me",
+                    Location = "offline"
+                };
+                TestHooks.SetCurrentUser(shell, me);
+                TestHooks.SetLoggedIn(shell);
+
+                var instanceViewModel = new InstanceViewModel(
+                    api,
+                    ImageLoader.Shared,
+                    new VrChatLogPlayerService(() => logPath, () => true));
+                TestHooks.AttachInstanceViewModel(shell, instanceViewModel);
+
+                shell.OpenWorldCommand.Execute(new WorldItem(new VrcWorld
+                {
+                    Id = WorldId,
+                    Name = "Popcorn Palace"
+                }));
+
+                Settle.Until(
+                    () => shell.WorldDialog is { } dialog && dialog.Instances.Any(item => item.IsCurrent),
+                    Settle.PumpBackground,
+                    "the world dialog never marked the instance the account is in");
+
+                var worldDialog = shell.WorldDialog!;
+                Assert.True(worldDialog.Instances[0].IsCurrent);
+                Assert.Equal(location, worldDialog.Instances[0].Location);
+                shell.CloseWorldDialogCommand.Execute(null);
+                await Task.CompletedTask;
+            }
+            finally
+            {
+                System.IO.File.Delete(logPath);
+            }
+        });
+    }
+
+    [Fact]
+    public void TheWindowLabelsYouAreHereAndPagesLongInstanceLists()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var handler = new InstanceHandler();
+            handler.SlimInstances = Enumerable.Range(1, 19)
+                .Select(index => ($"{index}0000~region(us)", 20 - index))
+                .ToList();
+            using var api = new VrcApiClient(null, handler);
+            using var shell = new MainViewModel(api);
+            var me = new VrcUser { Id = "usr_me", DisplayName = "Me" };
+            TestHooks.SetCurrentUser(shell, me);
+            TestHooks.SetLoggedIn(shell);
+
+            var live = new VrcInstance
+            {
+                WorldId = WorldId,
+                InstanceId = "150000~region(us)",
+                Location = $"{WorldId}:150000~region(us)",
+                UserCount = 5,
+                Capacity = 50,
+                Type = "public"
+            };
+            var instanceViewModel = new InstanceViewModel(api, ImageLoader.Shared);
+            TestHooks.SetInstance(instanceViewModel, live);
+            TestHooks.AttachInstanceViewModel(shell, instanceViewModel);
+
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                shell.OpenWorldCommand.Execute(new WorldItem(new VrcWorld
+                {
+                    Id = WorldId,
+                    Name = "Popcorn Palace"
+                }));
+                Settle.Until(
+                    () => shell.WorldDialog is { InstancesPage.Items.Count: 8 },
+                    Settle.PumpBackground,
+                    "the world dialog never listed its first page");
+                var worldDialog = shell.WorldDialog!;
+                Pump(window);
+
+                var overlay = window.FindName("WorldDialogOverlay") as DependencyObject;
+                Assert.True(overlay is not null);
+
+                Assert.Contains(
+                    FindVisualChildren<TextBlock>(overlay!),
+                    text => text.Text == "YOU ARE HERE" && text.IsVisible);
+
+                var next = FindVisualChildren<Button>(overlay!)
+                    .Single(button =>
+                        Equals(button.Content, "Next") &&
+                        ReferenceEquals(button.DataContext, worldDialog.InstancesPage));
+                Assert.True(next.IsVisible, "A long instance list has no visible Next button.");
+                next.Command.Execute(next.CommandParameter);
+                Pump(window);
+
+                Assert.Equal("2 of 3", worldDialog.InstancesPage.PageText);
+                Assert.Equal(8, worldDialog.InstancesPage.Items.Count);
+                Assert.DoesNotContain(worldDialog.InstancesPage.Items, item => item.IsCurrent);
+            }
+            finally
+            {
+                shell.CloseWorldDialogCommand.Execute(null);
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ManyActiveInstancesPageInsteadOfAllDrawing()
+    {
+        using var handler = new InstanceHandler();
+        handler.SlimInstances = Enumerable.Range(1, 19)
+            .Select(index => ($"{index}0000~region(us)", 20 - index))
+            .ToList();
+        using var api = new VrcApiClient(null, handler);
+        TestVrcUser(api);
+
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared);
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
+
+        Assert.Equal(19, dialog.Instances.Count);
+        Assert.True(dialog.InstancesPage.HasPages);
+        Assert.Equal(8, dialog.InstancesPage.Items.Count);
+        Assert.Equal("1 of 3", dialog.InstancesPage.PageText);
+
+        dialog.InstancesPage.NextCommand.Execute(null);
+        Assert.Equal("2 of 3", dialog.InstancesPage.PageText);
+        Assert.Equal(8, dialog.InstancesPage.Items.Count);
+
+        dialog.InstancesPage.NextCommand.Execute(null);
+        Assert.Equal("3 of 3", dialog.InstancesPage.PageText);
+        Assert.Equal(3, dialog.InstancesPage.Items.Count);
+        Assert.False(dialog.InstancesPage.NextCommand.CanExecute(null));
+
+        dialog.InstancesPage.PreviousCommand.Execute(null);
+        Assert.Equal("2 of 3", dialog.InstancesPage.PageText);
+    }
+
+    private static void TestVrcUser(VrcApiClient api)
+        => TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_me", DisplayName = "Me" });
 
     private static MainWindow CreateWindow(MainViewModel shell)
         => new(shell, initializeOnLoad: false)
@@ -468,6 +714,9 @@ public class WorldInstancePlayersTests
         /// <summary>Answers the n-th instance read (1-based); null uses the default payload.</summary>
         public Func<int, HttpResponseMessage>? InstanceResponse { get; set; }
 
+        /// <summary>The world payload's visible instances; null is one row matching the focus.</summary>
+        public List<(string InstanceId, int Occupants)>? SlimInstances { get; set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
@@ -491,21 +740,25 @@ public class WorldInstancePlayersTests
 
             if (path.EndsWith($"/worlds/{WorldId}", StringComparison.Ordinal))
             {
+                var slim = SlimInstances ?? new() { (InstanceId, 2) };
+                var rows = string.Join(
+                    ",",
+                    slim.Select(instance => $$"""
+                        {
+                          "instanceId": "{{instance.InstanceId}}",
+                          "location": "{{WorldId}}:{{instance.InstanceId}}",
+                          "userCount": {{instance.Occupants}},
+                          "capacity": 50,
+                          "region": "us",
+                          "type": "public"
+                        }
+                        """));
                 return await Json($$"""
                     {
                       "id": "{{WorldId}}",
                       "name": "Popcorn Palace",
                       "authorName": "spacebaar",
-                      "slimInstances": [
-                        {
-                          "instanceId": "{{InstanceId}}",
-                          "location": "{{WorldId}}:{{InstanceId}}",
-                          "userCount": 2,
-                          "capacity": 32,
-                          "region": "us",
-                          "type": "public"
-                        }
-                      ]
+                      "slimInstances": [ {{rows}} ]
                     }
                     """);
             }

@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1059 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1063 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.131**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.132**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,32 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.132 changed
+
+- **The Players panel polls the game log itself.** 1.0.131's log roster only moved while the
+  Instance page was the open section, because `InstanceViewModel`'s log timer is gated by
+  `SetActive`. `InstanceViewModel.RefreshRosterFromLogAsync` now polls and applies the roster on
+  demand (loading the instance first if that page was never opened), and
+  `MainViewModel.LiveInstanceRosterAsync` calls it from the dialog's 20 s refresh. Do not move
+  this back behind `SetActive` or behind the Instance page's timer - that is what made names
+  freeze when the dialog was opened from Worlds, Favorites or search.
+- **The world dialog labels the instance you are in.** `MainViewModel.OpenWorld` passes
+  `currentInstance: () => InstanceViewModel?.Instance`; `RebuildInstances` pins a matching row
+  first with `WorldInstanceItem.IsCurrent` (green border, YOU ARE HERE chip) and adds the row
+  from the live instance when VRChat's `slimInstances` omits it, which is the case that made a
+  searched world look like it had no row for the reader. `SyncCurrentInstanceRow` runs with each
+  panel refresh: a leave clears the label, removes the row it added and lets the panel say
+  "You are no longer in this instance".
+- **Active instances are paged.** `WorldDialogViewModel.Instances` stays the full list (tests
+  use it); the panel binds `InstancesPage.Items`, a `PagedList<WorldInstanceItem>` of eight rows
+  with the shared `ListPager`. Keep `InstancesPage.SetSource` in step with any change to
+  `Instances` - `SyncCurrentInstanceRow` re-publishes it when the current row comes or goes.
+- **Tests: 1063.** `WorldInstancePlayersTests` adds the shell's log poll while another page is
+  open (with an appended join), the current-instance pin/leave path, paging 19 instances, and a
+  real window with the YOU ARE HERE chip and a working pager. The roster tests read a temp game
+  log through `VrChatLogPlayerService`, and the shell ones run on `WpfTestHost.RunAsync` because
+  `InstanceViewModel` builds a `CollectionView`.
 
 ### What 1.0.131 changed
 

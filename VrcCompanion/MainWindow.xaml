@@ -13265,7 +13265,7 @@
                                                            TextWrapping="Wrap"
                                                            Margin="0,3,0,8" />
 
-                                                <ItemsControl ItemsSource="{Binding Instances}">
+                                                <ItemsControl ItemsSource="{Binding InstancesPage.Items}">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
                                                             <Border Background="{StaticResource InputBrush}"
@@ -13279,6 +13279,9 @@
                                                                         <Style.Triggers>
                                                                             <DataTrigger Binding="{Binding IsFocus}" Value="True">
                                                                                 <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                                                <Setter Property="BorderBrush" Value="{StaticResource GreenBrush}" />
                                                                             </DataTrigger>
                                                                         </Style.Triggers>
                                                                     </Style>
@@ -13298,6 +13301,21 @@
                                                                                        FontSize="11.5"
                                                                                        FontWeight="SemiBold"
                                                                                        TextTrimming="CharacterEllipsis" />
+                                                                            <Border Style="{StaticResource TagChip}"
+                                                                                    Margin="6,0,0,0"
+                                                                                    Visibility="{Binding IsCurrent, Converter={StaticResource BoolToVis}}">
+                                                                                <StackPanel Orientation="Horizontal">
+                                                                                    <TextBlock Text="&#xE707;"
+                                                                                               FontFamily="Segoe MDL2 Assets"
+                                                                                               FontSize="8.5"
+                                                                                               Foreground="{StaticResource GreenBrush}"
+                                                                                               VerticalAlignment="Center"
+                                                                                               Margin="0,0,3,0" />
+                                                                                    <TextBlock Text="YOU ARE HERE"
+                                                                                               Style="{StaticResource TagText}"
+                                                                                               Foreground="{StaticResource GreenBrush}" />
+                                                                                </StackPanel>
+                                                                            </Border>
                                                                         </StackPanel>
                                                                         <TextBlock Text="{Binding DetailText}"
                                                                                    FontSize="10"
@@ -13348,6 +13366,10 @@
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
+
+                                                <controls:ListPager DataContext="{Binding InstancesPage}"
+                                                                    Margin="0,4,0,0"
+                                                                    Visibility="{Binding InstancesPage.HasPages, Converter={StaticResource BoolToVis}}" />
 
                                                 <TextBlock Text="No active instances found right now. Create one on the right."
                                                            Style="{StaticResource MutedText}"

@@ -771,6 +771,54 @@ public sealed class InstanceViewModel : ViewModelBase
         _ = LoadAsync(_lastCurrentUser, _lastFriends);
     }
 
+    /// <summary>
+    /// Reads the game log and applies the roster on demand, even while the Instance page is
+    /// not the open section. The world dialog's Players panel uses this: the page's own poll
+    /// only runs while the page is shown, so without it joins and leaves stalled until the
+    /// reader switched tabs. It loads the instance first when the page has never been opened.
+    /// </summary>
+    internal async Task<bool> RefreshRosterFromLogAsync(
+        VrcUser currentUser,
+        IReadOnlyList<FriendItem> friends,
+        string? location,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(location) || !LaunchService.IsLocation(location))
+        {
+            return false;
+        }
+
+        _lastCurrentUser = currentUser;
+        _lastFriends = friends.ToList();
+
+        var snapshot = await Task.Run(() => _logService.Poll(), cancellationToken);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        var logLocation = snapshot is not null && LaunchService.IsLocation(snapshot.Location)
+            ? snapshot.Location
+            : null;
+        var effective = _logService.IsGameRunning && logLocation is not null
+            ? logLocation
+            : currentUser.Location;
+
+        if (!LaunchService.IsLocation(effective) || !SameInstance(effective, location))
+        {
+            return false;
+        }
+
+        if (Instance is null || !SameInstance(Instance.Location, effective))
+        {
+            await LoadAsync(currentUser, friends, cancellationToken);
+            return Instance is not null && SameInstance(Instance.Location, location);
+        }
+
+        ApplyLogSnapshot(snapshot);
+        return true;
+    }
+
     internal static string BuildLogSignature(VrChatLogSnapshot? snapshot)
     {
         if (snapshot is null || !LaunchService.IsLocation(snapshot.Location))

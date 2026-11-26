@@ -4579,10 +4579,38 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             focusLocation,
             focusNote,
             openUserProfile: OpenUserProfile,
-            liveRoster: LiveInstanceRoster);
+            liveRoster: LiveInstanceRosterAsync,
+            currentInstance: () => InstanceViewModel?.Instance);
         WorldDialog = dialog;
         ClearInfo();
         _ = dialog.LoadAsync(forceRefresh: false, cancellation.Token);
+        _ = SyncWorldDialogCurrentInstanceAsync(dialog);
+    }
+
+    /// <summary>
+    /// Makes sure the world dialog can say which instance you are in even when the Instance
+    /// page was never opened: reads the live instance once, then labels (or adds) its row.
+    /// </summary>
+    private async Task SyncWorldDialogCurrentInstanceAsync(WorldDialogViewModel dialog)
+    {
+        try
+        {
+            var viewModel = InstanceViewModel;
+            var user = CurrentUser;
+            if (viewModel is not null && user is not null && viewModel.Instance is null)
+            {
+                await viewModel.LoadAsync(user, Friends);
+            }
+
+            if (ReferenceEquals(WorldDialog, dialog))
+            {
+                dialog.RefreshCurrentInstance();
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("world dialog current instance: " + ex.Message);
+        }
     }
 
     private void CloseWorldDialog()
@@ -4594,16 +4622,30 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         WorldDialog = null;
     }
 
-    /// <summary>
-    /// The people in an instance this account is actually in, from the game log.
-    /// VRChat returns a user list only for instances the account created, so this
-    /// is the one source that can name everyone else; null means "not my instance".
+        /// <summary>
+    /// The people in an instance this account is actually in, from the game log. The log is
+    /// polled here rather than relying on the Instance page's own timer, which only runs while
+    /// that page is the open section; without it a panel opened from Worlds never saw a join.
+    /// VRChat returns a user list only for instances the account created, so this is the one
+    /// source that can name everyone else; null means "not my instance".
     /// </summary>
-    internal IReadOnlyList<InstanceRosterPlayer>? LiveInstanceRoster(string location)
+    internal async Task<IReadOnlyList<InstanceRosterPlayer>?> LiveInstanceRosterAsync(
+        string location,
+        CancellationToken cancellationToken = default)
     {
         var viewModel = InstanceViewModel;
-        var instance = viewModel?.Instance;
-        if (instance is null || viewModel!.Players.Count == 0)
+        var user = CurrentUser;
+        if (viewModel is null || user is null)
+        {
+            return null;
+        }
+
+        var matched = await viewModel.RefreshRosterFromLogAsync(
+            user,
+            Friends,
+            location,
+            cancellationToken);
+        if (!matched || cancellationToken.IsCancellationRequested || viewModel.Instance is not { } instance)
         {
             return null;
         }
@@ -4612,7 +4654,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             return null;
         }
-
 
         var friendById = Friends
             .Where(friend => !string.IsNullOrWhiteSpace(friend.Id))

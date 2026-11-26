@@ -178,6 +178,17 @@ public sealed class WorldInstanceItem : ViewModelBase
     /// <summary>Asks the world dialog to show who is in this instance.</summary>
     public RelayCommand ViewPlayersCommand { get; }
 
+    private bool _isCurrent;
+
+    /// <summary>True for the instance this account is standing in.</summary>
+    public bool IsCurrent
+    {
+        get => _isCurrent;
+        private set => SetProperty(ref _isCurrent, value);
+    }
+
+    public void MarkCurrent(bool current) => IsCurrent = current;
+
     public ObservableCollection<WorldInstancePlayerItem> Players { get; } = new();
 
     private bool _isLoadingPlayers;
@@ -517,9 +528,13 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private readonly string? _focusLocation;
     private readonly string? _focusNote;
     private readonly Action<string, string, string>? _openUserProfile;
-    private readonly Func<string, IReadOnlyList<InstanceRosterPlayer>?>? _liveRoster;
+    private readonly Func<string, CancellationToken, Task<IReadOnlyList<InstanceRosterPlayer>?>>? _liveRoster;
+    private readonly Func<VrcInstance?>? _currentInstance;
     private WorldInstanceItem? _selectedInstance;
     private DispatcherTimer? _playerRefreshTimer;
+    private CancellationTokenSource? _playersCancellation;
+    private WorldInstanceItem? _syntheticCurrentInstance;
+    private string? _currentLocation;
     private bool _playersLoading;
 
     /// <summary>
@@ -543,7 +558,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
         string? focusLocation = null,
         string? focusNote = null,
         Action<string, string, string>? openUserProfile = null,
-        Func<string, IReadOnlyList<InstanceRosterPlayer>?>? liveRoster = null)
+        Func<string, CancellationToken, Task<IReadOnlyList<InstanceRosterPlayer>?>>? liveRoster = null,
+        Func<VrcInstance?>? currentInstance = null)
     {
         _summary = summary;
         _api = api;
@@ -552,6 +568,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
         _focusNote = focusNote;
         _openUserProfile = openUserProfile;
         _liveRoster = liveRoster;
+        _currentInstance = currentInstance;
         HeroImage = summary.Image;
 
         InstanceTypes = new ObservableCollection<InstanceTypeOption>(PersonalInstanceTypes);
@@ -679,6 +696,9 @@ public sealed class WorldDialogViewModel : ViewModelBase
 
     public ObservableCollection<WorldInstanceItem> Instances { get; }
 
+    /// <summary>The rows the panel shows; a long world's instances page instead of all drawing.</summary>
+    public PagedList<WorldInstanceItem> InstancesPage { get; } = new(8);
+
     public bool HasActiveInstances => Instances.Count > 0;
 
     /// <summary>The instance whose player list is open below the active instances.</summary>
@@ -769,9 +789,20 @@ public sealed class WorldDialogViewModel : ViewModelBase
             IsRefreshingPlayers = true;
         }
 
+        var token = _playersCancellation?.Token ?? CancellationToken.None;
         try
         {
-            var roster = _liveRoster?.Invoke(item.Location);
+            // "You are here" can change while the panel is open; keep the rows honest first.
+            SyncCurrentInstanceRow();
+
+            var roster = _liveRoster is null
+                ? null
+                : await _liveRoster(item.Location, token);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
             if (roster is not null)
             {
                 var players = OrderPlayers(
@@ -783,7 +814,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
                 return;
             }
 
-            var instance = await _api.GetInstanceAsync(item.Location);
+            var wasLive = item.PlayersFromLiveRoster;
+            var instance = await _api.GetInstanceAsync(item.Location, token);
             if (instance is null)
             {
                 item.SetPlayersError("VRChat could not load this instance. It may have closed.");
@@ -803,6 +835,13 @@ public sealed class WorldDialogViewModel : ViewModelBase
                 item.SetPlayers(players, fromLiveRoster: false);
                 item.SetPlayersNote(null);
             }
+            else if (wasLive)
+            {
+                // You left this instance: the log roster no longer applies, and the API will
+                // not name the people in someone else's instance.
+                item.SetPlayers(Array.Empty<WorldInstancePlayerItem>(), fromLiveRoster: false);
+                item.SetPlayersNote("You are no longer in this instance.");
+            }
             else if (!item.HasPlayers)
             {
                 item.SetPlayers(Array.Empty<WorldInstancePlayerItem>(), fromLiveRoster: false);
@@ -812,6 +851,10 @@ public sealed class WorldDialogViewModel : ViewModelBase
             }
 
             item.MarkPlayersUpdated(DateTimeOffset.Now);
+        }
+        catch (OperationCanceledException)
+        {
+            // The panel or the dialog closed while this read was in flight.
         }
         catch (VrcApiException ex)
         {
@@ -853,6 +896,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
 
     private void StartPlayerRefresh()
     {
+        _playersCancellation ??= new CancellationTokenSource();
         if (_playerRefreshTimer is null)
         {
             _playerRefreshTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -876,12 +920,18 @@ public sealed class WorldDialogViewModel : ViewModelBase
         OnPropertyChanged(nameof(PlayersRefreshHint));
     }
 
+    /// <summary>Re-checks "you are here" against the live instance, adding or removing the row.</summary>
+    internal void RefreshCurrentInstance() => SyncCurrentInstanceRow();
+
     internal bool IsPlayerRefreshRunning => _playerRefreshTimer?.IsEnabled == true;
 
     /// <summary>Stops the timer; the dialog calls this when it closes.</summary>
     public void StopPlayerRefresh()
     {
         _playerRefreshTimer?.Stop();
+        _playersCancellation?.Cancel();
+        _playersCancellation?.Dispose();
+        _playersCancellation = null;
         RefreshInstancePlayersCommand.RaiseCanExecuteChanged();
     }
 
@@ -1338,8 +1388,11 @@ public sealed class WorldDialogViewModel : ViewModelBase
     {
         StopPlayerRefresh();
         Instances.Clear();
+        InstancesPage.Clear();
         FocusInstance = null;
         SelectedInstance = null;
+        _syntheticCurrentInstance = null;
+        _currentLocation = null;
         if (World is null)
         {
             OnPropertyChanged(nameof(HasActiveInstances));
@@ -1348,8 +1401,6 @@ public sealed class WorldDialogViewModel : ViewModelBase
 
         var items = World.SlimInstances
             .Where(item => !string.IsNullOrWhiteSpace(item.InstanceId))
-            .OrderByDescending(item => item.Occupants)
-            .Take(12)
             .Select(instance => new WorldInstanceItem(instance, World.Id, viewPlayers: ShowInstancePlayers))
             .ToList();
 
@@ -1358,21 +1409,121 @@ public sealed class WorldDialogViewModel : ViewModelBase
         // The instance the dialog was opened for goes first and stays even when VRChat
         // does not list it (a private invite is not in the world's visible instances).
         var focus = BuildFocusInstance(items);
+
+        // The instance this account is standing in is pinned above everything, with a
+        // "You are here" label, and it is added when VRChat's world payload omits it
+        // (which is exactly the case that made a searched world look like it had no row
+        // for the reader).
+        var live = _currentInstance?.Invoke();
+        WorldInstanceItem? current = null;
+        if (live is not null && IsWorldLocation(live.Location, World?.Id ?? _summary.Id))
+        {
+            _currentLocation = live.Location;
+            current = items.FirstOrDefault(item => SameInstance(item.Location, live.Location));
+            if (current is not null)
+            {
+                items.Remove(current);
+            }
+            else if (focus is not null && SameInstance(focus.Location, live.Location))
+            {
+                current = focus;
+                focus = null;
+            }
+            else
+            {
+                current = new WorldInstanceItem(live, World.Id, viewPlayers: ShowInstancePlayers);
+                _syntheticCurrentInstance = current;
+            }
+
+            current.MarkCurrent(true);
+        }
+
+        // Most crowded first, so the list reads like a room browser.
+        items = items.OrderByDescending(item => item.Occupants).ToList();
+        if (current is not null && !ReferenceEquals(current, focus))
+        {
+            Instances.Add(current);
+            added.Add(current);
+        }
         if (focus is not null)
         {
             Instances.Add(focus);
             added.Add(focus);
         }
-
         foreach (var item in items)
         {
             Instances.Add(item);
             added.Add(item);
         }
 
+        InstancesPage.SetSource(Instances, resetPage: true);
         OnPropertyChanged(nameof(HasActiveInstances));
         GroupHydration = HydrateGroupsAsync(added, cancellationToken);
     }
+
+    /// <summary>
+    /// Keeps the "You are here" row true while the dialog stays open. A leave removes the
+    /// label (and the row added for it), a join adds it, and the panel is never closed by it.
+    /// </summary>
+    private void SyncCurrentInstanceRow()
+    {
+        if (World is null)
+        {
+            return;
+        }
+
+        var live = _currentInstance?.Invoke();
+        var location = live is not null && IsWorldLocation(live.Location, World?.Id ?? _summary.Id)
+            ? live.Location
+            : null;
+
+        if (SameInstance(location, _currentLocation))
+        {
+            foreach (var item in Instances)
+            {
+                item.MarkCurrent(SameInstance(item.Location, location));
+            }
+            return;
+        }
+
+        _currentLocation = location;
+        if (_syntheticCurrentInstance is not null)
+        {
+            Instances.Remove(_syntheticCurrentInstance);
+            _syntheticCurrentInstance = null;
+        }
+
+        var target = location is null
+            ? null
+            : Instances.FirstOrDefault(item => SameInstance(item.Location, location));
+        if (target is null && location is not null && live is not null)
+        {
+            target = new WorldInstanceItem(live, World.Id, viewPlayers: ShowInstancePlayers);
+            target.MarkCurrent(true);
+            Instances.Insert(0, target);
+            _syntheticCurrentInstance = target;
+        }
+
+        foreach (var item in Instances)
+        {
+            item.MarkCurrent(target is not null && ReferenceEquals(item, target));
+        }
+
+        InstancesPage.SetSource(Instances);
+        OnPropertyChanged(nameof(HasActiveInstances));
+    }
+
+    private static bool IsWorldLocation(string? location, string worldId)
+        => LaunchService.IsLocation(location) &&
+           string.Equals(
+               LaunchService.GetWorldIdFromLocation(location!),
+               worldId,
+               StringComparison.OrdinalIgnoreCase);
+
+    private static bool SameInstance(string? left, string? right)
+        => !string.IsNullOrWhiteSpace(left) &&
+           !string.IsNullOrWhiteSpace(right) &&
+           string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
     private void ShowInstancePlayers(WorldInstanceItem item) => _ = ShowInstancePlayersAsync(item);
 
