@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using VrcCompanion.Models;
 using VrcCompanion.Services;
 using VrcCompanion.ViewModels;
@@ -528,6 +530,240 @@ public class PopupEscapeTests
     }
 
     [Fact]
+    public void EscapeClosesTheMediaViewer()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var root = Path.Combine(
+                Path.GetTempPath(),
+                "vrc-popup-media-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            var picturePath = Path.Combine(root, "VRChat_2025-06-02_11-04-00.png");
+            CreatePng(picturePath);
+            var picture = new MediaItem(picturePath, "Escape World", new DateTime(2025, 6, 2, 11, 4, 0));
+            var media = new MediaLibraryViewModel(
+                root,
+                (_, _) => new[]
+                {
+                    new MediaGroup(
+                        "Escape World · June 2025",
+                        "Escape World",
+                        new DateTime(2025, 6, 1),
+                        new[] { picture })
+                },
+                cachePath: Path.Combine(root, "index.json"));
+
+            using var shell = new MainViewModel(media);
+            TestHooks.SetLoggedIn(shell);
+            media.HistoryProvider = () => Array.Empty<InstanceHistoryEntry>();
+            media.GroupLookup = _ => default;
+            media.GroupFetcher = _ => Task.FromResult<(string?, string?)>(default);
+            media.WorldFetcher = _ => Task.FromResult<MediaWorldInfo?>(null);
+            media.PersonFetcher = _ => Task.FromResult<MediaPersonInfo?>(null);
+
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "media");
+                Settle.Until(
+                    () => !media.IsBusy && media.PictureCount == 1,
+                    Settle.PumpBackground,
+                    "Media page did not load.");
+
+                var overlay = FindByName(window, "MediaViewerOverlay");
+                Assert.NotNull(overlay);
+
+                media.OpenViewerCommand.Execute(picture);
+                window.UpdateLayout();
+
+                Assert.True(media.IsViewerOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the picture viewer.");
+                Assert.False(media.IsViewerOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheModerationMemberCard()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var groups = new GroupViewModel(IsolatedApi());
+            TestHooks.AttachGroupViewModel(shell, groups);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "groups");
+                window.UpdateLayout();
+
+                var overlay = FindByName(window, "ModerationMemberCardOverlay");
+                Assert.NotNull(overlay);
+
+                groups.Moderation.ShowMemberCardForTests();
+                window.UpdateLayout();
+
+                Assert.True(groups.Moderation.IsMemberCardOpen);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the member card.");
+                Assert.False(groups.Moderation.IsMemberCardOpen);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheContinuitySessionDetail()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var continuity = Continuity();
+            TestHooks.AttachContinuityViewModel(shell, continuity);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "continuity");
+                window.UpdateLayout();
+
+                var overlay = FindByName(window, "ContinuitySessionOverlay");
+                Assert.NotNull(overlay);
+
+                continuity.OpenSessionCommand.Execute(new ContinuitySessionItem(new ContinuitySession
+                {
+                    Id = "session-escape",
+                    Location = "wrld_escape:12345",
+                    WorldName = "Escape World"
+                }));
+                window.UpdateLayout();
+
+                Assert.True(continuity.IsSessionDetailVisible);
+                Assert.Equal(Visibility.Visible, overlay!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should close the continuity session sheet.");
+                Assert.False(continuity.IsSessionDetailVisible);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheContinuityPersonDetail()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var continuity = Continuity();
+            TestHooks.AttachContinuityViewModel(shell, continuity);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "continuity");
+                window.UpdateLayout();
+
+                var detail = FindByName(window, "ContinuityPersonDetail");
+                Assert.NotNull(detail);
+
+                continuity.SelectPersonCommand.Execute(new ContinuityPersonItem(new ContinuityPerson
+                {
+                    UserId = "usr_escape",
+                    DisplayName = "Escape Test"
+                }));
+                window.UpdateLayout();
+
+                Assert.True(continuity.IsPersonDetailVisible);
+                Assert.Equal(Visibility.Visible, detail!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should go back to the people list.");
+                Assert.False(continuity.IsPersonDetailVisible);
+                Assert.Equal(Visibility.Collapsed, detail.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void EscapeClosesTheContinuityWorldDetail()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+            var continuity = Continuity();
+            TestHooks.AttachContinuityViewModel(shell, continuity);
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "continuity");
+                window.UpdateLayout();
+
+                var detail = FindByName(window, "ContinuityWorldDetail");
+                Assert.NotNull(detail);
+
+                continuity.SelectWorldCommand.Execute(new ContinuityWorldItem(new ContinuityWorld
+                {
+                    WorldId = "wrld_escape",
+                    Name = "Escape World"
+                }));
+                window.UpdateLayout();
+
+                Assert.True(continuity.IsWorldDetailVisible);
+                Assert.Equal(Visibility.Visible, detail!.Visibility);
+
+                var escape = RaiseEscape(window);
+                window.UpdateLayout();
+
+                Assert.True(escape.Handled, "Escape should go back to the worlds list.");
+                Assert.False(continuity.IsWorldDetailVisible);
+                Assert.Equal(Visibility.Collapsed, detail.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void OnePressClosesThePopupOnTopOnly()
     {
         WpfTestHost.Run(() =>
@@ -610,6 +846,38 @@ public class PopupEscapeTests
         };
         window.RaiseEvent(escape);
         return escape;
+    }
+
+    private static ContinuityViewModel Continuity()
+        => new(new ContinuityStore(Path.Combine(
+            Path.GetTempPath(),
+            "vrc-popup-continuity-" + Guid.NewGuid().ToString("N") + ".json")));
+
+    private static void CreatePng(string path)
+    {
+        const int size = 32;
+        var pixels = new byte[size * size * 4];
+        for (var offset = 0; offset < pixels.Length; offset += 4)
+        {
+            pixels[offset] = 120;
+            pixels[offset + 1] = 90;
+            pixels[offset + 2] = 60;
+            pixels[offset + 3] = 255;
+        }
+
+        var bitmap = BitmapSource.Create(
+            size,
+            size,
+            96,
+            96,
+            PixelFormats.Bgra32,
+            null,
+            pixels,
+            size * 4);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
     }
 
     private static FriendDetailViewModel Profile()

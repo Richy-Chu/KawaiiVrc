@@ -144,6 +144,15 @@ internal static class TestHooks
         => AttachViewModel(shell, nameof(MainViewModel.InstanceHistoryViewModel), history);
 
     /// <summary>
+    /// Attaches the continuity page without restoring a session; the shell
+    /// otherwise builds it only inside <see cref="MainViewModel.InitializeAsync"/>.
+    /// </summary>
+    public static void AttachContinuityViewModel(
+        MainViewModel shell,
+        ContinuityViewModel continuity)
+        => AttachViewModel(shell, nameof(MainViewModel.ContinuityViewModel), continuity);
+
+    /// <summary>
     /// Attaches the recent-players popup without restoring a session; the shell
     /// otherwise builds it only inside <see cref="MainViewModel.InitializeAsync"/>.
     /// </summary>

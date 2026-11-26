@@ -4310,6 +4310,7 @@
 
                             <!-- Member moderation popup: opened by Moderate, grouped the way VRCX does it -->
                             <Grid Grid.RowSpan="2"
+                                  x:Name="ModerationMemberCardOverlay"
                                   Panel.ZIndex="6"
                                   Visibility="{Binding DataContext.GroupViewModel.Moderation.IsMemberCardOpen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
                                 <Button Command="{Binding DataContext.GroupViewModel.Moderation.CloseMemberCardCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -6380,7 +6381,7 @@
                 </StackPanel>
 
                 <!-- In-app picture viewer with the world, session and players -->
-                <Grid Grid.RowSpan="3" Panel.ZIndex="10"
+                <Grid x:Name="MediaViewerOverlay" Grid.RowSpan="3" Panel.ZIndex="10"
                       Visibility="{Binding MediaViewModel.IsViewerOpen, Converter={StaticResource BoolToVis}}">
                     <Button Command="{Binding MediaViewModel.CloseViewerCommand}"
                             Focusable="False"

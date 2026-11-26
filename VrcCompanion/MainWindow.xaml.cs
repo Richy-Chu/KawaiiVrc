@@ -281,6 +281,44 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // Page-local layers: one page is shown at a time, so at most one of
+            // these can be open. The continuity session sheet is the modal inside
+            // its page; the others hide the page behind them.
+            if (_viewModel.ContinuityViewModel is { IsSessionDetailVisible: true } continuitySession)
+            {
+                continuitySession.CloseSessionCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (_viewModel.ContinuityViewModel is { IsPersonDetailVisible: true } continuityPerson)
+            {
+                continuityPerson.ClosePersonCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (_viewModel.ContinuityViewModel is { IsWorldDetailVisible: true } continuityWorld)
+            {
+                continuityWorld.CloseWorldCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (_viewModel.MediaViewModel.IsViewerOpen)
+            {
+                _viewModel.MediaViewModel.CloseViewerCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (_viewModel.GroupViewModel?.Moderation is { IsMemberCardOpen: true } memberCard)
+            {
+                memberCard.CloseMemberCardCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             // 20: the boop preview is the modal inside the notifications page.
             if (_viewModel.IsBoopPreviewOpen)
             {

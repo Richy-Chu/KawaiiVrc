@@ -382,6 +382,7 @@
             <Border Grid.Column="2"
                     Style="{StaticResource Card}"
                     Padding="18"
+                    x:Name="ContinuityPersonDetail"
                     Visibility="{Binding IsPersonDetailVisible, Converter={StaticResource BoolToVis}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
@@ -611,6 +612,7 @@
             <Border Grid.Column="2"
                     Style="{StaticResource Card}"
                     Padding="18"
+                    x:Name="ContinuityWorldDetail"
                     Visibility="{Binding IsWorldDetailVisible, Converter={StaticResource BoolToVis}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
@@ -774,6 +776,7 @@
         <!-- Session detail popup: same information and profile links as the
              rest of the app, without leaving the Continuity page. -->
         <Grid Grid.RowSpan="5"
+              x:Name="ContinuitySessionOverlay"
               Panel.ZIndex="20"
               Background="#C0080B12"
               Visibility="{Binding IsSessionDetailVisible, Converter={StaticResource BoolToVis}}">

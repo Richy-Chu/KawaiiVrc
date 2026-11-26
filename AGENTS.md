@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 994 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
+A full run is 999 tests and takes about 3 minutes 30 seconds. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.112**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.113**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,25 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.113 changed
+
+- **The last Escape gaps are closed.** Five page-local layers were still outside the chain: the media
+  picture viewer (10, `CloseViewerCommand`), the moderation member card (6,
+  `CloseMemberCardCommand`), and Continuity's session sheet (a modal with a backdrop inside its page,
+  `CloseSessionCommand`), people detail (`ClosePersonCommand`) and worlds detail
+  (`CloseWorldCommand`). They close after the window popups, because one page is shown at a time and
+  none of them can sit under a window overlay.
+- **Context has no popup of its own.** Its rows open a profile (the friend-profile branch) or a
+  Continuity layer (the branches above), so it inherited the same gap and is covered by them rather
+  than by a branch of its own. Do not add a Context branch for a layer that does not exist.
+- **The overlays are named.** `MediaViewerOverlay`, `ModerationMemberCardOverlay`,
+  `ContinuitySessionOverlay`, `ContinuityPersonDetail` and `ContinuityWorldDetail` are `x:Name`s for
+  the tests. The media and groups pages have to be the shown section before their overlays are in
+  the tree; the Continuity view is a `UserControl`, so its names live in `Controls/ContinuityView.xaml`.
+- **Tests: 999.** Five new cases: the picture viewer (a generated PNG through the Media page), the
+  member card (through `ShowMemberCardForTests`, the same flag a row click sets) and the three
+  Continuity layers.
 
 ### What 1.0.112 changed
 
@@ -380,9 +399,11 @@ the fallback, and `ImageDecodeTests` pins both the scaled size and the allocatio
    profile, and an open session detail runs `BackCommand` before the history popup's `CloseCommand`.
    A new overlay needs a branch here and a case in `PopupEscapeTests`; if it opens over another
    popup, put its branch first and test both steps.
-   The media picture viewer (10) and the group moderation member card (6) are deliberately still
-   outside the chain: they are page-local rather than window overlays, and a test needs the Media or
-   Groups page loaded. Do not claim the audit is complete without them.
+   Page-local layers follow the window ones, because one page is shown at a time: Continuity's session
+   sheet, people detail and worlds detail in `Controls/ContinuityView.xaml`, then the media picture
+   viewer (10), the moderation member card (6), and the boop preview (20). Context has no popup of its
+   own - its rows open a profile or a Continuity layer, both covered above - so do not add a Context
+   branch for a layer that does not exist.
 
 
 ### Virtualization: what is real and what is not

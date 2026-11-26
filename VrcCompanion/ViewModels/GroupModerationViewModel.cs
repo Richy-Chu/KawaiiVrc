@@ -752,6 +752,9 @@ public sealed class GroupModerationViewModel : ViewModelBase
         SelectedMember = null;
     }
 
+    /// <summary>Test seam: shows the card without a member row from a group request.</summary>
+    internal void ShowMemberCardForTests() => IsMemberCardOpen = true;
+
     // ------------------------------------------------------- member card
 
     public bool IsMemberCardOpen
