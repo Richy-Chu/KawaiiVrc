@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1072 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1074 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.138**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.139**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,21 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.139 changed
+
+- **An invite past VRChat's reply window is marked in the list.** `NotificationItem.IsPastReplyWindow`
+  (with `ReplyWindowClosedHint`) is set from the same newest-40 window the composer checks:
+  `MainViewModel.UpdateNotifications` marks every row after each feed read, and
+  `LoadNotificationAccount` clears the flag for a newly loaded account until its feed answers.
+  Only `CanDecline` rows (world invites and invite requests) can carry it. The row template shows a
+  red `REPLY WINDOW CLOSED` chip under the sender line, and the detail pane shows the same chip
+  above the action buttons, so the warning is visible before "Decline with message" is pressed.
+  Marking removes the message only; plain Decline still removes the row. Do not hide the row or
+  disable Decline - the row is still actionable locally.
+- **Tests: 1074.** `InviteRowsPastTheReplyWindowAreMarkedInTheList` pins the marked/unmarked rows,
+  and `AnInvitePastTheReplyWindowShowsItsMarkerInTheList` renders one expired and one fresh invite
+  in the real window and finds exactly one visible marker.
 
 ### What 1.0.138 changed
 

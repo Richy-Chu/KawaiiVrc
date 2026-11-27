@@ -971,16 +971,7 @@ public class NotificationPersistenceTests : IDisposable
         // VRChat answers replies only for the newest 40 notifications, so one invite
         // behind 40 newer rows is already past its window even though it is hours old,
         // not days: there is no fixed time limit.
-        var stale = Notification("not_stale", "invite");
-        stale.CreatedAtLegacy = DateTimeOffset.UtcNow.AddHours(-3);
-        var feed = new List<VrcNotification> { stale };
-        for (var index = 0; index < VrcApiClient.ReplyableNotificationWindow; index++)
-        {
-            var newer = Notification($"not_new_{index:00}", "invite");
-            newer.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-index);
-            feed.Add(newer);
-        }
-
+        var (_, feed) = ReplyWindowFeed();
         TestHooks.UpdateNotifications(shell, feed);
 
         var staleItem = shell.Notifications.Single(item => item.Id == "not_stale");
@@ -998,6 +989,46 @@ public class NotificationPersistenceTests : IDisposable
         shell.DeclineNotificationWithMessageCommand.Execute(newest);
         Assert.True(shell.IsResponseComposerOpen);
         shell.CancelResponseComposerCommand.Execute(null);
+    }
+
+    [Fact]
+    public void InviteRowsPastTheReplyWindowAreMarkedInTheList()
+    {
+        var handler = new CaptureHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.SetLoggedIn(shell);
+        TestHooks.SetCurrentUser(shell, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+
+        var (_, feed) = ReplyWindowFeed();
+        TestHooks.UpdateNotifications(shell, feed);
+
+        // The invite behind 40 newer rows is marked before its Decline with message is
+        // pressed; the newest invite in the same list is not.
+        Assert.True(shell.Notifications.Single(item => item.Id == "not_stale").IsPastReplyWindow);
+        Assert.False(shell.Notifications.Single(item => item.Id == "not_new_00").IsPastReplyWindow);
+        Assert.All(
+            shell.Notifications.Where(item => item.Id != "not_stale"),
+            item => Assert.False(item.IsPastReplyWindow));
+
+        // Marking only removes the message: the row can still be declined.
+        Assert.True(shell.Notifications.Single(item => item.Id == "not_stale").CanDecline);
+    }
+
+    /// <summary>One invite behind 40 newer ones, plus the newest invite itself.</summary>
+    private static (VrcNotification Stale, List<VrcNotification> Feed) ReplyWindowFeed()
+    {
+        var stale = Notification("not_stale", "invite");
+        stale.CreatedAtLegacy = DateTimeOffset.UtcNow.AddHours(-3);
+        var feed = new List<VrcNotification> { stale };
+        for (var index = 0; index < VrcApiClient.ReplyableNotificationWindow; index++)
+        {
+            var newer = Notification($"not_new_{index:00}", "invite");
+            newer.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-index);
+            feed.Add(newer);
+        }
+
+        return (stale, feed);
     }
 
     private static async Task WaitForSavedMessagesAsync(MainViewModel shell)

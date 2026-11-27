@@ -8346,6 +8346,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             .Where(notification => !_clearedNotificationIds.Contains(notification.Id))
             .Select(notification => new NotificationItem(notification))
             .ToList();
+        foreach (var notification in persisted)
+        {
+            // The reply window belongs to the feed last read for the account that is
+            // signing in; a freshly loaded account starts unmarked until its feed answers.
+            notification.MarkPastReplyWindow(false);
+        }
+
         SyncCollection(Notifications, persisted, notification => notification.Id);
         UpdateUnreadState();
         HydrateBoopAttachments(Notifications);
@@ -10423,6 +10430,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             .ToList();
 
         SyncCollection(Notifications, desired, notification => notification.Id);
+        foreach (var notification in Notifications)
+        {
+            notification.MarkPastReplyWindow(!IsInsideReplyWindow(notification));
+        }
+
         UpdateUnreadState();
         PersistNotifications();
         HydrateBoopAttachments(Notifications);

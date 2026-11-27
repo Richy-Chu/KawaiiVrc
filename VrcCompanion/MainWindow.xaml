@@ -1263,6 +1263,16 @@
                                                     <TextBlock Text="{Binding SenderLine}"
                                                                Style="{StaticResource MutedText}"
                                                                Margin="0,4,0,0" />
+                                                    <Border Style="{StaticResource TagChip}"
+                                                            BorderBrush="{StaticResource RedBrush}"
+                                                            HorizontalAlignment="Left"
+                                                            Margin="0,5,0,0"
+                                                            ToolTip="{Binding ReplyWindowClosedHint}"
+                                                            Visibility="{Binding IsPastReplyWindow, Converter={StaticResource BoolToVis}}">
+                                                        <TextBlock Text="REPLY WINDOW CLOSED"
+                                                                   Style="{StaticResource TagText}"
+                                                                   Foreground="{StaticResource RedBrush}" />
+                                                    </Border>
                                                     <TextBlock Text="{Binding DetailsText}"
                                                                FontSize="10.5"
                                                                Foreground="{StaticResource DimBrush}"
@@ -1611,6 +1621,16 @@
                                     <TextBlock Text="{Binding ReceivedText}"
                                                Style="{StaticResource MutedText}"
                                                Margin="0,8,0,0" />
+                                    <Border Style="{StaticResource TagChip}"
+                                            BorderBrush="{StaticResource RedBrush}"
+                                            HorizontalAlignment="Left"
+                                            Margin="0,7,0,0"
+                                            ToolTip="{Binding Notification.ReplyWindowClosedHint}"
+                                            Visibility="{Binding Notification.IsPastReplyWindow, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock Text="REPLY WINDOW CLOSED"
+                                                   Style="{StaticResource TagText}"
+                                                   Foreground="{StaticResource RedBrush}" />
+                                    </Border>
 
                                     <Border Height="1" Background="{StaticResource SoftBorderBrush}" Margin="0,16,0,12" />
 

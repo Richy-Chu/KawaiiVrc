@@ -209,6 +209,32 @@ public sealed class NotificationItem : ViewModelBase
     /// <summary>World invites and invite requests can be declined or cleared.</summary>
     public bool CanDecline => IsInvite || IsInviteRequest;
 
+    private bool _isPastReplyWindow;
+
+    /// <summary>
+    /// VRChat accepts a reply only for the newest 40 notifications. Invites are kept here
+    /// between launches, so a row can still be listed long after VRChat stopped answering
+    /// it; the list marks that row before "Decline with message" is pressed.
+    /// </summary>
+    public bool IsPastReplyWindow => _isPastReplyWindow;
+
+    public string ReplyWindowClosedHint =>
+        "VRChat only accepts replies to its newest 40 notifications, so this invite can no " +
+        "longer take a message. Decline still removes it.";
+
+    /// <summary>Marks (or clears) the reply-window warning; only world invites and requests can carry it.</summary>
+    public void MarkPastReplyWindow(bool pastWindow)
+    {
+        var value = pastWindow && CanDecline;
+        if (_isPastReplyWindow == value)
+        {
+            return;
+        }
+
+        _isPastReplyWindow = value;
+        OnPropertyChanged(nameof(IsPastReplyWindow));
+    }
+
     /// <summary>The raw notification is what gets persisted between launches.</summary>
     public VrcNotification Snapshot => _notification;
 

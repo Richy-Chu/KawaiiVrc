@@ -162,6 +162,51 @@ public class PopupRowRenderTests
     }
 
     [Fact]
+    public void AnInvitePastTheReplyWindowShowsItsMarkerInTheList()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var shell = new MainViewModel(IsolatedApi());
+            TestHooks.SetLoggedIn(shell);
+
+            var expired = new NotificationItem(new VrcNotification
+            {
+                Id = "not_expired_row",
+                Type = "invite",
+                SenderUserId = "usr_sender",
+                SenderUsername = "Sender"
+            });
+            expired.MarkPastReplyWindow(true);
+            var fresh = new NotificationItem(new VrcNotification
+            {
+                Id = "not_fresh_row",
+                Type = "invite",
+                SenderUserId = "usr_sender",
+                SenderUsername = "Sender"
+            });
+            shell.NotificationsPage.SetSource(new[] { expired, fresh }, resetPage: true);
+
+            var window = CreateWindow(shell);
+            window.Show();
+            try
+            {
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "notifications");
+                Pump(window);
+
+                // Exactly the expired row carries the marker; the newest invite does not.
+                var markers = FindVisualChildren<TextBlock>(window)
+                    .Where(text => text.Text == "REPLY WINDOW CLOSED" && text.IsVisible)
+                    .ToList();
+                Assert.Single(markers);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void AGroupInstanceRowRealisesItsJoinButton()
     {
         WpfTestHost.Run(() =>
