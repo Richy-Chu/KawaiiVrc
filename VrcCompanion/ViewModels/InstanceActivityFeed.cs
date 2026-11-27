@@ -248,8 +248,14 @@ public sealed class InstanceActivityFeed : ViewModelBase
 
             if (item.IsAvatarChange)
             {
-                // The person's picture is what the Activity page shows; the changed
-                // avatar's picture is the fallback for a player with no profile picture.
+                // The row names the avatar it is about, so that avatar's picture is the
+                // one it draws. The person's picture only fills the slot when the avatar
+                // has no public image - never in place of the avatar.
+                if (_avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
+                {
+                    item.SetAvatarImage(image);
+                }
+
                 var person = _personImageResolver?.Invoke(entry.UserId, entry.DisplayName);
                 if (string.IsNullOrWhiteSpace(person) &&
                     _personImages.TryGetValue(PersonKey(entry.UserId, entry.DisplayName), out var fetched))
@@ -260,10 +266,6 @@ public sealed class InstanceActivityFeed : ViewModelBase
                 if (!string.IsNullOrWhiteSpace(person))
                 {
                     item.SetPersonImage(person);
-                }
-                else if (_avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
-                {
-                    item.SetAvatarImage(image);
                 }
             }
 
@@ -304,9 +306,9 @@ public sealed class InstanceActivityFeed : ViewModelBase
     }
 
     /// <summary>
-    /// Resolves a picture for the avatar rows on screen: the person's own picture first
-    /// (what the Activity page draws), then the switched avatar's picture. Each id and
-    /// each name is looked up once and reused by every row that carries it.
+    /// Resolves a picture for the avatar rows on screen: the switched avatar's picture
+    /// first, the person's own picture only when that avatar has none. Each id and each
+    /// name is looked up once and reused by every row that carries it.
     /// </summary>
     private void ResolvePageAvatarImages()
     {
@@ -317,21 +319,17 @@ public sealed class InstanceActivityFeed : ViewModelBase
 
         foreach (var item in ActivityPage.Items)
         {
-            if (!item.IsAvatarChange ||
-                item.HasAvatarImage ||
-                string.IsNullOrWhiteSpace(item.AvatarName))
+            if (!item.IsAvatarChange || string.IsNullOrWhiteSpace(item.AvatarName))
             {
                 continue;
             }
 
+            // A person picture on the row is only a placeholder: the avatar lookup still
+            // has to run, or that fallback would be mistaken for the avatar.
+
             var userId = item.Activity.UserId;
             var displayName = item.Activity.DisplayName;
             var personKey = PersonKey(userId, displayName);
-            if (_personImages.TryGetValue(personKey, out var knownPerson))
-            {
-                item.SetPersonImage(knownPerson);
-                continue;
-            }
 
             var key = AvatarKey(item.AvatarName, item.AvatarAuthor);
             if (_avatarImages.TryGetValue(key, out var knownAvatar))
@@ -340,8 +338,15 @@ public sealed class InstanceActivityFeed : ViewModelBase
                 continue;
             }
 
-            // Both run: the person's picture wins when it answers, and the avatar's
-            // picture covers a player VRChat's user search cannot find.
+            // A person picture already on the row is only a placeholder for this slot.
+            if (!item.HasAvatarImage &&
+                _personImages.TryGetValue(personKey, out var knownPerson))
+            {
+                item.SetPersonImage(knownPerson);
+            }
+
+            // Both run: the avatar's picture replaces the person fallback when it
+            // answers, and the person's picture covers a private or unlisted avatar.
             if (_personLookup is not null &&
                 !string.IsNullOrWhiteSpace(displayName) &&
                 _personImageLookups.Add(personKey))

@@ -667,7 +667,7 @@ public class InstanceActivityTests
     }
 
     [Fact]
-    public void ThePersonsPictureWinsOverTheChangedAvatar()
+    public void TheChangedAvatarsPictureWinsOverThePerson()
     {
         const string person = "https://files.vrchat.cloud/person.png";
         var avatarLookups = 0;
@@ -682,15 +682,45 @@ public class InstanceActivityTests
 
         feed.Apply(new[] { AvatarRow("Someone", "Kitten", "Maker", 1) });
 
-        // The Activity page draws the person, not the avatar they switched to, so the
-        // instance box must show the same face and skip the avatar lookup entirely.
+        // The row says "now wearing Kitten", so it draws Kitten. A person icon must
+        // never be presented as the avatar the log named.
         var row = Assert.Single(feed.Activity);
-        Assert.Equal(person, row.AvatarImageUrl);
-        Assert.Equal(0, avatarLookups);
+        Assert.Equal("https://files.vrchat.cloud/avatar.png", row.AvatarImageUrl);
+        Assert.Equal(1, avatarLookups);
     }
 
     [Fact]
-    public void ANameOnlyRowStillGetsThePersonsPictureTheActivityPageWouldDraw()
+    public void TheAvatarsPictureReplacesThePersonPictureWhenItArrivesLater()
+    {
+        const string person = "https://files.vrchat.cloud/person.png";
+        var feed = new InstanceActivityFeed();
+        feed.SetPersonImageResolver((_, _) => person);
+        feed.Apply(new[] { AvatarRow("Someone", "Kitten", "Maker", 1) });
+
+        var row = Assert.Single(feed.Activity);
+        Assert.Equal(person, row.AvatarImageUrl);
+
+        feed.SetAvatarImageResolver((_, _) =>
+            Task.FromResult<string?>("https://files.vrchat.cloud/avatar.png"));
+
+        // The fallback fills the slot only until the avatar's own picture answers.
+        Assert.Equal("https://files.vrchat.cloud/avatar.png", row.AvatarImageUrl);
+    }
+
+    [Fact]
+    public void TheAvatarPopupGetsTheAvatarsOwnPicture()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.SetAvatarImageResolver((_, _) =>
+            Task.FromResult<string?>("https://files.vrchat.cloud/avatar.png"));
+        feed.Apply(new[] { AvatarRow("Someone", "Kitten", "Maker", 1) });
+
+        var row = Assert.Single(feed.Activity);
+        Assert.Equal("https://files.vrchat.cloud/avatar.png", row.AvatarEntry!.AvatarUrl);
+    }
+
+    [Fact]
+    public void ANameOnlyRowFallsBackToThePersonsPictureWhenTheAvatarHasNone()
     {
         const string person = "https://files.vrchat.cloud/person.png";
         var askedId = "not asked";
@@ -702,8 +732,7 @@ public class InstanceActivityTests
             askedName = displayName;
             return Task.FromResult<string?>(person);
         });
-        feed.SetAvatarImageResolver((_, _) =>
-            Task.FromResult<string?>("https://files.vrchat.cloud/avatar.png"));
+        feed.SetAvatarImageResolver((_, _) => Task.FromResult<string?>(null));
 
         // VRChat's switch line carried no user id, so the roster cannot supply a face.
         feed.Apply(new[] { AvatarRow("ISHIKAWA", "Private Avatar", "Maker", 1, userId: string.Empty) });

@@ -270,13 +270,15 @@ public sealed class ActivityFeedService
 
     /// <summary>
     /// Avatar-change rows must show the avatar itself, not the user icon that
-    /// normally represents a friend in the timeline.
+    /// normally represents a friend in the timeline. There is deliberately no user-icon
+    /// fallback: presenting that icon as the avatar made a private or stale avatar look
+    /// like the face the player was wearing.
     /// </summary>
     private static string AvatarChangeThumbnailUrl(VrcUser friend)
         => ImageUrlHelper.PickAvatarThumbnailUrl(
                friend.CurrentAvatarThumbnailImageUrl,
                friend.CurrentAvatarImageUrl,
-               AvatarThumbnailUrl(friend),
+               null,
                null,
                128) ?? string.Empty;
 

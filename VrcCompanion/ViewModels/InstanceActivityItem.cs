@@ -110,8 +110,10 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         : null;
 
     /// <summary>
-    /// The round picture the row draws: the person's own picture first (what the
-    /// Activity page draws), the switched avatar's picture when the person has none.
+    /// The round picture the row draws: the avatar the switch named, and only when that
+    /// avatar has no public picture, the person's own picture. The person icon must never
+    /// stand in for the avatar - that is what made a row that says "now wearing X" show
+    /// a face that is not X.
     /// </summary>
     public string AvatarImageUrl => _avatarImageUrl;
 
@@ -139,27 +141,11 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// The person's own picture, which is what the Activity page draws on an avatar row.
-    /// It always wins over the switched avatar's picture, so the instance box and the
-    /// Activity page show the same face for the same switch.
+    /// The person's own picture, used only to fill a slot the avatar's picture could not.
+    /// It never replaces an avatar picture, so a row can correct a fallback when the real
+    /// avatar image arrives.
     /// </summary>
     public void SetPersonImage(string? url)
-    {
-        if (!IsAvatarChange)
-        {
-            return;
-        }
-
-        var next = url?.Trim() ?? string.Empty;
-        if (next.Length > 0)
-        {
-            _showsPersonPicture = true;
-            ApplyImage(next);
-        }
-    }
-
-    /// <summary>The switched avatar's own picture, used only when the person has none.</summary>
-    public void SetAvatarImage(string? url)
     {
         if (!IsAvatarChange)
         {
@@ -172,8 +158,34 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
             return;
         }
 
+        _showsPersonPicture = true;
+        ApplyImage(next);
+    }
+
+    /// <summary>
+    /// The switched avatar's own picture. It always wins over a person picture, so the
+    /// row shows the avatar it names whenever VRChat has a picture of it.
+    /// </summary>
+    public void SetAvatarImage(string? url)
+    {
+        if (!IsAvatarChange)
+        {
+            return;
+        }
+
+        var next = url?.Trim() ?? string.Empty;
+        if (next.Length == 0)
+        {
+            return;
+        }
+
         _showsPersonPicture = false;
         ApplyImage(next);
+        if (_avatarEntry is { } entry)
+        {
+            // The popup draws this picture while the record itself loads.
+            entry.AvatarUrl = next;
+        }
     }
 
     private void ApplyImage(string next)
@@ -229,6 +241,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         AvatarId = Activity.AvatarId,
         AvatarName = AvatarName,
         AvatarAuthor = string.IsNullOrWhiteSpace(AvatarAuthor) ? null : AvatarAuthor,
+        AvatarUrl = _showsPersonPicture ? string.Empty : _avatarImageUrl,
         Details = AvatarName.Length == 0 ? "changed avatar" : "changed avatar · " + AvatarName,
         Timestamp = Activity.At
     };

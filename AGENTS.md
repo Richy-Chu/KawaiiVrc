@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1109 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1111 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.150**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.151**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,24 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.151 changed
+
+- **The avatar row draws the avatar, the person picture is only a filler.** 1.0.148/1.0.150 made
+  the person's picture win, so a row that says "now wearing hexpie outlaw" could show a face that
+  is not hexpie outlaw. `InstanceActivityItem.SetAvatarImage` now always wins and
+  `SetPersonImage` only fills an empty slot; `InstanceActivityFeed.Rebuild` and
+  `ResolvePageAvatarImages` try the avatar first and the person last. The avatar lookup must
+  still start when a person picture is already on the row - the guard that skipped
+  `HasAvatarImage` rows is what kept the fallback on screen. `ActivityEntry.AvatarUrl` is filled
+  from the avatar picture (never the person's), so the View avatar popup shows the avatar.
+- **Activity's detected avatar changes no longer fall back to the user icon.**
+  `ActivityFeedService.AvatarChangeThumbnailUrl` used the friend's profile icon as its last
+  resort, which is how a private or stale avatar came to look like the face the player wore.
+  It returns an empty picture instead.
+- **Tests: 1111.** `InstanceActivityTests` 33 (renamed the precedence case; new: an avatar
+  picture replaces a person fallback that arrived first, and the avatar popup gets the avatar's
+  own picture).
 
 ### What 1.0.150 changed
 
