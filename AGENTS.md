@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1099 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1103 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.144**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.145**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,27 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.145 changed
+
+- **An avatar row's icon is the avatar.** `InstanceActivityItem.AvatarImageUrl` now carries the
+  switched-to avatar's picture, and `Controls/InstanceActivityView` draws it in the badge column in
+  place of the AVATAR chip, the way the Activity page draws an "Avatar changed" row. The chip stays
+  while the picture is unresolved (or when there is none), so the column is never blank.
+- **The picture comes from the Activity page's own lookup, not a second one.**
+  `ActivityFeedViewModel.ResolveLoggedAvatarImageAsync(name, author)` reuses the search that page
+  already runs for logged switches: the shared `AvatarLookupCache` first, then the public avatar
+  index, VRChat's search and the other indexes. The public index remains the source of truth so a
+  private same-name duplicate never wins. `MainViewModel` hands that method to both instance feeds
+  (`ContextViewModel.ActivityFeed` and `InstanceViewModel.ActivityFeed`); the world dialog shares
+  the Instance tab's feed, so all three surfaces follow.
+- **Only visible rows are looked up, and each name once.** `InstanceActivityFeed` resolves the rows
+  on the current page (and again when paging moves the page token), caches the URL by name and
+  author, and applies it to every row that names that avatar. A failed lookup is not retried, and
+  no lookup runs when no resolver is installed (the bare feeds in tests).
+- **Tests: 1103.** `InstanceActivityTests` pins the image replacing the chip on an avatar row only,
+  one lookup for two rows with the same avatar, the chip remaining for an unresolved avatar, and
+  the shared resolver returning a cached picture with zero HTTP requests.
 
 ### What 1.0.144 changed
 

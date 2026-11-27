@@ -671,6 +671,103 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             : known.ImageUrl;
     }
 
+    /// <summary>
+    /// The picture for an avatar VRChat's log named. The instance activity box uses
+    /// this for its avatar rows, so a switch resolves exactly the way this page's own
+    /// logged-switch rows resolve it instead of growing a second lookup.
+    /// </summary>
+    public async Task<string?> ResolveLoggedAvatarImageAsync(string avatarName, string? avatarAuthor)
+    {
+        if (string.IsNullOrWhiteSpace(avatarName))
+        {
+            return null;
+        }
+
+        var remembered = AvatarLookupCache.FindByName(avatarName);
+        if (remembered is not null)
+        {
+            return AvatarImage(remembered);
+        }
+
+        var match = await FindLoggedAvatarAsync(avatarName, avatarAuthor);
+        return match is null ? null : AvatarImage(match);
+    }
+
+    /// <summary>
+    /// Finds the public avatar VRChat's log named. The public index is the source of
+    /// truth for a public avatar name: VRChat's marketplace search can return a private
+    /// same-name duplicate, which used to make a public avatar look private.
+    /// </summary>
+    private async Task<Avatar?> FindLoggedAvatarAsync(string avatarName, string? avatarAuthor)
+    {
+        Avatar? match = null;
+        try
+        {
+            var primary = await _api.SearchAllCommunityAvatarsAsync(
+                avatarName,
+                limit: 25,
+                providerLimit: 25,
+                providers: new[] { "avtrDB" });
+            match = PickMatchingAvatar(primary, avatarName, avatarAuthor);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"log avatar primary index {avatarName}: {ex.Message}");
+        }
+
+        if (match is null)
+        {
+            try
+            {
+                var result = await _api.SearchAvatarsAsync(new AvatarFilter
+                {
+                    SearchTerm = avatarName,
+                    PageSize = 50,
+                    ReleaseStatus = "all"
+                });
+                match = PickMatchingAvatar(result.Avatars, avatarName, avatarAuthor);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"log avatar VRChat search {avatarName}: {ex.Message}");
+            }
+        }
+
+        if (match is null)
+        {
+            try
+            {
+                var community = await _api.SearchAllCommunityAvatarsAsync(
+                    avatarName,
+                    limit: 50,
+                    providerLimit: 50);
+                match = PickMatchingAvatar(community, avatarName, avatarAuthor);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"log avatar index search {avatarName}: {ex.Message}");
+            }
+        }
+
+        if (match is null || string.IsNullOrWhiteSpace(match.Id))
+        {
+            return null;
+        }
+
+        AvatarLookupCache.Remember(match);
+        return match;
+    }
+
+    private static string AvatarImage(Avatar avatar)
+    {
+        var image = !string.IsNullOrWhiteSpace(avatar.ThumbnailImageUrl)
+            ? avatar.ThumbnailImageUrl
+            : avatar.ImageUrl;
+        return string.IsNullOrWhiteSpace(image)
+            ? string.Empty
+            : ImageUrlHelper.ToThumbnailUrl(image, 256) ?? image;
+    }
+
     private void QueueLoggedAvatarLookup(
         ActivityEntry entry,
         string avatarName,
@@ -718,65 +815,12 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 }
             }
 
-            Avatar? match = null;
-            // The public avatar index is the source of truth for a public
-            // avatar name. VRChat's marketplace search can return a private
-            // same-name duplicate, which used to become this row's record and
-            // made a public avatar look private.
-            try
-            {
-                var primary = await _api.SearchAllCommunityAvatarsAsync(
-                    avatarName,
-                    limit: 25,
-                    providerLimit: 25,
-                    providers: new[] { "avtrDB" });
-                match = PickMatchingAvatar(primary, avatarName, avatarAuthor);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"log avatar primary index {avatarName}: {ex.Message}");
-            }
-
+            var match = await FindLoggedAvatarAsync(avatarName, avatarAuthor);
             if (match is null)
-            {
-                try
-                {
-                    var result = await _api.SearchAvatarsAsync(new AvatarFilter
-                    {
-                        SearchTerm = avatarName,
-                        PageSize = 50,
-                        ReleaseStatus = "all"
-                    });
-                    match = PickMatchingAvatar(result.Avatars, avatarName, avatarAuthor);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"log avatar VRChat search {avatarName}: {ex.Message}");
-                }
-            }
-
-            if (match is null)
-            {
-                try
-                {
-                    var community = await _api.SearchAllCommunityAvatarsAsync(
-                        avatarName,
-                        limit: 50,
-                        providerLimit: 50);
-                    match = PickMatchingAvatar(community, avatarName, avatarAuthor);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"log avatar index search {avatarName}: {ex.Message}");
-                }
-            }
-
-            if (match is null || string.IsNullOrWhiteSpace(match.Id))
             {
                 return;
             }
 
-            AvatarLookupCache.Remember(match);
             entry.AvatarId = match.Id;
             var image = !string.IsNullOrWhiteSpace(match.ThumbnailImageUrl)
                 ? match.ThumbnailImageUrl

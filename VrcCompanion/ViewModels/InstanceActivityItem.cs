@@ -1,3 +1,5 @@
+using System;
+using System.ComponentModel;
 using System.Globalization;
 using System.Windows.Media;
 using VrcCompanion.Models;
@@ -9,7 +11,7 @@ namespace VrcCompanion.ViewModels;
 /// One row of the instance activity box. It wraps the line VRChat's log wrote, so the
 /// row shows the log's own time and never invents an event.
 /// </summary>
-public sealed class InstanceActivityItem
+public sealed class InstanceActivityItem : INotifyPropertyChanged
 {
     private static readonly Brush JoinBrush = MakeBrush("#3DDC97");
     private static readonly Brush LeaveBrush = MakeBrush("#8B95AA");
@@ -17,6 +19,9 @@ public sealed class InstanceActivityItem
     private static readonly Brush AvatarBrush = MakeBrush("#F472B6");
 
     private ActivityEntry? _avatarEntry;
+    private string _avatarImageUrl = string.Empty;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 
     public InstanceActivityItem(VrChatLogActivity activity, bool isSelf = false)
     {
@@ -102,6 +107,47 @@ public sealed class InstanceActivityItem
     public ActivityEntry? AvatarEntry => IsAvatarChange
         ? _avatarEntry ??= BuildAvatarEntry()
         : null;
+
+    /// <summary>
+    /// The avatar's own picture, filled in once the shared lookup resolves the name
+    /// VRChat's log wrote. It is what the Activity page draws on its switch rows.
+    /// </summary>
+    public string AvatarImageUrl => _avatarImageUrl;
+
+    public bool HasAvatarImage => IsAvatarChange && _avatarImageUrl.Length > 0;
+
+    /// <summary>Avatar rows draw the avatar in place of the AVATAR chip once it is known.</summary>
+    public bool ShowAvatarImage => HasAvatarImage;
+
+    /// <summary>
+    /// Every other row, and an avatar row still waiting for its picture, keeps the
+    /// kind chip so the badge column is never blank.
+    /// </summary>
+    public bool ShowKindPill => !HasAvatarImage;
+
+    public string AvatarImageTooltip => AvatarName.Length == 0
+        ? "The avatar this player switched to"
+        : $"The avatar this player switched to: {AvatarName}";
+
+    public void SetAvatarImage(string? url)
+    {
+        if (!IsAvatarChange)
+        {
+            return;
+        }
+
+        var next = url?.Trim() ?? string.Empty;
+        if (string.Equals(_avatarImageUrl, next, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _avatarImageUrl = next;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvatarImageUrl)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasAvatarImage)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowAvatarImage)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowKindPill)));
+    }
 
     /// <summary>True when the row can open an avatar popup (the log gave a name or an id).</summary>
     public bool CanOpenAvatar => AvatarEntry?.CanOpenAvatar == true;

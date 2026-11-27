@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using VrcCompanion.Services;
 
 namespace VrcCompanion.ViewModels;
@@ -20,10 +22,22 @@ public sealed class InstanceActivityFeed : ViewModelBase
     private FilterOption _selectedActivityFilter;
     private string _selfUserId = string.Empty;
     private string _selfDisplayName = string.Empty;
+    private readonly Dictionary<string, string> _avatarImages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _avatarImageLookups = new(StringComparer.OrdinalIgnoreCase);
+    private Func<string, string?, Task<string?>>? _avatarImageResolver;
 
     public InstanceActivityFeed()
     {
         _selectedActivityFilter = ActivityFilters[0];
+        // Paging brings a different set of avatar rows into view, and only the rows
+        // the reader can see are worth a picture lookup.
+        ActivityPage.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ActivityPage.PageToken))
+            {
+                ResolvePageAvatarImages();
+            }
+        };
     }
 
     /// <summary>The rows the selected filter keeps, newest first.</summary>
@@ -108,6 +122,17 @@ public sealed class InstanceActivityFeed : ViewModelBase
     }
 
     /// <summary>
+    /// The lookup that turns an avatar name into its picture. The shell hands in the
+    /// Activity page's own resolver, so both boxes show the same avatar for the same
+    /// switch instead of two searches fighting over the same name.
+    /// </summary>
+    public void SetAvatarImageResolver(Func<string, string?, Task<string?>>? resolver)
+    {
+        _avatarImageResolver = resolver;
+        ResolvePageAvatarImages();
+    }
+
+    /// <summary>
     /// True when this event is the signed-in account's. When both ids are known the id
     /// decides, so another player with the same display name is never tagged as you.
     /// </summary>
@@ -143,6 +168,11 @@ public sealed class InstanceActivityFeed : ViewModelBase
             if (!_cache.TryGetValue(key, out var item))
             {
                 item = new InstanceActivityItem(entry, IsSelf(entry));
+                if (item.IsAvatarChange &&
+                    _avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
+                {
+                    item.SetAvatarImage(image);
+                }
             }
 
             kept[key] = item;
@@ -176,9 +206,82 @@ public sealed class InstanceActivityFeed : ViewModelBase
         }
 
         ActivityPage.SetSource(ordered, resetPage);
+        ResolvePageAvatarImages();
         OnPropertyChanged(nameof(HasActivity));
         OnPropertyChanged(nameof(ActivityText));
     }
+
+    /// <summary>
+    /// Resolves the avatar picture for the rows on screen. A name is looked up once: the
+    /// result is reused by every row (and every later page) that names the same avatar.
+    /// </summary>
+    private void ResolvePageAvatarImages()
+    {
+        if (_avatarImageResolver is null)
+        {
+            return;
+        }
+
+        foreach (var item in ActivityPage.Items)
+        {
+            if (!item.IsAvatarChange ||
+                item.HasAvatarImage ||
+                string.IsNullOrWhiteSpace(item.AvatarName))
+            {
+                continue;
+            }
+
+            var key = AvatarKey(item.AvatarName, item.AvatarAuthor);
+            if (_avatarImages.TryGetValue(key, out var known))
+            {
+                item.SetAvatarImage(known);
+                continue;
+            }
+
+            if (_avatarImageLookups.Add(key))
+            {
+                _ = ResolveAvatarImageAsync(item.AvatarName, item.AvatarAuthor, key);
+            }
+        }
+    }
+
+    private async Task ResolveAvatarImageAsync(string avatarName, string avatarAuthor, string key)
+    {
+        var resolver = _avatarImageResolver;
+        if (resolver is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var url = await resolver(
+                avatarName,
+                string.IsNullOrWhiteSpace(avatarAuthor) ? null : avatarAuthor);
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
+
+            _avatarImages[key] = url;
+            foreach (var item in Activity)
+            {
+                if (item.IsAvatarChange &&
+                    string.Equals(item.AvatarName, avatarName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.AvatarAuthor, avatarAuthor, StringComparison.OrdinalIgnoreCase))
+                {
+                    item.SetAvatarImage(url);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"instance avatar image {avatarName}: {ex.Message}");
+        }
+    }
+
+    private static string AvatarKey(string avatarName, string avatarAuthor)
+        => avatarName.Trim() + "\u0001" + (avatarAuthor ?? string.Empty).Trim();
 
     private static bool MatchesFilter(VrChatLogActivityKind kind, string filter) => filter switch
     {

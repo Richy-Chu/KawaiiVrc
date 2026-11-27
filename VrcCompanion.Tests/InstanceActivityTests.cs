@@ -604,6 +604,89 @@ public class InstanceActivityTests
         });
     }
 
+    [Fact]
+    public void AnAvatarRowShowsTheAvatarInsteadOfTheChip()
+    {
+        const string picture = "https://files.vrchat.cloud/kitten.png";
+        var feed = new InstanceActivityFeed();
+        feed.SetAvatarImageResolver((name, _) => Task.FromResult<string?>(
+            string.Equals(name, "Kitten", StringComparison.Ordinal) ? picture : null));
+
+        feed.Apply(new[]
+        {
+            AvatarRow("Someone", "Kitten", "Maker", 1),
+            Entry(VrChatLogActivityKind.Joined, "Other", 2)
+        });
+
+        // The badge column is the avatar itself, the way the Activity page draws a switch.
+        var avatar = feed.Activity.Single(row => row.IsAvatarChange);
+        Assert.True(avatar.ShowAvatarImage);
+        Assert.False(avatar.ShowKindPill);
+        Assert.Equal(picture, avatar.AvatarImageUrl);
+
+        // A join keeps its own chip: only avatar rows lose it.
+        var joined = feed.Activity.Single(row => !row.IsAvatarChange);
+        Assert.False(joined.ShowAvatarImage);
+        Assert.True(joined.ShowKindPill);
+    }
+
+    [Fact]
+    public void OneAvatarPictureIsLookedUpOnceForAllItsRows()
+    {
+        var calls = 0;
+        var feed = new InstanceActivityFeed();
+        feed.SetAvatarImageResolver((_, _) =>
+        {
+            calls++;
+            return Task.FromResult<string?>("https://files.vrchat.cloud/kitten.png");
+        });
+
+        feed.Apply(new[]
+        {
+            AvatarRow("A", "Kitten", "Maker", 1),
+            AvatarRow("B", "Kitten", "Maker", 2)
+        });
+
+        Assert.Equal(1, calls);
+        Assert.All(feed.Activity, row => Assert.True(row.HasAvatarImage));
+    }
+
+    [Fact]
+    public void AnAvatarWithoutAPublicPictureKeepsTheChip()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.SetAvatarImageResolver((_, _) => Task.FromResult<string?>(null));
+        feed.Apply(new[] { AvatarRow("Someone", "Private Avatar", "Maker", 1) });
+
+        var row = Assert.Single(feed.Activity);
+        Assert.False(row.HasAvatarImage);
+        Assert.True(row.ShowKindPill);
+    }
+
+    [Fact]
+    public async Task TheSharedLookupTurnsAnAvatarNameIntoItsPictureWithoutAskVrChat()
+    {
+        // The instance feed is handed this exact method, so a name the Activity page
+        // already resolved must come back with a picture and zero requests.
+        var avatarName = "ActivityIcon " + Guid.NewGuid().ToString("N");
+        AvatarLookupCache.Remember(new Avatar
+        {
+            Id = "avtr_55555555-5555-5555-5555-555555555555",
+            Name = avatarName,
+            AuthorName = "Maker",
+            ThumbnailImageUrl = "https://files.vrchat.cloud/api/1/file/file_icon/1/file"
+        });
+
+        using var handler = new CountingHandler();
+        using var api = new VrcApiClient(null, handler);
+        var activity = new ActivityFeedViewModel(api, ActivityStore.Shared);
+
+        var image = await activity.ResolveLoggedAvatarImageAsync(avatarName, "Maker");
+
+        Assert.False(string.IsNullOrWhiteSpace(image));
+        Assert.Equal(0, handler.Requests);
+    }
+
     private static VrChatLogActivity AvatarRow(
         string name,
         string avatar,

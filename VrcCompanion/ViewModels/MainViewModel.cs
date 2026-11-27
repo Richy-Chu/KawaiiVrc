@@ -2848,6 +2848,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // section loads itself when it is opened, and the persisted store is
         // still readable by the Media page without that import.
         InstanceViewModel = new InstanceViewModel(_api, _images, _logPlayerService);
+        // The instance box's avatar rows show the avatar a player switched to, using
+        // the same public-avatar search as the Activity page's logged-switch rows.
+        ContextViewModel.ActivityFeed.SetAvatarImageResolver(
+            ActivityFeedViewModel.ResolveLoggedAvatarImageAsync);
+        InstanceViewModel.ActivityFeed.SetAvatarImageResolver(
+            ActivityFeedViewModel.ResolveLoggedAvatarImageAsync);
         InstanceViewModel.PlayerAvatarChanged += (previous, current) =>
         {
             if (Friends.Any(friend =>

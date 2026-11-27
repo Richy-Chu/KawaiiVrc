@@ -152,15 +152,34 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <Border Background="{StaticResource AccentSoftBrush}"
-                                    CornerRadius="6"
-                                    Padding="6,2"
-                                    VerticalAlignment="Center">
-                                <TextBlock Text="{Binding KindLabel}"
-                                           FontSize="8"
-                                           FontWeight="SemiBold"
-                                           Foreground="{Binding KindBrush}" />
-                            </Border>
+                            <Grid VerticalAlignment="Center">
+                                <!-- Avatar rows show the avatar itself, like the Activity page; the
+                                     AVATAR chip stays until its picture is resolved. -->
+                                <Border Background="{StaticResource AccentSoftBrush}"
+                                        CornerRadius="6"
+                                        Padding="6,2"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding ShowKindPill, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding KindLabel}"
+                                               FontSize="8"
+                                               FontWeight="SemiBold"
+                                               Foreground="{Binding KindBrush}" />
+                                </Border>
+                                <Border Width="32"
+                                        Height="32"
+                                        CornerRadius="16"
+                                        Background="{StaticResource AccentGradientPink}"
+                                        ToolTip="{Binding AvatarImageTooltip}"
+                                        Visibility="{Binding ShowAvatarImage, Converter={StaticResource BoolToVis}}">
+                                    <Border Margin="1.5"
+                                            CornerRadius="14.5"
+                                            Background="{StaticResource InputBrush}">
+                                        <controls:AsyncImage SourceUrl="{Binding AvatarImageUrl}"
+                                                             CornerRadius="14.5"
+                                                             DecodeWidth="64" />
+                                    </Border>
+                                </Border>
+                            </Grid>
                             <StackPanel Grid.Column="1" Margin="8,0,8,0" VerticalAlignment="Center">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
