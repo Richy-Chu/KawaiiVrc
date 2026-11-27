@@ -36,8 +36,16 @@ public sealed class VrcInstance
     [JsonPropertyName("type")]
     public string? Type { get; set; }
 
+    /// <summary>The discover feed's name for <see cref="Type"/>.</summary>
+    [JsonPropertyName("accessType")]
+    public string? AccessType { get; set; }
+
     [JsonPropertyName("region")]
     public string? Region { get; set; }
+
+    /// <summary>The discover feed repeats the region as the photon region.</summary>
+    [JsonPropertyName("photonRegion")]
+    public string? PhotonRegion { get; set; }
 
     [JsonPropertyName("ownerId")]
     public string? OwnerId { get; set; }

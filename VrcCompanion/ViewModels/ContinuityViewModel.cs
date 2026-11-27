@@ -903,7 +903,7 @@ public sealed class ContinuityViewModel : ViewModelBase
 
         _store.SaveNote(SelectedPerson.Person.PersonKey, SelectedPerson.Note);
         SelectedPerson.Person.LocalNote = SelectedPerson.Note;
-        NoteStatus = "Saved locally at " + DateTimeOffset.Now.ToString("g", CultureInfo.CurrentCulture) + ".";
+        NoteStatus = "Saved locally at " + DateTimeOffset.Now.ToString("MMM d, h:mm tt", CultureInfo.CurrentCulture) + ".";
         SelectedPerson.RefreshNote();
     }
 
@@ -1243,7 +1243,7 @@ public sealed class ContinuitySourceItem
 
     public string ImportedText => Source.ImportedAt is null
         ? "No import recorded"
-        : "Imported " + Source.ImportedAt.Value.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+        : "Imported " + Source.ImportedAt.Value.ToLocalTime().ToString("MMM d, h:mm tt", CultureInfo.CurrentCulture);
 
     public string StatsText => Source.Sessions == 0
         ? Source.Message

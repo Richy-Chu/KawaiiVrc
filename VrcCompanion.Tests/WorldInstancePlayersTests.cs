@@ -242,7 +242,9 @@ public class WorldInstancePlayersTests
 
         await dialog.ShowInstancePlayersAsync(instance);
 
-        Assert.DoesNotContain(handler.Paths, path => path.Contains("/instances/", StringComparison.Ordinal));
+        Assert.DoesNotContain(handler.Paths, path =>
+            path.Contains("/instances/", StringComparison.Ordinal) &&
+            !path.Contains("/instances/discover", StringComparison.Ordinal));
         Assert.True(instance.PlayersFromLiveRoster);
         Assert.Equal(3, instance.Players.Count);
         Assert.Equal("usr_me", instance.Players[0].UserId);
@@ -671,6 +673,78 @@ public class WorldInstancePlayersTests
         Assert.Equal("2 of 3", dialog.InstancesPage.PageText);
     }
 
+    [Fact]
+    public async Task ActiveInstancesIncludeEveryInstanceTheDiscoverFeedLists()
+    {
+        using var handler = new InstanceHandler
+        {
+            SlimInstances = new() { ("11111~region(us)", 3), ("22222~region(eu)", 1) },
+            DiscoveredInstances = new()
+            {
+                ("11111~region(us)", 9, "public"),
+                ("22222~region(eu)", 4, "friends"),
+                ("33333~region(jp)", 7, "public"),
+                ("44444~group(grp_public)~groupAccessType(public)", 2, "group")
+            }
+        };
+        using var api = new VrcApiClient(null, handler);
+        TestVrcUser(api);
+
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared);
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
+
+        // The world payload listed two instances; the discover feed listed four, and its
+        // head counts win over the world response's sample.
+        Assert.Equal(4, dialog.Instances.Count);
+        Assert.Equal(9, dialog.Instances.Single(item => item.InstanceId.StartsWith("11111")).Occupants);
+        Assert.Equal(4, dialog.Instances.Single(item => item.InstanceId.StartsWith("22222")).Occupants);
+        Assert.Contains(dialog.Instances, item => item.InstanceId.StartsWith("33333"));
+        Assert.Contains(dialog.Instances, item => item.InstanceId.StartsWith("44444"));
+
+        // Most crowded first, so the list reads like a room browser.
+        Assert.Equal(
+            new[] { "11111", "33333", "22222", "44444" },
+            dialog.Instances.Select(item => item.InstanceId[..5]));
+        Assert.Contains(handler.Paths, path =>
+            path.EndsWith("/instances/discover", StringComparison.Ordinal));
+        dialog.StopLiveRefresh();
+    }
+
+    [Fact]
+    public async Task ActiveInstancesRefreshWhileTheDialogStaysOpen()
+    {
+        using var handler = new InstanceHandler
+        {
+            SlimInstances = new() { ("11111~region(us)", 2) },
+            DiscoveredInstances = new() { ("11111~region(us)", 5, "public") }
+        };
+        using var api = new VrcApiClient(null, handler);
+        TestVrcUser(api);
+
+        var dialog = new WorldDialogViewModel(
+            new WorldItem(new VrcWorld { Id = WorldId, Name = "Popcorn Palace" }),
+            api,
+            ImageLoader.Shared);
+        await dialog.LoadAsync(forceRefresh: false, CancellationToken.None);
+        Assert.Single(dialog.Instances);
+
+        // Somebody opens another instance and the first one fills up.
+        handler.DiscoveredInstances = new()
+        {
+            ("11111~region(us)", 11, "public"),
+            ("55555~region(use)", 6, "public")
+        };
+        await dialog.RefreshInstancesAsync();
+
+        Assert.Equal(11, dialog.Instances.Single(item => item.InstanceId.StartsWith("11111")).Occupants);
+        Assert.Contains(dialog.Instances, item => item.InstanceId.StartsWith("55555"));
+        Assert.Equal(2, dialog.InstancesPage.Items.Count);
+        dialog.StopLiveRefresh();
+    }
+
     private static void TestVrcUser(VrcApiClient api)
         => TestHooks.SetCurrentUser(api, new VrcUser { Id = "usr_me", DisplayName = "Me" });
 
@@ -722,12 +796,37 @@ public class WorldInstancePlayersTests
         /// <summary>The world payload's visible instances; null is one row matching the focus.</summary>
         public List<(string InstanceId, int Occupants)>? SlimInstances { get; set; }
 
+        /// <summary>What the discover feed lists for the world; null is an empty feed.</summary>
+        public List<(string InstanceId, int Occupants, string Type)>? DiscoveredInstances { get; set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
             Paths.Add(path);
+
+            if (path.EndsWith("/instances/discover", StringComparison.Ordinal))
+            {
+                var discovered = DiscoveredInstances ?? new();
+                var rows = string.Join(
+                    ",",
+                    discovered.Select(instance => $$"""
+                        {
+                          "instanceId": "{{instance.InstanceId}}",
+                          "location": "{{WorldId}}:{{instance.InstanceId}}",
+                          "worldId": "{{WorldId}}",
+                          "n_users": {{instance.Occupants}},
+                          "userCount": {{instance.Occupants}},
+                          "capacity": 40,
+                          "region": "us",
+                          "type": "{{instance.Type}}"
+                        }
+                        """));
+                return await Json($$"""
+                    { "attributionId": "attr_test", "instances": [ {{rows}} ] }
+                    """);
+            }
 
             if (path.Contains("/instances/", StringComparison.Ordinal))
             {

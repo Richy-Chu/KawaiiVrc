@@ -1846,7 +1846,7 @@ public sealed class ModerationLogRow
     {
         When = entry.CreatedAt == default
             ? string.Empty
-            : entry.CreatedAt.ToLocalTime().ToString("d MMM yyyy HH:mm", CultureInfo.InvariantCulture);
+            : entry.CreatedAt.ToLocalTime().ToString("d MMM yyyy h:mm tt", CultureInfo.InvariantCulture);
         Actor = entry.ActorDisplayName;
         EventType = entry.EventType;
         Description = string.IsNullOrWhiteSpace(entry.Description) ? entry.EventType : entry.Description;

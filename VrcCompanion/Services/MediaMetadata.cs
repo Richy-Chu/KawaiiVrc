@@ -294,7 +294,7 @@ public sealed class MediaContext
 
     public bool HasSession => !string.IsNullOrWhiteSpace(SessionId);
 
-    public string SessionDateText => JoinedAt.ToLocalTime().ToString("MMM d, yyyy · HH:mm");
+    public string SessionDateText => JoinedAt.ToLocalTime().ToString("MMM d, yyyy · h:mm tt");
 
     public TimeSpan Duration => (LeftAt ?? LastSeenAt) - JoinedAt;
 
@@ -339,7 +339,7 @@ public sealed class MediaContext
     }
 
     public string SessionText => IsPhotoMetadata
-        ? $"Taken {JoinedAt.ToLocalTime():MMM d, yyyy · HH:mm}"
+        ? $"Taken {JoinedAt.ToLocalTime():MMM d, yyyy · h:mm tt}"
         : LeftAt is null
             ? $"Session still open · since {SessionDateText}"
             : $"Session · {SessionDateText} · {DurationText}";

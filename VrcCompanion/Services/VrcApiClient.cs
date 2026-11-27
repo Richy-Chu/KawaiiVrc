@@ -1034,6 +1034,14 @@ public sealed class VrcApiClient : IDisposable
     // ------------------------------------------------------- notifications
 
     /// <summary>
+    /// VRChat accepts a reply (decline or accept with a message) only for the newest
+    /// entries of the notification feed. Anything older answers 404 "Notification not
+    /// found" even though the row is still listed. There is no fixed time window: a
+    /// busy account can push an invite out of it within minutes.
+    /// </summary>
+    public const int ReplyableNotificationWindow = 40;
+
+    /// <summary>
     /// The combined notification feed. The legacy endpoint still carries
     /// friend requests and invites, while boops and other newer notification
     /// types only exist in NotificationV2. Legacy rows win when both feeds
@@ -1414,6 +1422,57 @@ public sealed class VrcApiClient : IDisposable
             _worldCache[worldId] = new CacheEntry<VrcWorld>(world, DateTimeOffset.UtcNow);
         }
         return world;
+    }
+
+    /// <summary>
+    /// Every active instance VRChat's discover feed lists for one world. A world response
+    /// only carries a short <c>slimInstances</c> sample, so this is what fills the world
+    /// dialog's Active instances card: public, friends-visible and group instances alike.
+    /// The feed caps a page at 50 and returns the most populated first.
+    /// </summary>
+    public async Task<IReadOnlyList<VrcInstance>> GetWorldInstancesAsync(
+        string worldId,
+        CancellationToken cancellationToken = default)
+    {
+        var body = await SendApiAsync(
+            HttpMethod.Get,
+            $"instances/discover?worldId={Uri.EscapeDataString(worldId)}&n=50&mode=active",
+            null,
+            cancellationToken);
+
+        var discovery = Deserialize<InstanceDiscoveryResponse>(body);
+        var instances = discovery?.Instances ?? DeserializeList<VrcInstance>(body).ToList();
+        foreach (var instance in instances)
+        {
+            if (string.IsNullOrWhiteSpace(instance.WorldId))
+            {
+                instance.WorldId = worldId;
+            }
+            if (string.IsNullOrWhiteSpace(instance.Location))
+            {
+                instance.Location = $"{instance.WorldId}:{instance.InstanceId}";
+            }
+            if (string.IsNullOrWhiteSpace(instance.Type))
+            {
+                instance.Type = instance.AccessType;
+            }
+            if (string.IsNullOrWhiteSpace(instance.Region))
+            {
+                instance.Region = instance.PhotonRegion;
+            }
+        }
+
+        return instances
+            .Where(instance => !string.IsNullOrWhiteSpace(instance.InstanceId))
+            .GroupBy(instance => instance.InstanceId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private sealed class InstanceDiscoveryResponse
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("instances")]
+        public List<VrcInstance> Instances { get; set; } = new();
     }
 
     /// <summary>

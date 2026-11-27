@@ -959,6 +959,47 @@ public class NotificationPersistenceTests : IDisposable
         Assert.Contains("not sent", shell.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void DeclineWithMessageRefusesAnInvitePastVrChatsNewestForty()
+    {
+        var handler = new CaptureHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.SetLoggedIn(shell);
+        TestHooks.SetCurrentUser(shell, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+
+        // VRChat answers replies only for the newest 40 notifications, so one invite
+        // behind 40 newer rows is already past its window even though it is hours old,
+        // not days: there is no fixed time limit.
+        var stale = Notification("not_stale", "invite");
+        stale.CreatedAtLegacy = DateTimeOffset.UtcNow.AddHours(-3);
+        var feed = new List<VrcNotification> { stale };
+        for (var index = 0; index < VrcApiClient.ReplyableNotificationWindow; index++)
+        {
+            var newer = Notification($"not_new_{index:00}", "invite");
+            newer.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-index);
+            feed.Add(newer);
+        }
+
+        TestHooks.UpdateNotifications(shell, feed);
+
+        var staleItem = shell.Notifications.Single(item => item.Id == "not_stale");
+        shell.DeclineNotificationWithMessageCommand.Execute(staleItem);
+
+        Assert.False(shell.IsResponseComposerOpen, "An expired invite should not open the composer.");
+        Assert.DoesNotContain(staleItem, shell.Notifications);
+        Assert.Contains("40", shell.ErrorMessage);
+        Assert.DoesNotContain(
+            handler.Requests,
+            item => item.Path == "POST api/1/invite/not_stale/response");
+
+        // The newest invite is still answerable.
+        var newest = shell.Notifications.Single(item => item.Id == "not_new_00");
+        shell.DeclineNotificationWithMessageCommand.Execute(newest);
+        Assert.True(shell.IsResponseComposerOpen);
+        shell.CancelResponseComposerCommand.Execute(null);
+    }
+
     private static async Task WaitForSavedMessagesAsync(MainViewModel shell)
     {
         for (var attempt = 0;

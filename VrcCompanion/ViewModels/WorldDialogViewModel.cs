@@ -305,6 +305,40 @@ public sealed class WorldInstanceItem : ViewModelBase
     }
 
     /// <summary>
+    /// Replaces the row's live numbers from a fresh discover listing. Unlike
+    /// <see cref="ApplyLiveInstance"/>, a zero head count is real here: the feed lists
+    /// instances of this world, so a row that emptied out should say so.
+    /// </summary>
+    public void ApplySnapshot(VrcInstance snapshot)
+    {
+        Instance.UserCount = snapshot.UserCount;
+        Instance.UserCountAlt = snapshot.UserCountAlt;
+        if (snapshot.Capacity > 0)
+        {
+            Instance.Capacity = snapshot.Capacity;
+        }
+        if (snapshot.RecommendedCapacity > 0)
+        {
+            Instance.RecommendedCapacity = snapshot.RecommendedCapacity;
+        }
+        if (!string.IsNullOrWhiteSpace(snapshot.Region))
+        {
+            Instance.Region = snapshot.Region;
+        }
+        if (!string.IsNullOrWhiteSpace(snapshot.Type))
+        {
+            Instance.Type = snapshot.Type;
+        }
+
+        OnPropertyChanged(nameof(Occupants));
+        OnPropertyChanged(nameof(OccupancyText));
+        OnPropertyChanged(nameof(DetailText));
+        OnPropertyChanged(nameof(RegionLabel));
+        OnPropertyChanged(nameof(AccessLabel));
+        OnPropertyChanged(nameof(Title));
+    }
+
+    /// <summary>
     /// Takes the live count, region and capacity from the instance endpoint so a
     /// quiet refresh updates the row without replacing it.
     /// </summary>
@@ -540,6 +574,9 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private WorldInstanceItem? _syntheticCurrentInstance;
     private string? _currentLocation;
     private bool _playersLoading;
+    private IReadOnlyList<VrcInstance> _discoveredInstances = Array.Empty<VrcInstance>();
+    private DispatcherTimer? _instancesRefreshTimer;
+    private bool _instancesRefreshing;
 
     /// <summary>
     /// How often the open instance is re-read. Every tick is one API call at most,
@@ -553,6 +590,13 @@ public sealed class WorldDialogViewModel : ViewModelBase
     /// the instance actually changes.
     /// </summary>
     internal static TimeSpan LiveStateRefreshInterval { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// How often the Active instances card re-reads VRChat's discover feed. The world
+    /// payload's <c>slimInstances</c> is only a sample, so the card is topped up while
+    /// the dialog is open instead of freezing at whatever the world response listed.
+    /// </summary>
+    internal static TimeSpan InstancesRefreshInterval { get; set; } = TimeSpan.FromSeconds(30);
     private InstanceOwnerOption _selectedOwner;
     private bool _isLoadingOwners;
     private bool _ownersLoaded;
@@ -996,13 +1040,231 @@ public sealed class WorldDialogViewModel : ViewModelBase
         _ = RefreshLiveStateAsync();
     }
 
-    /// <summary>Stops the current-instance timer; the dialog calls this when it closes.</summary>
+    /// <summary>Stops the current-instance and instance-list timers; the dialog calls this when it closes.</summary>
     public void StopLiveRefresh()
     {
         _liveRefreshTimer?.Stop();
+        _instancesRefreshTimer?.Stop();
         _liveCancellation?.Cancel();
         _liveCancellation?.Dispose();
         _liveCancellation = null;
+    }
+
+    private void StartInstancesRefresh()
+    {
+        if (_instancesRefreshTimer is null)
+        {
+            _instancesRefreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = InstancesRefreshInterval
+            };
+            _instancesRefreshTimer.Tick += (_, _) => _ = RefreshInstancesAsync();
+        }
+
+        _instancesRefreshTimer.Interval = InstancesRefreshInterval;
+        _instancesRefreshTimer.Start();
+    }
+
+    /// <summary>
+    /// Re-reads every active instance for this world and folds the answer into the rows
+    /// already on screen: new instances join, counts move, and nothing is rebuilt, so the
+    /// open player panel and the current page survive the refresh.
+    /// </summary>
+    internal async Task RefreshInstancesAsync()
+    {
+        if (World is null || _instancesRefreshing)
+        {
+            return;
+        }
+
+        _instancesRefreshing = true;
+        try
+        {
+            var discovered = await LoadDiscoveredInstancesAsync(
+                _liveCancellation?.Token ?? CancellationToken.None);
+            if (discovered.Count == 0 || World is null)
+            {
+                return;
+            }
+
+            _discoveredInstances = discovered;
+            ApplyInstanceListing(CombineInstances(World.SlimInstances, _discoveredInstances));
+        }
+        catch (OperationCanceledException)
+        {
+            // The dialog closed mid-read.
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("world dialog instances refresh: " + ex.Message);
+        }
+        finally
+        {
+            _instancesRefreshing = false;
+        }
+    }
+
+    /// <summary>
+    /// Reads VRChat's discover feed for this world. A failure is not an error the reader
+    /// needs to see: the world payload's own rows are still shown.
+    /// </summary>
+    private async Task<IReadOnlyList<VrcInstance>> LoadDiscoveredInstancesAsync(
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _api.GetWorldInstancesAsync(WorldId, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return Array.Empty<VrcInstance>();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("world dialog instances: " + ex.Message);
+            return Array.Empty<VrcInstance>();
+        }
+    }
+
+    /// <summary>
+    /// The world payload's rows plus the discover feed's, deduplicated by instance id.
+    /// The discover row wins on head count and access (it is the live listing); anything
+    /// it leaves blank is filled from the world payload, which may name a private instance
+    /// the feed does not list.
+    /// </summary>
+    private static List<VrcInstance> CombineInstances(
+        IEnumerable<VrcInstance> listed,
+        IEnumerable<VrcInstance> discovered)
+    {
+        var byId = new Dictionary<string, VrcInstance>(StringComparer.OrdinalIgnoreCase);
+        var order = new List<string>();
+
+        foreach (var instance in listed.Where(HasInstanceId))
+        {
+            if (byId.TryAdd(instance.InstanceId, instance))
+            {
+                order.Add(instance.InstanceId);
+            }
+        }
+
+        foreach (var instance in discovered.Where(HasInstanceId))
+        {
+            if (!byId.TryGetValue(instance.InstanceId, out var existing))
+            {
+                byId[instance.InstanceId] = instance;
+                order.Add(instance.InstanceId);
+                continue;
+            }
+
+            instance.DisplayName ??= existing.DisplayName;
+            instance.ShortName ??= existing.ShortName;
+            instance.OwnerId ??= existing.OwnerId;
+            if (string.IsNullOrWhiteSpace(instance.Type))
+            {
+                instance.Type = existing.Type;
+            }
+            if (string.IsNullOrWhiteSpace(instance.Region))
+            {
+                instance.Region = existing.Region;
+            }
+            if (string.IsNullOrWhiteSpace(instance.Location))
+            {
+                instance.Location = existing.Location;
+            }
+            if (instance.Capacity <= 0)
+            {
+                instance.Capacity = existing.Capacity;
+            }
+            if (instance.RecommendedCapacity <= 0)
+            {
+                instance.RecommendedCapacity = existing.RecommendedCapacity;
+            }
+
+            byId[instance.InstanceId] = instance;
+        }
+
+        return order.Select(id => byId[id]).ToList();
+    }
+
+    private static bool HasInstanceId(VrcInstance instance)
+        => !string.IsNullOrWhiteSpace(instance.InstanceId);
+
+    /// <summary>
+    /// Folds a fresh listing into the rows on screen without rebuilding the list: counts
+    /// and regions move in place, new instances join, and only instances VRChat still
+    /// lists stay. The current row, the focused row and an open player panel are never
+    /// dropped, and the page the reader is on is kept.
+    /// </summary>
+    private void ApplyInstanceListing(IReadOnlyList<VrcInstance> listing)
+    {
+        if (World is null)
+        {
+            return;
+        }
+
+        var live = _currentInstance?.Invoke();
+        var here = live is not null && IsWorldLocation(live.Location, World.Id)
+            ? live.Location
+            : _currentLocation;
+        var byId = new Dictionary<string, WorldInstanceItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in Instances)
+        {
+            byId.TryAdd(item.InstanceId, item);
+        }
+
+        var added = new List<WorldInstanceItem>();
+        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var instance in listing)
+        {
+            present.Add(instance.InstanceId);
+            if (byId.TryGetValue(instance.InstanceId, out var existing))
+            {
+                existing.ApplySnapshot(instance);
+                continue;
+            }
+
+            var item = new WorldInstanceItem(instance, World.Id, viewPlayers: ShowInstancePlayers);
+            Instances.Add(item);
+            byId[instance.InstanceId] = item;
+            added.Add(item);
+        }
+
+        foreach (var stale in Instances.ToList())
+        {
+            if (present.Contains(stale.InstanceId) ||
+                stale.IsCurrent ||
+                ReferenceEquals(stale, FocusInstance) ||
+                ReferenceEquals(stale, SelectedInstance) ||
+                SameInstance(stale.Location, here))
+            {
+                continue;
+            }
+
+            Instances.Remove(stale);
+        }
+
+        var ordered = Instances
+            .OrderByDescending(item => item.IsCurrent)
+            .ThenByDescending(item => ReferenceEquals(item, FocusInstance))
+            .ThenByDescending(item => item.Occupants)
+            .ToList();
+        if (!ordered.SequenceEqual(Instances))
+        {
+            Instances.Clear();
+            foreach (var item in ordered)
+            {
+                Instances.Add(item);
+            }
+        }
+
+        InstancesPage.SetSource(Instances);
+        OnPropertyChanged(nameof(HasActiveInstances));
+        if (added.Count > 0)
+        {
+            GroupHydration = HydrateGroupsAsync(
+                added,
+                _liveCancellation?.Token ?? CancellationToken.None);
+        }
     }
 
     internal bool IsPlayerRefreshRunning => _playerRefreshTimer?.IsEnabled == true;
@@ -1309,6 +1571,9 @@ public sealed class WorldDialogViewModel : ViewModelBase
         // Your groups load beside the world: the dialog is usable without them, and the
         // create card fills in the moment VRChat answers.
         _ = LoadOwnersAsync(cancellationToken);
+        // The world response's slimInstances is a sample; the discover feed is the
+        // full active list, so both are read at once and merged.
+        var discoveredTask = LoadDiscoveredInstancesAsync(cancellationToken);
 
         try
         {
@@ -1325,8 +1590,10 @@ public sealed class WorldDialogViewModel : ViewModelBase
             }
 
             World = world;
+            _discoveredInstances = await discoveredTask;
             RebuildInstances(cancellationToken);
             StartLiveRefresh();
+            StartInstancesRefresh();
             _ = LoadHeroImageAsync(world, cancellationToken);
         }
         catch (OperationCanceledException)
@@ -1455,7 +1722,19 @@ public sealed class WorldDialogViewModel : ViewModelBase
             }
 
             World = world;
-            RebuildInstances(cancellationToken);
+            _discoveredInstances = await LoadDiscoveredInstancesAsync(cancellationToken);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (Instances.Count == 0)
+            {
+                RebuildInstances(cancellationToken);
+                return;
+            }
+
+            ApplyInstanceListing(CombineInstances(World.SlimInstances, _discoveredInstances));
         }
         catch (OperationCanceledException)
         {
@@ -1482,8 +1761,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
             return;
         }
 
-        var items = World.SlimInstances
-            .Where(item => !string.IsNullOrWhiteSpace(item.InstanceId))
+        var items = CombineInstances(World.SlimInstances, _discoveredInstances)
             .Select(instance => new WorldInstanceItem(instance, World.Id, viewPlayers: ShowInstancePlayers))
             .ToList();
 

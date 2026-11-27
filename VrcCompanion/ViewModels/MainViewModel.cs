@@ -91,6 +91,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private CancellationTokenSource? _notificationDetailCancellation;
     private readonly HashSet<string> _resolvedFriendRequestIds = new(StringComparer.Ordinal);
     private HashSet<string> _clearedNotificationIds = new(StringComparer.Ordinal);
+    // The ids VRChat's feed still accepts a reply for: the newest 40 legacy entries
+    // from the last read, so the composer can refuse an invite past its window.
+    private IReadOnlyList<string> _replyableNotificationIds = Array.Empty<string>();
     private string _notificationsAccountId = string.Empty;
     private bool _isInviteComposerOpen;
     private string _composerError = string.Empty;
@@ -8021,6 +8024,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // VRChat answers a reply only while the notification is one of the newest 40
+        // in its feed. Past that it answers 404 "Notification not found", so say so
+        // before the message is typed instead of losing it on send.
+        if (!IsInsideReplyWindow(item))
+        {
+            ClearPersistentNotification(item);
+            ShowError(
+                "VRChat only accepts replies to the newest 40 notifications, so this invite is past " +
+                "its reply window. It was removed from your list.");
+            return;
+        }
+
         _responseComposerNotification = item;
         _inviteMessagesLoadVersion++;
         InviteMessages.Clear();
@@ -8098,7 +8113,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             CloseResponseComposer();
             ClearPersistentNotification(item);
             ShowError(
-                "VRChat has expired that invite - it only accepts replies to recent notifications, " +
+                "VRChat has expired that invite - it only accepts replies to the newest 40 notifications, " +
                 "so your message was not sent. The invite was removed from your list.");
         }
         catch (VrcApiException ex)
@@ -8130,6 +8145,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private static bool NotificationHasExpired(VrcApiException error)
         => error.StatusCode == 404 &&
            (error.Message?.Contains("notification not found", StringComparison.OrdinalIgnoreCase) ?? false);
+
+    /// <summary>
+    /// VRChat's reply endpoint works only for the newest 40 notifications in the feed;
+    /// there is no fixed time window, so a busy account can push an invite out within
+    /// minutes. The feed is remembered each time it is read. Before any feed has loaded,
+    /// the composer is allowed to open and VRChat's own answer decides.
+    /// </summary>
+    internal bool IsInsideReplyWindow(NotificationItem item)
+        => _replyableNotificationIds.Count == 0 || _replyableNotificationIds.Contains(item.Id);
 
     /// <summary>Drops one notification from the list, whatever its type.</summary>
     private void ClearNotification(NotificationItem? item)
@@ -10389,6 +10413,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             .OrderByDescending(notification => notification.CreatedAt ?? DateTimeOffset.MinValue)
             .ToList();
 
+        // Only the legacy feed can be replied to, and only its newest 40 entries; the
+        // rest of the list is still useful to read but no longer answerable.
+        _replyableNotificationIds = notifications
+            .Where(notification => !notification.IsV2 && !string.IsNullOrWhiteSpace(notification.Id))
+            .OrderByDescending(notification => notification.Timestamp ?? DateTimeOffset.MinValue)
+            .Take(VrcApiClient.ReplyableNotificationWindow)
+            .Select(notification => notification.Id)
+            .ToList();
+
         SyncCollection(Notifications, desired, notification => notification.Id);
         UpdateUnreadState();
         PersistNotifications();
@@ -10696,6 +10729,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _api.ClearCaches();
         _notificationsAccountId = string.Empty;
         _clearedNotificationIds = new HashSet<string>(StringComparer.Ordinal);
+        _replyableNotificationIds = Array.Empty<string>();
         CloseInviteComposer();
         CloseResponseComposer();
 

@@ -385,7 +385,7 @@ public sealed class MediaLibraryViewModel : ViewModelBase
 
     public string ViewerTakenText => _selectedMedia is null
         ? string.Empty
-        : $"Taken {_selectedMedia.TakenAt:MMM d, yyyy · HH:mm}";
+        : $"Taken {_selectedMedia.TakenAt:MMM d, yyyy · h:mm tt}";
 
     public ImageSource? ViewerImage
     {
