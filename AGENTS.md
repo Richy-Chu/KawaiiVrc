@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1103 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1104 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.145**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.146**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,19 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.146 changed
+
+- **A pager can reset only its own list.** `ScrollViewerBehavior.ResetPageScroll` resets the list
+  bound to the page plus every `ScrollViewer` above the pager, which is right when the pager ends
+  a section page but wrong for the instance activity box: it sits inside Context's long page, so
+  Previous/Next and a filter change scrolled the whole Context tab to the top. `ListPager` grew
+  `ResetListOnly`, which calls the new `ScrollViewerBehavior.ResetListScroll` instead: only the
+  `ItemsControl` whose `ItemsSource` is the page's own `Items` moves. `Controls/InstanceActivityView`
+  sets it on its pager. Every other pager keeps the page-wide reset.
+- **Tests: 1104.** `PagingScrollTests.APagerInsideALongerPageResetsOnlyItsOwnList` scrolls an outer
+  page and an inner list, pages the list, then asserts the list is back at its first row while the
+  outer offset did not move.
 
 ### What 1.0.145 changed
 

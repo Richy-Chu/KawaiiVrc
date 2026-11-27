@@ -7,6 +7,8 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using VrcCompanion.Behaviors;
+using VrcCompanion.Controls;
+using VrcCompanion.ViewModels;
 using Xunit;
 
 namespace VrcCompanion.Tests;
@@ -251,6 +253,80 @@ public class PagingScrollTests
                 Assert.True(
                     viewer.VerticalOffset < 1,
                     $"the new page started at {viewer.VerticalOffset}, not at the top");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void APagerInsideALongerPageResetsOnlyItsOwnList()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var page = new PagedList<string>(8);
+            page.SetSource(Enumerable.Range(0, 40).Select(Row));
+
+            var list = new ListBox { ItemsSource = page.Items, Height = 120 };
+            var pager = new ListPager { DataContext = page, ResetListOnly = true };
+            var outer = new ScrollViewer
+            {
+                Content = new StackPanel
+                {
+                    Children =
+                    {
+                        new Border { Height = 400 },
+                        list,
+                        pager,
+                        new Border { Height = 400 }
+                    }
+                },
+                Height = 240,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+            };
+            var window = new Window
+            {
+                Content = outer,
+                Width = 300,
+                Height = 260,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false
+            };
+
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                Pump();
+                window.UpdateLayout();
+                Pump();
+
+                // The context page is scrolled down to the activity box...
+                outer.ScrollToVerticalOffset(400);
+                window.UpdateLayout();
+                Pump();
+                Assert.True(outer.VerticalOffset > 100, "the page should be scrolled");
+
+                // ...and the activity list is read halfway down its page.
+                var listViewer = FindVisualChildren<ScrollViewer>(list).First();
+                listViewer.ScrollToBottom();
+                window.UpdateLayout();
+                Pump();
+                Assert.True(listViewer.VerticalOffset > 0, "the list should be scrolled");
+
+                page.NextCommand.Execute(null);
+                window.UpdateLayout();
+                Pump();
+                window.UpdateLayout();
+                Pump();
+
+                Assert.Equal("2 of 5", page.PageText);
+                // The new page starts at its first row, and the Context page did not jump.
+                Assert.True(listViewer.VerticalOffset < 1, $"the list restarted at {listViewer.VerticalOffset}");
+                Assert.True(outer.VerticalOffset > 100, $"the page jumped to {outer.VerticalOffset}");
             }
             finally
             {

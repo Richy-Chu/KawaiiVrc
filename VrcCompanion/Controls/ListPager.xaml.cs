@@ -15,6 +15,16 @@ namespace VrcCompanion.Controls;
 /// </summary>
 public partial class ListPager : UserControl
 {
+    /// <summary>
+    /// True when the pager sits inside a longer page: only the list it pages returns to
+    /// the top, and the page around it stays where the reader left it.
+    /// </summary>
+    public static readonly DependencyProperty ResetListOnlyProperty = DependencyProperty.Register(
+        nameof(ResetListOnly),
+        typeof(bool),
+        typeof(ListPager),
+        new PropertyMetadata(false));
+
     private INotifyPropertyChanged? _page;
 
     public ListPager()
@@ -37,6 +47,12 @@ public partial class ListPager : UserControl
         page.PropertyChanged += OnPagePropertyChanged;
     }
 
+    public bool ResetListOnly
+    {
+        get => (bool)GetValue(ResetListOnlyProperty);
+        set => SetValue(ResetListOnlyProperty, value);
+    }
+
     private void Detach()
     {
         if (_page is null)
@@ -55,6 +71,14 @@ public partial class ListPager : UserControl
             return;
         }
 
-        ScrollViewerBehavior.ResetPageScroll(this, (DataContext as IPagedList)?.Items);
+        var items = (DataContext as IPagedList)?.Items;
+        if (ResetListOnly)
+        {
+            ScrollViewerBehavior.ResetListScroll(this, items);
+        }
+        else
+        {
+            ScrollViewerBehavior.ResetPageScroll(this, items);
+        }
     }
 }

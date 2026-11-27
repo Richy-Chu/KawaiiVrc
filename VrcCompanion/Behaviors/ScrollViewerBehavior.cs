@@ -94,6 +94,26 @@ public static class ScrollViewerBehavior
         }
     }
 
+    /// <summary>
+    /// Puts only the list that shows the page's rows back at the top. A pager that
+    /// lives inside a longer page (the instance activity box on Context) uses this, so
+    /// paging a filter never scrolls the whole page above it.
+    /// </summary>
+    public static void ResetListScroll(DependencyObject anchor, IEnumerable? items)
+    {
+        if (items is null)
+        {
+            return;
+        }
+
+        var viewers = new HashSet<ScrollViewer>();
+        CollectListedViewers((DependencyObject?)Window.GetWindow(anchor) ?? anchor, items, viewers);
+        foreach (var viewer in viewers)
+        {
+            ResetScroll(viewer);
+        }
+    }
+
     private static void CollectListedViewers(
         DependencyObject root,
         IEnumerable items,

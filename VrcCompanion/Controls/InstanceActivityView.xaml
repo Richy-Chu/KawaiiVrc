@@ -250,7 +250,10 @@
             </ListBox.ItemTemplate>
         </ListBox>
 
+        <!-- Only this list moves when a page or a filter changes; the Context page around
+             the box must stay where the reader is. -->
         <controls:ListPager DataContext="{Binding ActivityPage}"
+                            ResetListOnly="True"
                             Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}"
                             Margin="0,4,0,0" />
 
