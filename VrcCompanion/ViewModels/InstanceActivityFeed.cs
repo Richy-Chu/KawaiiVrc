@@ -26,6 +26,9 @@ public sealed class InstanceActivityFeed : ViewModelBase
     private readonly HashSet<string> _avatarImageLookups = new(StringComparer.OrdinalIgnoreCase);
     private Func<string, string?, Task<string?>>? _avatarImageResolver;
     private Func<string, string, string?>? _personImageResolver;
+    private readonly Dictionary<string, string> _personImages = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _personImageLookups = new(StringComparer.Ordinal);
+    private Func<string, string, Task<string?>>? _personLookup;
 
     public InstanceActivityFeed()
     {
@@ -145,6 +148,18 @@ public sealed class InstanceActivityFeed : ViewModelBase
     }
 
     /// <summary>
+    /// Asks VRChat for the person's own picture when the roster has no profile for the
+    /// row - typically a switch line that carried no user id. This is the same picture
+    /// the Activity page draws, so the avatar filter never shows an empty face just
+    /// because the instance roster did not know the player.
+    /// </summary>
+    public void SetPersonLookup(Func<string, string, Task<string?>>? lookup)
+    {
+        _personLookup = lookup;
+        ResolvePageAvatarImages();
+    }
+
+    /// <summary>
     /// Re-reads the person pictures after the roster gained a profile or a picture.
     /// The rows are cached, so a new roster image has to be pushed into them.
     /// </summary>
@@ -236,6 +251,12 @@ public sealed class InstanceActivityFeed : ViewModelBase
                 // The person's picture is what the Activity page shows; the changed
                 // avatar's picture is the fallback for a player with no profile picture.
                 var person = _personImageResolver?.Invoke(entry.UserId, entry.DisplayName);
+                if (string.IsNullOrWhiteSpace(person) &&
+                    _personImages.TryGetValue(PersonKey(entry.UserId, entry.DisplayName), out var fetched))
+                {
+                    person = fetched;
+                }
+
                 if (!string.IsNullOrWhiteSpace(person))
                 {
                     item.SetPersonImage(person);
@@ -283,12 +304,13 @@ public sealed class InstanceActivityFeed : ViewModelBase
     }
 
     /// <summary>
-    /// Resolves the avatar picture for the rows on screen. A name is looked up once: the
-    /// result is reused by every row (and every later page) that names the same avatar.
+    /// Resolves a picture for the avatar rows on screen: the person's own picture first
+    /// (what the Activity page draws), then the switched avatar's picture. Each id and
+    /// each name is looked up once and reused by every row that carries it.
     /// </summary>
     private void ResolvePageAvatarImages()
     {
-        if (_avatarImageResolver is null)
+        if (_avatarImageResolver is null && _personLookup is null)
         {
             return;
         }
@@ -302,19 +324,77 @@ public sealed class InstanceActivityFeed : ViewModelBase
                 continue;
             }
 
-            var key = AvatarKey(item.AvatarName, item.AvatarAuthor);
-            if (_avatarImages.TryGetValue(key, out var known))
+            var userId = item.Activity.UserId;
+            var displayName = item.Activity.DisplayName;
+            var personKey = PersonKey(userId, displayName);
+            if (_personImages.TryGetValue(personKey, out var knownPerson))
             {
-                item.SetAvatarImage(known);
+                item.SetPersonImage(knownPerson);
                 continue;
             }
 
-            if (_avatarImageLookups.Add(key))
+            var key = AvatarKey(item.AvatarName, item.AvatarAuthor);
+            if (_avatarImages.TryGetValue(key, out var knownAvatar))
+            {
+                item.SetAvatarImage(knownAvatar);
+                continue;
+            }
+
+            // Both run: the person's picture wins when it answers, and the avatar's
+            // picture covers a player VRChat's user search cannot find.
+            if (_personLookup is not null &&
+                !string.IsNullOrWhiteSpace(displayName) &&
+                _personImageLookups.Add(personKey))
+            {
+                _ = ResolvePersonImageAsync(userId, displayName, personKey);
+            }
+
+            if (_avatarImageResolver is not null && _avatarImageLookups.Add(key))
             {
                 _ = ResolveAvatarImageAsync(item.AvatarName, item.AvatarAuthor, key);
             }
         }
     }
+
+    private async Task ResolvePersonImageAsync(string userId, string displayName, string key)
+    {
+        var lookup = _personLookup;
+        if (lookup is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var url = (await lookup(userId, displayName))?.Trim();
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
+
+            _personImages[key] = url;
+            foreach (var item in Activity)
+            {
+                if (item.IsAvatarChange &&
+                    string.Equals(
+                        PersonKey(item.Activity.UserId, item.Activity.DisplayName),
+                        key,
+                        StringComparison.Ordinal))
+                {
+                    item.SetPersonImage(url);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"instance person image {displayName}: {ex.Message}");
+        }
+    }
+
+    private static string PersonKey(string userId, string displayName)
+        => !string.IsNullOrWhiteSpace(userId)
+            ? "id:" + userId
+            : "name:" + (displayName ?? string.Empty).Trim().ToLowerInvariant();
 
     private async Task ResolveAvatarImageAsync(string avatarName, string avatarAuthor, string key)
     {

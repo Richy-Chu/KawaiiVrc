@@ -2854,6 +2854,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ActivityFeedViewModel.ResolveLoggedAvatarImageAsync);
         InstanceViewModel.ActivityFeed.SetAvatarImageResolver(
             ActivityFeedViewModel.ResolveLoggedAvatarImageAsync);
+        // Rows VRChat's log gave no user id still get the face Activity would draw:
+        // their VRChat user record, found by id or by the exact display name.
+        ContextViewModel.ActivityFeed.SetPersonLookup(FindActivityPersonImageAsync);
+        InstanceViewModel.ActivityFeed.SetPersonLookup(FindActivityPersonImageAsync);
         InstanceViewModel.PlayerAvatarChanged += (previous, current) =>
         {
             if (Friends.Any(friend =>
@@ -6543,6 +6547,44 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         context.ApplyActivity(snapshot?.Activity);
         return true;
+    }
+
+    /// <summary>
+    /// The picture the Activity page would draw for a player: their VRChat profile
+    /// icon, profile picture, or current avatar. The roster supplies it when it knows
+    /// the player; when VRChat's log carried no user id, the exact display name finds
+    /// the same record, so an instance row never shows a blank slot for a switch the
+    /// Activity page would have a face for.
+    /// </summary>
+    private async Task<string?> FindActivityPersonImageAsync(string userId, string displayName)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(userId))
+            {
+                var known = await _api.GetUserAsync(userId);
+                var knownImage = ImageUrlHelper.PersonThumbnailUrl(known);
+                if (!string.IsNullOrWhiteSpace(knownImage))
+                {
+                    return knownImage;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                return null;
+            }
+
+            var users = await _api.SearchUserListAsync(displayName.Trim(), 10);
+            var exact = users.FirstOrDefault(user =>
+                string.Equals(user.DisplayName, displayName.Trim(), StringComparison.OrdinalIgnoreCase));
+            return ImageUrlHelper.PersonThumbnailUrl(exact);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"activity person image {displayName}: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>
