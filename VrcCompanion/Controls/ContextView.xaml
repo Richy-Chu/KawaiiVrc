@@ -45,6 +45,53 @@
             <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
             <Setter Property="ItemContainerStyle" Value="{StaticResource ContextListItem}" />
         </Style>
+
+        <!-- Filter pills for the activity box. The window's pill styles are not in
+             scope inside a UserControl, so the same look lives here. -->
+        <Style x:Key="ActivityPill" TargetType="ListBoxItem">
+            <Setter Property="Margin" Value="0,0,5,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="PillBorder"
+                                Background="{StaticResource InputBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="12"
+                                Padding="9,3">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PillBorder" Property="BorderBrush" Value="{StaticResource VioletBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="PillBorder" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                <Setter TargetName="PillBorder" Property="BorderBrush" Value="{StaticResource VioletBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ActivityPillList" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource ActivityPill}" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ItemsPanel">
+                <Setter.Value>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <Grid Margin="28,22,28,18">
@@ -306,6 +353,96 @@
                                        TextWrapping="Wrap"
                                        Margin="0,8,0,0"
                                        Visibility="{Binding HasPlayers, Converter={StaticResource InverseBoolToVis}}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Padding="16" Margin="0,0,0,12">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Instance activity" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="{Binding ActivityText}"
+                                           Style="{StaticResource MutedText}"
+                                           FontSize="10"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="Joins, leaves and Udon events, read from VRChat's own log."
+                                       Style="{StaticResource MutedText}"
+                                       FontSize="9.5"
+                                       Foreground="{StaticResource DimBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,8" />
+
+                            <ListBox ItemsSource="{Binding ActivityFilters}"
+                                     SelectedItem="{Binding SelectedActivityFilter, Mode=TwoWay}"
+                                     Style="{StaticResource ActivityPillList}"
+                                     Margin="0,0,0,8">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Label}"
+                                                   Style="{StaticResource MutedText}"
+                                                   FontSize="10"
+                                                   FontWeight="SemiBold" />
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <ListBox ItemsSource="{Binding ActivityPage.Items}"
+                                     Style="{StaticResource ContextList}"
+                                     Visibility="{Binding HasActivity, Converter={StaticResource BoolToVis}}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource InputBrush}"
+                                                CornerRadius="8"
+                                                Padding="9,7"
+                                                Margin="0,0,0,5">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Background="{StaticResource AccentSoftBrush}"
+                                                        CornerRadius="6"
+                                                        Padding="6,2"
+                                                        VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding KindLabel}"
+                                                               FontSize="8"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{Binding KindBrush}" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Margin="8,0,8,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Title}"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource TextBrush}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding DetailText}"
+                                                               Style="{StaticResource MutedText}"
+                                                               FontSize="9"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               ToolTip="{Binding ToolTip}" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding TimeText}"
+                                                           Style="{StaticResource MutedText}"
+                                                           FontSize="8.5"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <controls:ListPager DataContext="{Binding ActivityPage}"
+                                                Visibility="{Binding HasPages, Converter={StaticResource BoolToVis}}" />
+
+                            <TextBlock Text="Nothing yet. This box fills from VRChat's log while you are in an instance."
+                                       Style="{StaticResource MutedText}"
+                                       FontSize="10"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,0"
+                                       Visibility="{Binding HasActivity, Converter={StaticResource InverseBoolToVis}}" />
                         </StackPanel>
                     </Border>
 

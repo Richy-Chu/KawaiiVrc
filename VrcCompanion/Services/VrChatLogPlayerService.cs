@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -10,13 +11,35 @@ namespace VrcCompanion.Services;
 
 public sealed record VrChatLogPlayer(string UserId, string DisplayName);
 
+/// <summary>What VRChat's log reported happening in the instance the reader is in.</summary>
+public enum VrChatLogActivityKind
+{
+    Joined,
+    Left,
+    Udon
+}
+
+/// <summary>
+/// One join, leave or Udon event read from VRChat's own log. The timestamp is the
+/// line's own local time, so the row shows when it happened rather than when the
+/// app noticed it.
+/// </summary>
+public sealed record VrChatLogActivity(
+    VrChatLogActivityKind Kind,
+    string DisplayName,
+    string UserId,
+    string Detail,
+    DateTimeOffset At);
+
 public sealed record VrChatLogSnapshot(
     string Location,
     IReadOnlyList<VrChatLogPlayer> Players,
     IReadOnlySet<string>? BlockedPlayerNames = null,
     IReadOnlySet<string>? UnblockedPlayerNames = null,
     IReadOnlyDictionary<string, LoggedAvatar>? Avatars = null,
-    IReadOnlyDictionary<string, LoggedAvatar>? AvatarSwitches = null);
+    IReadOnlyDictionary<string, LoggedAvatar>? AvatarSwitches = null,
+    IReadOnlyList<VrChatLogActivity>? Activity = null,
+    int ActivityRevision = 0);
 
 /// <summary>
 /// Reads VRChat's own output log to track the current instance and the players
@@ -58,6 +81,19 @@ public sealed class VrChatLogPlayerService
         @"\[ModerationManager\]\s+(?<name>.+?)\s+(?:is now Unblocked|is no longer Blocked)\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
+    // The client tags its own Udon messages this way. World Debug.Log output is not
+    // matched here: this box reports events, not a chat log.
+    private static readonly Regex UdonEvent = new(
+        @"\[(?:UdonBehaviour|UdonSharp|Udon)\]\s*(?<message>.+?)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    // 2026.11.27 12:00:05 Log        -  [Behaviour] OnPlayerJoined Someone (usr_...)
+    private static readonly Regex LineStart = new(
+        @"^(?<stamp>\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2})",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private const int ActivityLimit = 100;
+
     private readonly Func<string?> _findLatestLog;
     private readonly Func<bool> _isGameRunning;
     private readonly Dictionary<string, VrChatLogPlayer> _players = new(StringComparer.Ordinal);
@@ -66,6 +102,9 @@ public sealed class VrChatLogPlayerService
         new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _blockedNames = new(StringComparer.CurrentCultureIgnoreCase);
     private readonly HashSet<string> _unblockedNames = new(StringComparer.CurrentCultureIgnoreCase);
+    private readonly List<VrChatLogActivity> _activity = new(ActivityLimit);
+    private IReadOnlyList<VrChatLogActivity>? _activitySnapshot;
+    private int _activityRevision;
     private string _logPath = string.Empty;
     private long _position;
     private string _location = string.Empty;
@@ -158,6 +197,7 @@ public sealed class VrChatLogPlayerService
                 _avatarAuthors.Clear();
                 _blockedNames.Clear();
                 _unblockedNames.Clear();
+                ClearActivity();
                 _location = string.Empty;
             }
 
@@ -172,6 +212,7 @@ public sealed class VrChatLogPlayerService
                 _players.Clear();
                 _avatarNames.Clear();
                 _avatarAuthors.Clear();
+                ClearActivity();
                 _location = string.Empty;
             }
 
@@ -211,6 +252,7 @@ public sealed class VrChatLogPlayerService
         _avatarAuthors.Clear();
         _blockedNames.Clear();
         _unblockedNames.Clear();
+        ClearActivity();
         _location = string.Empty;
         _position = 0;
         _logPath = string.Empty;
@@ -260,7 +302,11 @@ public sealed class VrChatLogPlayerService
             new HashSet<string>(_blockedNames, StringComparer.CurrentCultureIgnoreCase),
             new HashSet<string>(_unblockedNames, StringComparer.CurrentCultureIgnoreCase),
             avatars,
-            switches);
+            switches,
+            // Published once per change: a poll that finds no new line returns the
+            // same list, so a bound page never re-walks it for nothing.
+            _activitySnapshot ??= _activity.ToArray(),
+            _activityRevision);
     }
 
     private void Parse(string line)
@@ -278,11 +324,20 @@ public sealed class VrChatLogPlayerService
                     _avatarAuthors.Clear();
                     _blockedNames.Clear();
                     _unblockedNames.Clear();
+                    // Joins and leaves belong to the room they happened in, so a new
+                    // instance starts its own list instead of inheriting the last one.
+                    ClearActivity();
                 }
 
                 _location = location;
             }
 
+            return;
+        }
+
+        // One cheap substring test before the regex: almost every line is not Udon.
+        if (line.Contains("Udon", StringComparison.Ordinal) && TryRecordUdon(line))
+        {
             return;
         }
 
@@ -315,7 +370,10 @@ public sealed class VrChatLogPlayerService
         var joined = Joined.Match(line);
         if (joined.Success)
         {
-            Add(joined.Groups["name"].Value, joined.Groups["id"].Value);
+            var name = joined.Groups["name"].Value.Trim();
+            var userId = joined.Groups["id"].Value;
+            Add(name, userId);
+            RecordActivity(VrChatLogActivityKind.Joined, name, userId, "Joined the instance", line);
             return;
         }
 
@@ -352,6 +410,7 @@ public sealed class VrChatLogPlayerService
             _avatarAuthors.Clear();
             _blockedNames.Clear();
             _unblockedNames.Clear();
+            ClearActivity();
             _location = string.Empty;
             return;
         }
@@ -359,9 +418,97 @@ public sealed class VrChatLogPlayerService
         var left = Left.Match(line);
         if (left.Success)
         {
-            Remove(left.Groups["name"].Value.Trim(), left.Groups["id"].Value);
+            var name = left.Groups["name"].Value.Trim();
+            var userId = left.Groups["id"].Value;
+            Remove(name, userId);
+            RecordActivity(VrChatLogActivityKind.Left, name, userId, "Left the instance", line);
         }
     }
+
+    /// <summary>
+    /// Records the Udon lines VRChat writes itself. "Configuring Udon" is the moment a
+    /// world's Udon starts after a join; the tagged lines carry exceptions and halts.
+    /// </summary>
+    private bool TryRecordUdon(string line)
+    {
+        if (line.Contains("] Configuring Udon", StringComparison.Ordinal))
+        {
+            RecordActivity(VrChatLogActivityKind.Udon, string.Empty, string.Empty, "Udon configured for this world", line);
+            return true;
+        }
+
+        var match = UdonEvent.Match(line);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var message = match.Groups["message"].Value.Trim();
+        if (message.Length == 0)
+        {
+            return false;
+        }
+
+        RecordActivity(VrChatLogActivityKind.Udon, string.Empty, string.Empty, Shorten(message), line);
+        return true;
+    }
+
+    private void RecordActivity(
+        VrChatLogActivityKind kind,
+        string displayName,
+        string userId,
+        string detail,
+        string line)
+    {
+        _activity.Add(new VrChatLogActivity(
+            kind,
+            displayName ?? string.Empty,
+            userId ?? string.Empty,
+            detail ?? string.Empty,
+            LineTimestamp(line)));
+        if (_activity.Count > ActivityLimit)
+        {
+            // A busy instance can log joins faster than anyone reads them; the box
+            // shows the tail, so the oldest rows are the ones to drop.
+            _activity.RemoveRange(0, _activity.Count - ActivityLimit);
+        }
+
+        _activitySnapshot = null;
+        _activityRevision++;
+    }
+
+    private void ClearActivity()
+    {
+        if (_activity.Count == 0)
+        {
+            return;
+        }
+
+        _activity.Clear();
+        _activitySnapshot = null;
+        _activityRevision++;
+    }
+
+    /// <summary>The line's own local time; VRChat writes `yyyy.MM.dd HH:mm:ss` without a zone.</summary>
+    private static DateTimeOffset LineTimestamp(string line)
+    {
+        var match = LineStart.Match(line ?? string.Empty);
+        if (match.Success &&
+            DateTime.TryParseExact(
+                match.Groups["stamp"].Value,
+                "yyyy.MM.dd HH:mm:ss",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var local))
+        {
+            return new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
+        }
+
+        return DateTimeOffset.Now;
+    }
+
+    private static string Shorten(string value)
+        => value.Length <= 160 ? value : value[..159] + "\u2026";
 
     private void Add(string rawName, string userId)
     {

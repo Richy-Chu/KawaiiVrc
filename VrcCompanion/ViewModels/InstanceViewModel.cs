@@ -145,6 +145,17 @@ public sealed class InstanceViewModel : ViewModelBase
     /// <summary>The roster one page at a time; an 80-person instance builds 24 rows.</summary>
     public PagedList<InstancePlayerItem> PlayersPage { get; } = new();
 
+    /// <summary>
+    /// The joins, leaves and Udon events the last log read found in the current instance.
+    /// Context shows them, so they come from the poll this page already runs instead of a
+    /// second reader opening the same file.
+    /// </summary>
+    public IReadOnlyList<VrChatLogActivity> LogActivity =>
+        _lastLogSnapshot?.Activity ?? Array.Empty<VrChatLogActivity>();
+
+    /// <summary>Bumped by the log service whenever the activity list changes.</summary>
+    public int LogActivityRevision => _lastLogSnapshot?.ActivityRevision ?? 0;
+
     public string PlayerSearch
     {
         get => _playerSearch;

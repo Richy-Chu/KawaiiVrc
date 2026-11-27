@@ -518,6 +518,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         };
         _clockTimer.Tick += (_, _) =>
         {
+            // An invite ages out of VRChat's 15 minute reply window while the feed sits
+            // unread, so the marker is recomputed on the clock the header already runs
+            // rather than a second timer of its own.
+            RefreshReplyWindowMarkers();
             if (!IsMainWindowMinimized())
             {
                 OnPropertyChanged(nameof(ClockText));
@@ -6493,6 +6497,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // The roster signature cannot see an Udon event that changes no player, and the
+        // activity box would then wait for a manual Refresh. The log service's revision
+        // covers exactly those changes, so Context follows them on the same poll.
+        signature += "|activity:" + (snapshot?.ActivityRevision ?? 0);
+
         if (string.Equals(signature, _contextLogSignature, StringComparison.Ordinal))
         {
             return;
@@ -8145,8 +8154,33 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// feed had already stopped returning.
     /// </summary>
     internal static bool IsInsideReplyWindow(NotificationItem item)
-        => item.CreatedAt is not { } createdAt ||
-           DateTimeOffset.UtcNow - createdAt < VrcApiClient.InviteReplyWindow;
+        => IsInsideReplyWindow(item, DateTimeOffset.UtcNow);
+
+    internal static bool IsInsideReplyWindow(NotificationItem item, DateTimeOffset now)
+        => item.CreatedAt is not { } createdAt || now - createdAt < VrcApiClient.InviteReplyWindow;
+
+    /// <summary>
+    /// Re-marks every world invite and invite request against that window. The feed only
+    /// re-evaluates a row when it is read, so a row left in an unrefreshed list kept its
+    /// open look past the boundary; the header's minute clock calls this, and a row that
+    /// has not crossed raises nothing.
+    /// </summary>
+    internal void RefreshReplyWindowMarkers(DateTimeOffset? now = null)
+    {
+        if (Notifications.Count == 0)
+        {
+            return;
+        }
+
+        var moment = now ?? DateTimeOffset.UtcNow;
+        foreach (var notification in Notifications)
+        {
+            if (notification.CanDecline)
+            {
+                notification.MarkPastReplyWindow(!IsInsideReplyWindow(notification, moment));
+            }
+        }
+    }
 
     /// <summary>Drops one notification from the list, whatever its type.</summary>
     private void ClearNotification(NotificationItem? item)
@@ -10416,10 +10450,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SyncCollection(Notifications, desired, notification => notification.Id);
         // The window is the notification's own age, so every feed read recomputes it and
         // a row kept from an earlier launch ages into the marker on its own.
-        foreach (var notification in Notifications)
-        {
-            notification.MarkPastReplyWindow(!IsInsideReplyWindow(notification));
-        }
+        RefreshReplyWindowMarkers();
 
         UpdateUnreadState();
         PersistNotifications();

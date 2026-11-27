@@ -1040,6 +1040,65 @@ public class NotificationPersistenceTests : IDisposable
         Assert.True(shell.Notifications.Single(item => item.Id == "not_stale").CanDecline);
     }
 
+    [Fact]
+    public void AnInviteRequestKeepsTheSameFifteenMinuteReplyWindowAsAnInvite()
+    {
+        var handler = new CaptureHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.SetLoggedIn(shell);
+        TestHooks.SetCurrentUser(shell, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+
+        var oldInvite = Notification("not_old_invite", "invite");
+        oldInvite.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-20);
+        var oldRequest = Notification("not_old_request", "requestInvite");
+        oldRequest.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-20);
+        var freshRequest = Notification("not_new_request", "requestInvite");
+        freshRequest.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-1);
+
+        TestHooks.UpdateNotifications(shell, new[] { oldInvite, oldRequest, freshRequest });
+
+        // A request for an invite is the same 15 minute reply window in the other
+        // direction: VRChat's client expires the invite request on the same clock
+        // (VRChat 2021.1.2p1, "Invites now expire after 15 minutes"; NotificationV2's
+        // expiryAfterSeen is 900 s), so one rule covers both rows.
+        Assert.True(shell.Notifications.Single(item => item.Id == "not_old_invite").IsPastReplyWindow);
+        Assert.True(shell.Notifications.Single(item => item.Id == "not_old_request").IsPastReplyWindow);
+        Assert.False(shell.Notifications.Single(item => item.Id == "not_new_request").IsPastReplyWindow);
+
+        // The request past the window still offers its message; VRChat's answer decides.
+        var marked = shell.Notifications.Single(item => item.Id == "not_old_request");
+        shell.DeclineNotificationWithMessageCommand.Execute(marked);
+        Assert.True(shell.IsResponseComposerOpen);
+        shell.CancelResponseComposerCommand.Execute(null);
+    }
+
+    [Fact]
+    public void TheReplyWindowMarkerClosesOnTheClockWithoutAnotherFeedRead()
+    {
+        var handler = new CaptureHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.SetLoggedIn(shell);
+        TestHooks.SetCurrentUser(shell, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+
+        var invite = Notification("not_only_row", "invite");
+        invite.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-1);
+        TestHooks.UpdateNotifications(shell, new[] { invite });
+        var row = shell.Notifications.Single(item => item.Id == "not_only_row");
+        Assert.False(row.IsPastReplyWindow);
+
+        // The header's minute clock calls this without reading the feed. Four minutes
+        // later the invite is still inside the window, so nothing is marked.
+        shell.RefreshReplyWindowMarkers(DateTimeOffset.UtcNow.AddMinutes(4));
+        Assert.False(row.IsPastReplyWindow);
+
+        // Two minutes past the boundary it flips, with no feed read in between.
+        shell.RefreshReplyWindowMarkers(DateTimeOffset.UtcNow.AddMinutes(15));
+        Assert.True(row.IsPastReplyWindow);
+        Assert.Contains(row, shell.Notifications);
+    }
+
     /// <summary>One invite past VRChat's 15 minute window, plus one that just arrived.</summary>
     private static (VrcNotification Stale, List<VrcNotification> Feed) ReplyWindowFeed()
     {
