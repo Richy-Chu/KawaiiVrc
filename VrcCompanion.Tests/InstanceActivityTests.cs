@@ -661,10 +661,9 @@ public class InstanceActivityTests
         var row = Assert.Single(feed.Activity);
         Assert.False(row.HasAvatarImage);
         // A private avatar has no picture, but the row still keeps the Activity page's
-        // round slot - with the person's initial - instead of falling back to a text chip.
+        // round slot instead of falling back to a text chip or inventing a letter.
         Assert.True(row.ShowAvatarIcon);
         Assert.False(row.ShowKindPill);
-        Assert.Equal("L", row.AvatarInitial);
     }
 
     [Fact]

@@ -12,7 +12,7 @@ newer SDK may be the local default: to check SDK 8 compatibility, write a `globa
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.148**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.149**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,17 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.149 changed
+
+- **No letter placeholder in an avatar row.** 1.0.148 put the display name's initial inside the
+  slot while the picture was unknown; the Activity page has no such placeholder, so the two still
+  looked different. `InstanceActivityItem.AvatarInitial` is gone and the slot draws only
+  `AvatarImageUrl`. An unresolved avatar is an empty round slot - the same as Activity - and the
+  picture replaces it when the person or avatar lookup answers. Do not add a letter, glyph or
+  chip inside the slot: a missing icon is not a different kind of row.
+- **Tests: 1107.** `InstanceActivityTests` pins that an unresolved avatar keeps the slot, never the
+  chip, and has no letter of its own.
 
 ### What 1.0.148 changed
 

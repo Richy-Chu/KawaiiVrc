@@ -154,7 +154,7 @@
                             </Grid.ColumnDefinitions>
                             <Grid VerticalAlignment="Center">
                                 <!-- Avatar rows show the same round avatar slot as the Activity page:
-                                     the picture when it resolves, the person's initial until then. -->
+                                     just its picture, no letter placeholder. -->
                                 <Border Background="{StaticResource AccentSoftBrush}"
                                         CornerRadius="6"
                                         Padding="6,2"
@@ -174,17 +174,9 @@
                                     <Border Margin="1.5"
                                             CornerRadius="14.5"
                                             Background="{StaticResource InputBrush}">
-                                        <Grid>
-                                            <TextBlock Text="{Binding AvatarInitial}"
-                                                       FontSize="11"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{StaticResource MutedBrush}"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center" />
-                                            <controls:AsyncImage SourceUrl="{Binding AvatarImageUrl}"
-                                                                 CornerRadius="14.5"
-                                                                 DecodeWidth="64" />
-                                        </Grid>
+                                        <controls:AsyncImage SourceUrl="{Binding AvatarImageUrl}"
+                                                             CornerRadius="14.5"
+                                                             DecodeWidth="64" />
                                     </Border>
                                 </Border>
                             </Grid>

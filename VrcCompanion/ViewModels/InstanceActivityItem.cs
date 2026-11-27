@@ -124,25 +124,6 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     /// </summary>
     public bool ShowAvatarIcon => IsAvatarChange;
 
-    /// <summary>The letter shown inside the slot until the avatar's picture resolves.</summary>
-    public string AvatarInitial
-    {
-        get
-        {
-            var name = DisplayName.Trim();
-            if (name.Length == 0)
-            {
-                return "?";
-            }
-
-            // Display names can open with an emoji; keep the whole surrogate pair.
-            var initial = char.IsHighSurrogate(name[0]) && name.Length > 1
-                ? name[..2]
-                : name[..1];
-            return char.IsSurrogate(initial[0]) ? initial : initial.ToUpperInvariant();
-        }
-    }
-
     /// <summary>Joins, leaves and Udon keep their kind chip; avatar rows use the slot.</summary>
     public bool ShowKindPill => !IsAvatarChange;
 
