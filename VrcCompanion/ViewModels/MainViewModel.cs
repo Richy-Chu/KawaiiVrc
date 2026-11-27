@@ -93,7 +93,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private HashSet<string> _clearedNotificationIds = new(StringComparer.Ordinal);
     // The ids VRChat's feed still accepts a reply for: the newest 40 legacy entries
     // from the last read, so the composer can refuse an invite past its window.
-    private IReadOnlyList<string> _replyableNotificationIds = Array.Empty<string>();
     private string _notificationsAccountId = string.Empty;
     private bool _isInviteComposerOpen;
     private string _composerError = string.Empty;
@@ -8024,17 +8023,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // VRChat answers a reply only while the notification is one of the newest 40
-        // in its feed. Past that it answers 404 "Notification not found", so say so
-        // before the message is typed instead of losing it on send.
-        if (!IsInsideReplyWindow(item))
-        {
-            ClearPersistentNotification(item);
-            ShowError(
-                "VRChat only accepts replies to the newest 40 notifications, so this invite is past " +
-                "its reply window. It was removed from your list.");
-            return;
-        }
+        // VRChat expires an invite 15 minutes after it arrives, but the composer still
+        // opens: VRChat's own answer decides, and refusing up front refused replies that
+        // could have worked. The row only carries the warning.
+        item.MarkPastReplyWindow(!IsInsideReplyWindow(item));
 
         _responseComposerNotification = item;
         _inviteMessagesLoadVersion++;
@@ -8106,15 +8098,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         catch (VrcApiException ex) when (NotificationHasExpired(ex))
         {
-            // VRChat keeps only recent notifications replyable. This row is
-            // still listed because invites are kept between launches, but the
-            // server no longer has it, so nothing was sent and retrying cannot
-            // work. Drop it instead of leaving a reply button that always fails.
+            // The invite's 15 minute window has closed. This row is still listed
+            // because invites are kept between launches, but the server no longer
+            // has it, so nothing was sent and retrying cannot work. Drop it instead
+            // of leaving a reply button that always fails.
             CloseResponseComposer();
             ClearPersistentNotification(item);
             ShowError(
-                "VRChat has expired that invite - it only accepts replies to the newest 40 notifications, " +
-                "so your message was not sent. The invite was removed from your list.");
+                "VRChat has expired that invite - invites take a reply for 15 minutes after they " +
+                "arrive, so your message was not sent. The invite was removed from your list.");
         }
         catch (VrcApiException ex)
         {
@@ -8138,8 +8130,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// VRChat answers "Notification not found" once a notification has dropped
-    /// out of the list it still accepts replies to. Invites are kept locally
+    /// VRChat answers "Notification not found" once an invite's 15 minute reply
+    /// window has closed and the server no longer holds it. Invites are kept locally
     /// until the user clears them, so a row can outlive what VRChat will act on.
     /// </summary>
     private static bool NotificationHasExpired(VrcApiException error)
@@ -8147,13 +8139,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
            (error.Message?.Contains("notification not found", StringComparison.OrdinalIgnoreCase) ?? false);
 
     /// <summary>
-    /// VRChat's reply endpoint works only for the newest 40 notifications in the feed;
-    /// there is no fixed time window, so a busy account can push an invite out within
-    /// minutes. The feed is remembered each time it is read. Before any feed has loaded,
-    /// the composer is allowed to open and VRChat's own answer decides.
+    /// VRChat expires an invite or invite request 15 minutes after it is sent, so the
+    /// notification's own age decides this. A row without a timestamp is left unmarked:
+    /// VRChat's answer is the only other evidence, and guessing marked fresh invites the
+    /// feed had already stopped returning.
     /// </summary>
-    internal bool IsInsideReplyWindow(NotificationItem item)
-        => _replyableNotificationIds.Count == 0 || _replyableNotificationIds.Contains(item.Id);
+    internal static bool IsInsideReplyWindow(NotificationItem item)
+        => item.CreatedAt is not { } createdAt ||
+           DateTimeOffset.UtcNow - createdAt < VrcApiClient.InviteReplyWindow;
 
     /// <summary>Drops one notification from the list, whatever its type.</summary>
     private void ClearNotification(NotificationItem? item)
@@ -8348,9 +8341,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             .ToList();
         foreach (var notification in persisted)
         {
-            // The reply window belongs to the feed last read for the account that is
-            // signing in; a freshly loaded account starts unmarked until its feed answers.
-            notification.MarkPastReplyWindow(false);
+            // The window is the notification's own age, so a persisted invite is marked
+            // from its timestamp without waiting for the first feed read.
+            notification.MarkPastReplyWindow(!IsInsideReplyWindow(notification));
         }
 
         SyncCollection(Notifications, persisted, notification => notification.Id);
@@ -10420,16 +10413,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             .OrderByDescending(notification => notification.CreatedAt ?? DateTimeOffset.MinValue)
             .ToList();
 
-        // Only the legacy feed can be replied to, and only its newest 40 entries; the
-        // rest of the list is still useful to read but no longer answerable.
-        _replyableNotificationIds = notifications
-            .Where(notification => !notification.IsV2 && !string.IsNullOrWhiteSpace(notification.Id))
-            .OrderByDescending(notification => notification.Timestamp ?? DateTimeOffset.MinValue)
-            .Take(VrcApiClient.ReplyableNotificationWindow)
-            .Select(notification => notification.Id)
-            .ToList();
-
         SyncCollection(Notifications, desired, notification => notification.Id);
+        // The window is the notification's own age, so every feed read recomputes it and
+        // a row kept from an earlier launch ages into the marker on its own.
         foreach (var notification in Notifications)
         {
             notification.MarkPastReplyWindow(!IsInsideReplyWindow(notification));
@@ -10741,7 +10727,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _api.ClearCaches();
         _notificationsAccountId = string.Empty;
         _clearedNotificationIds = new HashSet<string>(StringComparer.Ordinal);
-        _replyableNotificationIds = Array.Empty<string>();
         CloseInviteComposer();
         CloseResponseComposer();
 

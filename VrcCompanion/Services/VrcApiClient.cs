@@ -1034,12 +1034,13 @@ public sealed class VrcApiClient : IDisposable
     // ------------------------------------------------------- notifications
 
     /// <summary>
-    /// VRChat accepts a reply (decline or accept with a message) only for the newest
-    /// entries of the notification feed. Anything older answers 404 "Notification not
-    /// found" even though the row is still listed. There is no fixed time window: a
-    /// busy account can push an invite out of it within minutes.
+    /// VRChat expires an invite or invite request 15 minutes after it is sent (2021.1.2p1:
+    /// "Invites now expire after 15 minutes"). A reply after that answers 404 "Notification
+    /// not found" even though the row is still listed. The notification's own age decides
+    /// this: the feed can stop returning a row within a minute of it being read, so counting
+    /// feed rows marked freshly sent invites as closed.
     /// </summary>
-    public const int ReplyableNotificationWindow = 40;
+    public static readonly TimeSpan InviteReplyWindow = TimeSpan.FromMinutes(15);
 
     /// <summary>
     /// The combined notification feed. The legacy endpoint still carries

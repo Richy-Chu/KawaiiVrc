@@ -12,7 +12,7 @@ newer SDK may be the local default: to check SDK 8 compatibility, write a `globa
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.139**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.140**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,25 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.140 changed
+
+- **An invite's reply window is VRChat's documented 15 minutes, not a feed count.**
+  1.0.139 marked rows by their position in the newest 40 of the feed, but that list was
+  built from the feed itself, and VRChat stops returning an invite once it has been read -
+  so a one-minute-old invite fell out of the list and showed `REPLY WINDOW CLOSED`. VRChat's
+  2021.1.2p1 notes say "Invites now expire after 15 minutes"; `VrcApiClient.InviteReplyWindow`
+  is that, and `MainViewModel.IsInsideReplyWindow` compares the notification's own timestamp.
+  The row marker and a persisted row's marker on account load both use it; a row with no
+  timestamp is left unmarked.
+- **Decline with message is never refused before it is tried.** `OpenResponseComposer` no
+  longer closes with an error for a marked row: the marker is a warning, the composer opens,
+  and VRChat's answer (404 "Notification not found") is what reports an expired invite. Do not
+  put the up-front refusal back; it blocked replies VRChat would have accepted.
+- **Tests: 1075.** `DeclineWithMessageStillOpensForAnInvitePastVrChatsFifteenMinutes` pins a
+  20-minute-old invite that is marked yet still opens the composer, and
+  `AFreshInviteVrChatsFeedNoLongerReturnsIsNotMarkedClosed` pins the regression: a one-minute-old
+  invite the feed stops returning after it is read stays unmarked.
 
 ### What 1.0.139 changed
 

@@ -960,7 +960,7 @@ public class NotificationPersistenceTests : IDisposable
     }
 
     [Fact]
-    public void DeclineWithMessageRefusesAnInvitePastVrChatsNewestForty()
+    public void DeclineWithMessageStillOpensForAnInvitePastVrChatsFifteenMinutes()
     {
         var handler = new CaptureHandler();
         using var api = new VrcApiClient(null, handler);
@@ -968,25 +968,50 @@ public class NotificationPersistenceTests : IDisposable
         TestHooks.SetLoggedIn(shell);
         TestHooks.SetCurrentUser(shell, new VrcUser { Id = "usr_me", DisplayName = "Me" });
 
-        // VRChat answers replies only for the newest 40 notifications, so one invite
-        // behind 40 newer rows is already past its window even though it is hours old,
-        // not days: there is no fixed time limit.
+        // VRChat expires invites 15 minutes after they are sent, so a 20 minute old one is
+        // marked - but the composer still opens. Refusing up front refused replies VRChat
+        // would have accepted, so its own answer is what decides.
         var (_, feed) = ReplyWindowFeed();
         TestHooks.UpdateNotifications(shell, feed);
 
         var staleItem = shell.Notifications.Single(item => item.Id == "not_stale");
+        Assert.True(staleItem.IsPastReplyWindow);
+        Assert.True(staleItem.CanDecline);
+
         shell.DeclineNotificationWithMessageCommand.Execute(staleItem);
+        Assert.True(shell.IsResponseComposerOpen, "A marked invite must still offer its message.");
+        Assert.Contains(staleItem, shell.Notifications);
+        shell.CancelResponseComposerCommand.Execute(null);
 
-        Assert.False(shell.IsResponseComposerOpen, "An expired invite should not open the composer.");
-        Assert.DoesNotContain(staleItem, shell.Notifications);
-        Assert.Contains("40", shell.ErrorMessage);
-        Assert.DoesNotContain(
-            handler.Requests,
-            item => item.Path == "POST api/1/invite/not_stale/response");
-
-        // The newest invite is still answerable.
+        // The invite a minute old is inside the window and carries no marker.
         var newest = shell.Notifications.Single(item => item.Id == "not_new_00");
+        Assert.False(newest.IsPastReplyWindow);
         shell.DeclineNotificationWithMessageCommand.Execute(newest);
+        Assert.True(shell.IsResponseComposerOpen);
+        shell.CancelResponseComposerCommand.Execute(null);
+    }
+
+    [Fact]
+    public void AFreshInviteVrChatsFeedNoLongerReturnsIsNotMarkedClosed()
+    {
+        var handler = new CaptureHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        TestHooks.SetLoggedIn(shell);
+        TestHooks.SetCurrentUser(shell, new VrcUser { Id = "usr_me", DisplayName = "Me" });
+
+        var invite = Notification("not_read_invite", "invite");
+        invite.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-1);
+        TestHooks.UpdateNotifications(shell, new[] { invite });
+
+        // VRChat can stop returning an invite once it has been read; the row is kept in
+        // this list. Counting feed rows marked that row closed within a minute, which is
+        // what made a fresh invite look expired.
+        TestHooks.UpdateNotifications(shell, Array.Empty<VrcNotification>());
+
+        var kept = shell.Notifications.Single(item => item.Id == "not_read_invite");
+        Assert.False(kept.IsPastReplyWindow);
+        shell.DeclineNotificationWithMessageCommand.Execute(kept);
         Assert.True(shell.IsResponseComposerOpen);
         shell.CancelResponseComposerCommand.Execute(null);
     }
@@ -1003,8 +1028,8 @@ public class NotificationPersistenceTests : IDisposable
         var (_, feed) = ReplyWindowFeed();
         TestHooks.UpdateNotifications(shell, feed);
 
-        // The invite behind 40 newer rows is marked before its Decline with message is
-        // pressed; the newest invite in the same list is not.
+        // The invite older than VRChat's 15 minute window is marked before its Decline
+        // with message is pressed; the one a minute old in the same list is not.
         Assert.True(shell.Notifications.Single(item => item.Id == "not_stale").IsPastReplyWindow);
         Assert.False(shell.Notifications.Single(item => item.Id == "not_new_00").IsPastReplyWindow);
         Assert.All(
@@ -1015,20 +1040,14 @@ public class NotificationPersistenceTests : IDisposable
         Assert.True(shell.Notifications.Single(item => item.Id == "not_stale").CanDecline);
     }
 
-    /// <summary>One invite behind 40 newer ones, plus the newest invite itself.</summary>
+    /// <summary>One invite past VRChat's 15 minute window, plus one that just arrived.</summary>
     private static (VrcNotification Stale, List<VrcNotification> Feed) ReplyWindowFeed()
     {
         var stale = Notification("not_stale", "invite");
-        stale.CreatedAtLegacy = DateTimeOffset.UtcNow.AddHours(-3);
-        var feed = new List<VrcNotification> { stale };
-        for (var index = 0; index < VrcApiClient.ReplyableNotificationWindow; index++)
-        {
-            var newer = Notification($"not_new_{index:00}", "invite");
-            newer.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-index);
-            feed.Add(newer);
-        }
-
-        return (stale, feed);
+        stale.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-20);
+        var fresh = Notification("not_new_00", "invite");
+        fresh.CreatedAtLegacy = DateTimeOffset.UtcNow.AddMinutes(-1);
+        return (stale, new List<VrcNotification> { stale, fresh });
     }
 
     private static async Task WaitForSavedMessagesAsync(MainViewModel shell)

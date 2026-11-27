@@ -212,15 +212,15 @@ public sealed class NotificationItem : ViewModelBase
     private bool _isPastReplyWindow;
 
     /// <summary>
-    /// VRChat accepts a reply only for the newest 40 notifications. Invites are kept here
-    /// between launches, so a row can still be listed long after VRChat stopped answering
-    /// it; the list marks that row before "Decline with message" is pressed.
+    /// VRChat expires an invite or invite request 15 minutes after it is sent. Invites are
+    /// kept here between launches, so a row can still be listed long after VRChat stopped
+    /// answering it; the list warns before "Decline with message" is pressed.
     /// </summary>
     public bool IsPastReplyWindow => _isPastReplyWindow;
 
     public string ReplyWindowClosedHint =>
-        "VRChat only accepts replies to its newest 40 notifications, so this invite can no " +
-        "longer take a message. Decline still removes it.";
+        "VRChat expires invites 15 minutes after they are sent, so it may refuse a reply to " +
+        "this one. You can still try to send a message, and Decline always removes it.";
 
     /// <summary>Marks (or clears) the reply-window warning; only world invites and requests can carry it.</summary>
     public void MarkPastReplyWindow(bool pastWindow)
