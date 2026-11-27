@@ -618,15 +618,15 @@ public class InstanceActivityTests
             Entry(VrChatLogActivityKind.Joined, "Other", 2)
         });
 
-        // The badge column is the avatar itself, the way the Activity page draws a switch.
+        // The badge column is the avatar slot, the way the Activity page draws a switch.
         var avatar = feed.Activity.Single(row => row.IsAvatarChange);
-        Assert.True(avatar.ShowAvatarImage);
+        Assert.True(avatar.ShowAvatarIcon);
         Assert.False(avatar.ShowKindPill);
         Assert.Equal(picture, avatar.AvatarImageUrl);
 
         // A join keeps its own chip: only avatar rows lose it.
         var joined = feed.Activity.Single(row => !row.IsAvatarChange);
-        Assert.False(joined.ShowAvatarImage);
+        Assert.False(joined.ShowAvatarIcon);
         Assert.True(joined.ShowKindPill);
     }
 
@@ -652,15 +652,19 @@ public class InstanceActivityTests
     }
 
     [Fact]
-    public void AnAvatarWithoutAPublicPictureKeepsTheChip()
+    public void AnAvatarWithoutAPublicPictureStillShowsTheAvatarSlot()
     {
         var feed = new InstanceActivityFeed();
         feed.SetAvatarImageResolver((_, _) => Task.FromResult<string?>(null));
-        feed.Apply(new[] { AvatarRow("Someone", "Private Avatar", "Maker", 1) });
+        feed.Apply(new[] { AvatarRow("Lapit", "Private Avatar", "Maker", 1) });
 
         var row = Assert.Single(feed.Activity);
         Assert.False(row.HasAvatarImage);
-        Assert.True(row.ShowKindPill);
+        // A private avatar has no picture, but the row still keeps the Activity page's
+        // round slot - with the person's initial - instead of falling back to a text chip.
+        Assert.True(row.ShowAvatarIcon);
+        Assert.False(row.ShowKindPill);
+        Assert.Equal("L", row.AvatarInitial);
     }
 
     [Fact]

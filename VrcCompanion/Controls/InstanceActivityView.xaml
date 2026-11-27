@@ -153,8 +153,8 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid VerticalAlignment="Center">
-                                <!-- Avatar rows show the avatar itself, like the Activity page; the
-                                     AVATAR chip stays until its picture is resolved. -->
+                                <!-- Avatar rows show the same round avatar slot as the Activity page:
+                                     the picture when it resolves, the person's initial until then. -->
                                 <Border Background="{StaticResource AccentSoftBrush}"
                                         CornerRadius="6"
                                         Padding="6,2"
@@ -170,13 +170,21 @@
                                         CornerRadius="16"
                                         Background="{StaticResource AccentGradientPink}"
                                         ToolTip="{Binding AvatarImageTooltip}"
-                                        Visibility="{Binding ShowAvatarImage, Converter={StaticResource BoolToVis}}">
+                                        Visibility="{Binding ShowAvatarIcon, Converter={StaticResource BoolToVis}}">
                                     <Border Margin="1.5"
                                             CornerRadius="14.5"
                                             Background="{StaticResource InputBrush}">
-                                        <controls:AsyncImage SourceUrl="{Binding AvatarImageUrl}"
-                                                             CornerRadius="14.5"
-                                                             DecodeWidth="64" />
+                                        <Grid>
+                                            <TextBlock Text="{Binding AvatarInitial}"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                            <controls:AsyncImage SourceUrl="{Binding AvatarImageUrl}"
+                                                                 CornerRadius="14.5"
+                                                                 DecodeWidth="64" />
+                                        </Grid>
                                     </Border>
                                 </Border>
                             </Grid>

@@ -116,14 +116,34 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
 
     public bool HasAvatarImage => IsAvatarChange && _avatarImageUrl.Length > 0;
 
-    /// <summary>Avatar rows draw the avatar in place of the AVATAR chip once it is known.</summary>
-    public bool ShowAvatarImage => HasAvatarImage;
-
     /// <summary>
-    /// Every other row, and an avatar row still waiting for its picture, keeps the
-    /// kind chip so the badge column is never blank.
+    /// Every avatar row draws the same round avatar slot the Activity page draws, even
+    /// while its picture is unknown, so one private avatar does not leave a text chip in
+    /// a list of pictures.
     /// </summary>
-    public bool ShowKindPill => !HasAvatarImage;
+    public bool ShowAvatarIcon => IsAvatarChange;
+
+    /// <summary>The letter shown inside the slot until the avatar's picture resolves.</summary>
+    public string AvatarInitial
+    {
+        get
+        {
+            var name = DisplayName.Trim();
+            if (name.Length == 0)
+            {
+                return "?";
+            }
+
+            // Display names can open with an emoji; keep the whole surrogate pair.
+            var initial = char.IsHighSurrogate(name[0]) && name.Length > 1
+                ? name[..2]
+                : name[..1];
+            return char.IsSurrogate(initial[0]) ? initial : initial.ToUpperInvariant();
+        }
+    }
+
+    /// <summary>Joins, leaves and Udon keep their kind chip; avatar rows use the slot.</summary>
+    public bool ShowKindPill => !IsAvatarChange;
 
     public string AvatarImageTooltip => AvatarName.Length == 0
         ? "The avatar this player switched to"
@@ -145,8 +165,6 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         _avatarImageUrl = next;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvatarImageUrl)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasAvatarImage)));
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowAvatarImage)));
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowKindPill)));
     }
 
     /// <summary>True when the row can open an avatar popup (the log gave a name or an id).</summary>
