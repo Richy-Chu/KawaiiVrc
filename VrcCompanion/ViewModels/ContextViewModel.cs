@@ -66,6 +66,10 @@ public sealed class ContextViewModel : ViewModelBase
         OpenWorldCommand = new RelayCommand<string>(
             worldId => WorldRequested?.Invoke(worldId),
             worldId => !string.IsNullOrWhiteSpace(worldId));
+        // The roster copied into this page supplies the same profile pictures the
+        // Activity page draws on its switch rows.
+        ActivityFeed.SetPersonImageResolver(
+            (userId, displayName) => InstanceActivityFeed.PlayerThumbnail(Players, userId, displayName));
     }
 
     public ObservableCollection<InstancePlayerItem> Players { get; } = new();

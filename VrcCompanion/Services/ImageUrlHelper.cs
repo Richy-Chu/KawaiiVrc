@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using VrcCompanion.Models;
 
 namespace VrcCompanion.Services;
 
@@ -177,6 +178,21 @@ public static class ImageUrlHelper
             currentAvatarImageUrl);
         return ToThumbnailUrl(url, resolution);
     }
+
+    /// <summary>
+    /// The round picture an Activity row draws for a person: their profile icon first,
+    /// then their profile picture, then the avatar they are wearing. This is the icon the
+    /// Activity page shows on every row - not the avatar a switch line happens to name.
+    /// </summary>
+    public static string? PersonThumbnailUrl(VrcUser? user, int resolution = 128)
+        => user is null
+            ? null
+            : PickAvatarThumbnailUrl(
+                user.UserIcon,
+                user.ProfilePicOverrideThumbnail ?? user.IconUrl,
+                user.CurrentAvatarThumbnailImageUrl,
+                user.CurrentAvatarImageUrl,
+                resolution);
 
     /// <summary>
     /// Picks the best world thumbnail URL: thumbnailImageUrl → imageUrl, converted to thumbnail form.

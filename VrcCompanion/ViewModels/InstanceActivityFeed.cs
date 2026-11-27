@@ -25,6 +25,7 @@ public sealed class InstanceActivityFeed : ViewModelBase
     private readonly Dictionary<string, string> _avatarImages = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _avatarImageLookups = new(StringComparer.OrdinalIgnoreCase);
     private Func<string, string?, Task<string?>>? _avatarImageResolver;
+    private Func<string, string, string?>? _personImageResolver;
 
     public InstanceActivityFeed()
     {
@@ -133,6 +134,66 @@ public sealed class InstanceActivityFeed : ViewModelBase
     }
 
     /// <summary>
+    /// The person's own picture, which the Activity page draws on a switch row. It is
+    /// filled from the roster the reader already sees, and always wins over the changed
+    /// avatar's picture, so both surfaces show the same face for the same switch.
+    /// </summary>
+    public void SetPersonImageResolver(Func<string, string, string?>? resolver)
+    {
+        _personImageResolver = resolver;
+        RefreshPictures();
+    }
+
+    /// <summary>
+    /// Re-reads the person pictures after the roster gained a profile or a picture.
+    /// The rows are cached, so a new roster image has to be pushed into them.
+    /// </summary>
+    public void RefreshPictures()
+    {
+        if (_personImageResolver is null)
+        {
+            return;
+        }
+
+        foreach (var item in Activity)
+        {
+            if (!item.IsAvatarChange)
+            {
+                continue;
+            }
+
+            var person = _personImageResolver(item.Activity.UserId, item.Activity.DisplayName);
+            if (!string.IsNullOrWhiteSpace(person))
+            {
+                item.SetPersonImage(person);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The Activity page's person picture for a roster row, matched by user id and then
+    /// by display name for rows VRChat's log gave no id.
+    /// </summary>
+    public static string? PlayerThumbnail(
+        IEnumerable<InstancePlayerItem> players,
+        string userId,
+        string displayName)
+    {
+        foreach (var player in players)
+        {
+            var match = !string.IsNullOrWhiteSpace(userId)
+                ? string.Equals(player.UserId, userId, StringComparison.Ordinal)
+                : string.Equals(player.DisplayName, displayName, StringComparison.CurrentCultureIgnoreCase);
+            if (match)
+            {
+                return ImageUrlHelper.PersonThumbnailUrl(player.User);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// True when this event is the signed-in account's. When both ids are known the id
     /// decides, so another player with the same display name is never tagged as you.
     /// </summary>
@@ -168,8 +229,18 @@ public sealed class InstanceActivityFeed : ViewModelBase
             if (!_cache.TryGetValue(key, out var item))
             {
                 item = new InstanceActivityItem(entry, IsSelf(entry));
-                if (item.IsAvatarChange &&
-                    _avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
+            }
+
+            if (item.IsAvatarChange)
+            {
+                // The person's picture is what the Activity page shows; the changed
+                // avatar's picture is the fallback for a player with no profile picture.
+                var person = _personImageResolver?.Invoke(entry.UserId, entry.DisplayName);
+                if (!string.IsNullOrWhiteSpace(person))
+                {
+                    item.SetPersonImage(person);
+                }
+                else if (_avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
                 {
                     item.SetAvatarImage(image);
                 }

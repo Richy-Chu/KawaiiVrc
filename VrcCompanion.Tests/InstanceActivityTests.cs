@@ -668,6 +668,60 @@ public class InstanceActivityTests
     }
 
     [Fact]
+    public void ThePersonsPictureWinsOverTheChangedAvatar()
+    {
+        const string person = "https://files.vrchat.cloud/person.png";
+        var avatarLookups = 0;
+        var feed = new InstanceActivityFeed();
+        feed.SetPersonImageResolver((_, name) =>
+            string.Equals(name, "Someone", StringComparison.Ordinal) ? person : null);
+        feed.SetAvatarImageResolver((_, _) =>
+        {
+            avatarLookups++;
+            return Task.FromResult<string?>("https://files.vrchat.cloud/avatar.png");
+        });
+
+        feed.Apply(new[] { AvatarRow("Someone", "Kitten", "Maker", 1) });
+
+        // The Activity page draws the person, not the avatar they switched to, so the
+        // instance box must show the same face and skip the avatar lookup entirely.
+        var row = Assert.Single(feed.Activity);
+        Assert.Equal(person, row.AvatarImageUrl);
+        Assert.Equal(0, avatarLookups);
+    }
+
+    [Fact]
+    public void ARosterPictureIsTheSamePictureTheActivityPageDraws()
+    {
+        var user = new VrcUser
+        {
+            Id = SomeoneId,
+            DisplayName = "Someone",
+            UserIcon = "https://files.vrchat.cloud/api/1/file/file_icon/1/file"
+        };
+        var player = new InstancePlayerItem(user, isFriend: false, isSelf: false);
+
+        var image = InstanceActivityFeed.PlayerThumbnail(new[] { player }, SomeoneId, "Someone");
+        Assert.False(string.IsNullOrWhiteSpace(image));
+
+        // A row VRChat's log gave no id still finds the roster row by its name.
+        Assert.Equal(image, InstanceActivityFeed.PlayerThumbnail(new[] { player }, string.Empty, "Someone"));
+        Assert.Null(InstanceActivityFeed.PlayerThumbnail(new[] { player }, OtherId, "Other"));
+    }
+
+    [Fact]
+    public void ARosterPictureThatArrivesLaterReachesTheCachedRow()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.Apply(new[] { AvatarRow("Someone", "Kitten", "Maker", 1) });
+        Assert.False(feed.Activity.Single().HasAvatarImage);
+
+        feed.SetPersonImageResolver((_, _) => "https://files.vrchat.cloud/person.png");
+
+        Assert.Equal("https://files.vrchat.cloud/person.png", feed.Activity.Single().AvatarImageUrl);
+    }
+
+    [Fact]
     public async Task TheSharedLookupTurnsAnAvatarNameIntoItsPictureWithoutAskVrChat()
     {
         // The instance feed is handed this exact method, so a name the Activity page

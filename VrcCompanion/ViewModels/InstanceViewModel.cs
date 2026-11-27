@@ -76,6 +76,10 @@ public sealed class InstanceViewModel : ViewModelBase
             Interval = TimeSpan.FromSeconds(1)
         };
         _logTimer.Tick += (_, _) => PollLogForChanges();
+        // Avatar rows draw the person's own picture, the same one the Activity page's
+        // switch rows draw, taken from the roster this page already holds.
+        ActivityFeed.SetPersonImageResolver(
+            (userId, displayName) => InstanceActivityFeed.PlayerThumbnail(_players, userId, displayName));
     }
 
     /// <summary>Only poll the local log while the Instance popup is on screen.</summary>
@@ -1473,6 +1477,8 @@ public sealed class InstanceViewModel : ViewModelBase
         OnPropertyChanged(nameof(PlayerListSourceText));
         OnPropertyChanged(nameof(PlayerListNotice));
         OnPropertyChanged(nameof(PlayersEmptyMessage));
+        // Profiles and pictures arrive after the rows, so the box picks them up here.
+        ActivityFeed.RefreshPictures();
     }
 
     private static string? AvatarKey(VrcUser user)

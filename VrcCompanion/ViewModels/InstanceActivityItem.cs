@@ -20,6 +20,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
 
     private ActivityEntry? _avatarEntry;
     private string _avatarImageUrl = string.Empty;
+    private bool _showsPersonPicture;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -109,8 +110,8 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         : null;
 
     /// <summary>
-    /// The avatar's own picture, filled in once the shared lookup resolves the name
-    /// VRChat's log wrote. It is what the Activity page draws on its switch rows.
+    /// The round picture the row draws: the person's own picture first (what the
+    /// Activity page draws), the switched avatar's picture when the person has none.
     /// </summary>
     public string AvatarImageUrl => _avatarImageUrl;
 
@@ -145,10 +146,38 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     /// <summary>Joins, leaves and Udon keep their kind chip; avatar rows use the slot.</summary>
     public bool ShowKindPill => !IsAvatarChange;
 
-    public string AvatarImageTooltip => AvatarName.Length == 0
-        ? "The avatar this player switched to"
-        : $"The avatar this player switched to: {AvatarName}";
+    public string AvatarImageTooltip
+    {
+        get
+        {
+            var avatar = AvatarName.Length == 0 ? "their new avatar" : AvatarName;
+            return _showsPersonPicture
+                ? $"This player's VRChat profile picture · now wearing {avatar}"
+                : $"The avatar this player switched to · {avatar}";
+        }
+    }
 
+    /// <summary>
+    /// The person's own picture, which is what the Activity page draws on an avatar row.
+    /// It always wins over the switched avatar's picture, so the instance box and the
+    /// Activity page show the same face for the same switch.
+    /// </summary>
+    public void SetPersonImage(string? url)
+    {
+        if (!IsAvatarChange)
+        {
+            return;
+        }
+
+        var next = url?.Trim() ?? string.Empty;
+        if (next.Length > 0)
+        {
+            _showsPersonPicture = true;
+            ApplyImage(next);
+        }
+    }
+
+    /// <summary>The switched avatar's own picture, used only when the person has none.</summary>
     public void SetAvatarImage(string? url)
     {
         if (!IsAvatarChange)
@@ -157,6 +186,17 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         }
 
         var next = url?.Trim() ?? string.Empty;
+        if (next.Length == 0 || _avatarImageUrl.Length > 0)
+        {
+            return;
+        }
+
+        _showsPersonPicture = false;
+        ApplyImage(next);
+    }
+
+    private void ApplyImage(string next)
+    {
         if (string.Equals(_avatarImageUrl, next, StringComparison.Ordinal))
         {
             return;
@@ -165,6 +205,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         _avatarImageUrl = next;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvatarImageUrl)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasAvatarImage)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvatarImageTooltip)));
     }
 
     /// <summary>True when the row can open an avatar popup (the log gave a name or an id).</summary>

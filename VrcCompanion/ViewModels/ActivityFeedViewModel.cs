@@ -1601,12 +1601,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     }
 
     private static string AvatarThumbnailUrl(VrcUser friend)
-        => ImageUrlHelper.PickAvatarThumbnailUrl(
-               friend.UserIcon,
-               friend.ProfilePicOverrideThumbnail ?? friend.IconUrl,
-               friend.CurrentAvatarThumbnailImageUrl,
-               friend.CurrentAvatarImageUrl,
-               128) ?? string.Empty;
+        => ImageUrlHelper.PersonThumbnailUrl(friend) ?? string.Empty;
 
     private void RenderFeed(IReadOnlyList<VrcUser> friends, IReadOnlyList<VrcUser>? previous)
     {
