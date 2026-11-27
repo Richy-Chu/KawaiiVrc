@@ -62,6 +62,33 @@
             </Setter>
         </Style>
 
+        <!-- The two actions an avatar row carries. The window's button styles are not in
+             scope inside a UserControl, so the look is declared here. -->
+        <Style x:Key="ActivityLinkButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="FontSize" Value="9" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource VioletBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent">
+                            <ContentPresenter />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="ActivityPillList" TargetType="ListBox">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
@@ -88,7 +115,7 @@
                        HorizontalAlignment="Right"
                        VerticalAlignment="Center" />
         </Grid>
-        <TextBlock Text="Joins, leaves and Udon events, read from VRChat's own log."
+        <TextBlock Text="Joins, leaves, Udon events and avatar changes, read from VRChat's own log."
                    Style="{StaticResource MutedText}"
                    FontSize="9.5"
                    Foreground="{StaticResource DimBrush}"
@@ -145,6 +172,23 @@
                                            FontSize="9"
                                            TextTrimming="CharacterEllipsis"
                                            ToolTip="{Binding ToolTip}" />
+                                <StackPanel Orientation="Horizontal"
+                                            Margin="0,3,0,0"
+                                            Visibility="{Binding IsAvatarChange, Converter={StaticResource BoolToVis}}">
+                                    <Button Content="View avatar"
+                                            Style="{StaticResource ActivityLinkButton}"
+                                            Command="{Binding DataContext.OpenActivityAvatarCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding AvatarEntry}"
+                                            ToolTip="{Binding AvatarTooltip}"
+                                            Visibility="{Binding CanOpenAvatar, Converter={StaticResource BoolToVis}}" />
+                                    <Button Content="Profile"
+                                            Style="{StaticResource ActivityLinkButton}"
+                                            Margin="10,0,0,0"
+                                            Command="{Binding DataContext.OpenActivityUserCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding AvatarEntry}"
+                                            ToolTip="Open this person's VRChat profile"
+                                            Visibility="{Binding CanOpenProfile, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
                             </StackPanel>
                             <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
                                 <TextBlock Text="{Binding TimeText}"

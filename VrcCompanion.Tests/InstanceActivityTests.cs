@@ -365,6 +365,134 @@ public class InstanceActivityTests
         });
     }
 
+    [Fact]
+    public void AnAvatarSwitchIsRecordedWithThePlayerTheAvatarAndItsAuthor()
+    {
+        using var log = new LogFile(
+            $"2026.11.27 12:00:00 Log        -  [Behaviour] Joining {Location}",
+            $"2026.11.27 12:00:05 Log        -  [Behaviour] OnPlayerJoined Someone ({SomeoneId})",
+            "2026.11.27 12:00:07 Log        -  [AssetBundleDownloadManager] [1] Unpacking Avatar (Kitten by Maker)",
+            "2026.11.27 12:00:09 Log        -  [Behaviour] Switching Someone to avatar Kitten");
+
+        var service = new VrChatLogPlayerService(() => log.Path);
+        var activity = service.Poll()!.Activity!;
+
+        var row = Assert.Single(activity, entry => entry.Kind == VrChatLogActivityKind.AvatarChanged);
+        Assert.Equal("Someone", row.DisplayName);
+        // The switch line names the avatar only; the author comes from the unpack line.
+        Assert.Equal(SomeoneId, row.UserId);
+        Assert.Equal("Kitten", row.AvatarName);
+        Assert.Equal("Maker", row.AvatarAuthor);
+        // Joins are still recorded beside it.
+        Assert.Contains(activity, entry => entry.Kind == VrChatLogActivityKind.Joined);
+    }
+
+    [Fact]
+    public void TheAvatarFilterKeepsOnlyAvatarChanges()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.Apply(new[]
+        {
+            Entry(VrChatLogActivityKind.Joined, "A", 1),
+            AvatarRow("Someone", "Kitten", "Maker", 2),
+            Entry(VrChatLogActivityKind.Udon, string.Empty, 3)
+        });
+
+        var avatarFilter = feed.ActivityFilters.Single(filter => filter.Key == "avatar");
+        Assert.Equal("Avatar", avatarFilter.Label);
+        feed.SelectedActivityFilter = avatarFilter;
+
+        var row = Assert.Single(feed.Activity);
+        Assert.Equal("AVATAR", row.KindLabel);
+        Assert.Equal("Someone", row.Title);
+        Assert.Equal("now wearing Kitten by Maker", row.DetailText);
+    }
+
+    [Fact]
+    public void AnAvatarRowOpensTheAvatarAndTheProfileLikeTheActivityPage()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var handler = new CountingHandler();
+            using var api = new VrcApiClient(null, handler);
+            using var shell = new MainViewModel(api);
+            var avatars = new AvatarViewModel(api);
+            TestHooks.AttachAvatarViewModel(shell, avatars);
+
+            var feed = new InstanceActivityFeed();
+            feed.Apply(new[] { AvatarRow("Someone", "Kitten", "Maker", 2) });
+            var row = Assert.Single(feed.Activity);
+
+            // The box hands the Activity page the same row model that page's avatar rows
+            // use, so a name-only switch resolves to the public avatar there too.
+            var entry = Assert.IsType<ActivityEntry>(row.AvatarEntry);
+            Assert.Equal(ActivityType.AvatarChanged, entry.Type);
+            Assert.Equal("Kitten", entry.EffectiveAvatarName);
+            Assert.Equal("Maker", entry.AvatarAuthor);
+            Assert.Equal(SomeoneId, entry.UserId);
+            Assert.True(row.CanOpenAvatar);
+            Assert.True(row.CanOpenProfile);
+
+            Assert.True(shell.OpenActivityAvatarCommand.CanExecute(entry));
+            shell.OpenActivityAvatarCommand.Execute(entry);
+
+            // The popup opens on the name alone, before any lookup answers.
+            Assert.True(avatars.IsAvatarDetailsOpen);
+            Assert.Contains("Kitten", avatars.SelectedAvatar!.Name, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public void AnAvatarRowOffersItsTwoActionsInTheBox()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var feed = new InstanceActivityFeed();
+            feed.Apply(new[]
+            {
+                AvatarRow("Someone", "Kitten", "Maker", 1),
+                Entry(VrChatLogActivityKind.Joined, "Another", 2)
+            });
+
+            var window = new Window
+            {
+                Width = 520,
+                Height = 640,
+                Content = new InstanceActivityView { DataContext = feed }
+            };
+            window.Show();
+            try
+            {
+                Pump(window);
+
+                var buttons = FindVisualChildren<Button>(window).ToList();
+                var avatarActions = buttons.Where(button => Equals(button.Content, "View avatar")).ToList();
+                var profileActions = buttons.Where(button => Equals(button.Content, "Profile")).ToList();
+                // The list can keep a container from the publish before it, so the check is
+                // that the row the reader sees carries both actions, not that only one exists.
+                Assert.Contains(avatarActions, button => button.IsVisible);
+                Assert.Contains(profileActions, button => button.IsVisible);
+                Assert.Equal("now wearing Kitten by Maker", feed.Activity.Single(
+                    item => item.IsAvatarChange).DetailText);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    private static VrChatLogActivity AvatarRow(string name, string avatar, string author, int minute)
+        => new(
+            VrChatLogActivityKind.AvatarChanged,
+            name,
+            SomeoneId,
+            avatar,
+            new DateTimeOffset(2026, 11, 27, 12, minute, 0, TimeSpan.Zero),
+            RepeatCount: 1,
+            AvatarName: avatar,
+            AvatarAuthor: author);
+
     private static VrChatLogSnapshot Snapshot(int revision, params VrChatLogActivity[] activity)
         => new(
             Location,

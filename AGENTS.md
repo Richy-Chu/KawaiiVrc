@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1089 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1093 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.142**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.143**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,26 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.143 changed
+
+- **Avatar switches are instance activity too.** `VrChatLogPlayerService` records
+  `VrChatLogActivityKind.AvatarChanged` from the same `[Behaviour] Switching <player> to avatar
+  <name>` line it already parsed for the roster, with the player's id resolved from the roster and
+  the author from that avatar's `Unpacking Avatar (name by author)` line. VRChat's log names the
+  avatar and never its id, so the row carries a name and resolves the way the Activity page's
+  name-only rows do.
+- **The box's avatar rows run the Activity page's own commands.** `InstanceActivityItem.AvatarEntry`
+  builds the `ActivityEntry` those commands take, and `Controls/InstanceActivityView` binds
+  "View avatar" to `MainViewModel.OpenActivityAvatarCommand` and "Profile" to
+  `OpenActivityUserCommand` through `AncestorType=Window`. Do not add a second resolver: the
+  name-only lookup, the placeholder popup and the private/unavailable handling already live there
+  and are tested.
+- **The filter has an Avatar chip.** `InstanceActivityFeed` filters All / Joined / Left / Udon /
+  Avatar, and the chip re-pages the rows the feed already cached.
+- **Tests: 1093.** `InstanceActivityTests` adds the log line (player, name, author and id), the
+  Avatar filter, the row's `ActivityEntry` opening the shared avatar popup through the shell's own
+  command, and a real window showing both actions on an avatar row.
 
 ### What 1.0.142 changed
 

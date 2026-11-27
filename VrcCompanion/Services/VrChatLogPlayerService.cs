@@ -16,7 +16,10 @@ public enum VrChatLogActivityKind
 {
     Joined,
     Left,
-    Udon
+    Udon,
+
+    /// <summary>A player changed avatar while in the instance.</summary>
+    AvatarChanged
 }
 
 /// <summary>
@@ -32,7 +35,10 @@ public sealed record VrChatLogActivity(
     string UserId,
     string Detail,
     DateTimeOffset At,
-    int RepeatCount = 1);
+    int RepeatCount = 1,
+    string AvatarId = "",
+    string AvatarName = "",
+    string AvatarAuthor = "");
 
 public sealed record VrChatLogSnapshot(
     string Location,
@@ -365,6 +371,7 @@ public sealed class VrChatLogPlayerService
             if (player.Length > 0 && avatar.Length > 0)
             {
                 _avatarNames[player] = avatar;
+                RecordAvatarChange(player, avatar, line);
             }
 
             return;
@@ -456,12 +463,37 @@ public sealed class VrChatLogPlayerService
         return true;
     }
 
+    /// <summary>
+    /// Records a player changing avatar. VRChat's log names the avatar but not its id, so
+    /// the row resolves it by name exactly like the Activity page's own switch rows; the
+    /// author is filled in when that avatar's unpacking line has already been read.
+    /// </summary>
+    private void RecordAvatarChange(string player, string avatarName, string line)
+    {
+        var userId = _players.Values
+            .FirstOrDefault(candidate =>
+                string.Equals(candidate.DisplayName, player, StringComparison.CurrentCultureIgnoreCase))
+            ?.UserId ?? string.Empty;
+        _avatarAuthors.TryGetValue(avatarName, out var author);
+
+        RecordActivity(
+            VrChatLogActivityKind.AvatarChanged,
+            player,
+            userId,
+            avatarName,
+            line,
+            avatarName,
+            author ?? string.Empty);
+    }
+
     private void RecordActivity(
         VrChatLogActivityKind kind,
         string displayName,
         string userId,
         string detail,
-        string line)
+        string line,
+        string avatarName = "",
+        string avatarAuthor = "")
     {
         var at = LineTimestamp(line);
         if (kind == VrChatLogActivityKind.Udon &&
@@ -486,7 +518,9 @@ public sealed class VrChatLogPlayerService
                 userId ?? string.Empty,
                 detail ?? string.Empty,
                 at,
-                RepeatCount: 1));
+                RepeatCount: 1,
+                AvatarName: avatarName ?? string.Empty,
+                AvatarAuthor: avatarAuthor ?? string.Empty));
             if (_activity.Count > ActivityLimit)
             {
                 // A busy instance can log joins faster than anyone reads them; the box

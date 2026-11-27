@@ -38,7 +38,8 @@ public sealed class InstanceActivityFeed : ViewModelBase
         new FilterOption("all", "All"),
         new FilterOption("joined", "Joined"),
         new FilterOption("left", "Left"),
-        new FilterOption("udon", "Udon")
+        new FilterOption("udon", "Udon"),
+        new FilterOption("avatar", "Avatar")
     };
 
     /// <summary>Which kinds the box shows. Changing it re-pages the same rows.</summary>
@@ -140,6 +141,7 @@ public sealed class InstanceActivityFeed : ViewModelBase
         "joined" => kind == VrChatLogActivityKind.Joined,
         "left" => kind == VrChatLogActivityKind.Left,
         "udon" => kind == VrChatLogActivityKind.Udon,
+        "avatar" => kind == VrChatLogActivityKind.AvatarChanged,
         _ => true
     };
 
