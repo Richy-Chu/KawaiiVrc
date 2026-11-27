@@ -12,7 +12,7 @@ newer SDK may be the local default: to check SDK 8 compatibility, write a `globa
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.136**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.137**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,14 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.137 changed
+
+- **The Players panel's "Updated" stamp is 12-hour.** `WorldDialogViewModel.PlayersRefreshText`
+  used `HH:mm:ss`; it now uses `h:mm:ss tt` so it shows `6:53:54 PM` instead of `18:53:54`. The
+  other updated stamps already used `h:mm tt`; keep new ones in that family.
+- **Tests: 1069.** The change is formatting only; the existing panel tests still cover the text
+  being present.
 
 ### What 1.0.136 changed
 

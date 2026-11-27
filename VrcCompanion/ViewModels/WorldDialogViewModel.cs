@@ -760,7 +760,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
             }
 
             return SelectedInstance?.PlayersUpdatedAt is { } at
-                ? $"Updated {at:HH:mm:ss}"
+                ? $"Updated {at:h:mm:ss tt}"
                 : string.Empty;
         }
     }
