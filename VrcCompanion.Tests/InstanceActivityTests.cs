@@ -730,7 +730,8 @@ public class InstanceActivityTests
         {
             askedId = userId;
             askedName = displayName;
-            return Task.FromResult<string?>(person);
+            return Task.FromResult<InstanceActivityFeed.PersonLookup?>(
+                new InstanceActivityFeed.PersonLookup(null, person));
         });
         feed.SetAvatarImageResolver((_, _) => Task.FromResult<string?>(null));
 
@@ -747,13 +748,47 @@ public class InstanceActivityTests
     public void WhenThePeopleLookupFindsNobodyTheAvatarPictureStillFillsTheSlot()
     {
         var feed = new InstanceActivityFeed();
-        feed.SetPersonLookup((_, _) => Task.FromResult<string?>(null));
+        feed.SetPersonLookup((_, _) =>
+            Task.FromResult<InstanceActivityFeed.PersonLookup?>(null));
         feed.SetAvatarImageResolver((_, _) =>
             Task.FromResult<string?>("https://files.vrchat.cloud/avatar.png"));
 
         feed.Apply(new[] { AvatarRow("ISHIKAWA", "Private Avatar", "Maker", 1, userId: string.Empty) });
 
         Assert.Equal("https://files.vrchat.cloud/avatar.png", feed.Activity.Single().AvatarImageUrl);
+    }
+
+    [Fact]
+    public void ANameOnlyRowGetsTheProfileActionActivityRowsCarry()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.SetPersonLookup((_, _) => Task.FromResult<InstanceActivityFeed.PersonLookup?>(
+            new InstanceActivityFeed.PersonLookup(
+                SomeoneId,
+                "https://files.vrchat.cloud/person.png")));
+        feed.SetAvatarImageResolver((_, _) => Task.FromResult<string?>(null));
+
+        feed.Apply(new[] { AvatarRow("ISHIKAWA", "Private Avatar", "Maker", 1, userId: string.Empty) });
+
+        // The log had no id, but the lookup found the player, so Profile opens the same
+        // VRChat profile the Activity page opens.
+        var row = Assert.Single(feed.Activity);
+        Assert.True(row.CanOpenProfile);
+        Assert.Equal(SomeoneId, row.UserId);
+        Assert.Equal(SomeoneId, row.AvatarEntry!.UserId);
+    }
+
+    [Fact]
+    public void ANameOnlyRowKeepsTheProfileActionHiddenWhenNobodyMatches()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.SetPersonLookup((_, _) =>
+            Task.FromResult<InstanceActivityFeed.PersonLookup?>(null));
+        feed.SetAvatarImageResolver((_, _) => Task.FromResult<string?>(null));
+
+        feed.Apply(new[] { AvatarRow("ISHIKAWA", "Private Avatar", "Maker", 1, userId: string.Empty) });
+
+        Assert.False(Assert.Single(feed.Activity).CanOpenProfile);
     }
 
     [Fact]

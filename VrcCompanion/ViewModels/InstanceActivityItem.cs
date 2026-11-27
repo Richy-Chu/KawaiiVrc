@@ -20,6 +20,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
 
     private ActivityEntry? _avatarEntry;
     private string _avatarImageUrl = string.Empty;
+    private string _resolvedUserId = string.Empty;
     private bool _showsPersonPicture;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -204,8 +205,43 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     /// <summary>True when the row can open an avatar popup (the log gave a name or an id).</summary>
     public bool CanOpenAvatar => AvatarEntry?.CanOpenAvatar == true;
 
-    /// <summary>True when VRChat's log told us who changed, so a profile can be opened.</summary>
-    public bool CanOpenProfile => IsAvatarChange && !string.IsNullOrWhiteSpace(Activity.UserId);
+    /// <summary>
+    /// The player's id: the log's own, or the one VRChat's user lookup found for a switch
+    /// line that carried none.
+    /// </summary>
+    public string UserId => !string.IsNullOrWhiteSpace(Activity.UserId)
+        ? Activity.UserId
+        : _resolvedUserId;
+
+    /// <summary>
+    /// True when the row knows who changed, so the row can open their VRChat profile - the
+    /// same action Activity rows carry.
+    /// </summary>
+    public bool CanOpenProfile => IsAvatarChange && !string.IsNullOrWhiteSpace(UserId);
+
+    /// <summary>
+    /// Fills the id a name-only switch line was missing. It only ever fills a blank: the
+    /// log's own id stays authoritative.
+    /// </summary>
+    public void SetUserId(string? userId)
+    {
+        if (!IsAvatarChange ||
+            string.IsNullOrWhiteSpace(userId) ||
+            !string.IsNullOrWhiteSpace(Activity.UserId) ||
+            _resolvedUserId.Length > 0)
+        {
+            return;
+        }
+
+        _resolvedUserId = userId.Trim();
+        if (_avatarEntry is { } entry)
+        {
+            entry.UserId = _resolvedUserId;
+        }
+
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UserId)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanOpenProfile)));
+    }
 
     public string AvatarTooltip => CanOpenAvatar
         ? "Open this avatar's details — wear it if it is public"
@@ -235,7 +271,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     private ActivityEntry BuildAvatarEntry() => new()
     {
         Type = ActivityType.AvatarChanged,
-        UserId = Activity.UserId,
+        UserId = UserId,
         UserName = DisplayName,
         DisplayName = DisplayName,
         AvatarId = Activity.AvatarId,

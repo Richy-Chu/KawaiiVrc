@@ -27,8 +27,15 @@ public sealed class InstanceActivityFeed : ViewModelBase
     private Func<string, string?, Task<string?>>? _avatarImageResolver;
     private Func<string, string, string?>? _personImageResolver;
     private readonly Dictionary<string, string> _personImages = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _personIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _personImageLookups = new(StringComparer.Ordinal);
-    private Func<string, string, Task<string?>>? _personLookup;
+    private Func<string, string, Task<PersonLookup?>>? _personLookup;
+
+    /// <summary>
+    /// What VRChat's user record gives an avatar row: the player's id, so the row can open
+    /// their profile, and their picture, which fills the slot when the avatar has none.
+    /// </summary>
+    public sealed record PersonLookup(string? UserId, string? ImageUrl);
 
     public InstanceActivityFeed()
     {
@@ -153,7 +160,7 @@ public sealed class InstanceActivityFeed : ViewModelBase
     /// the Activity page draws, so the avatar filter never shows an empty face just
     /// because the instance roster did not know the player.
     /// </summary>
-    public void SetPersonLookup(Func<string, string, Task<string?>>? lookup)
+    public void SetPersonLookup(Func<string, string, Task<PersonLookup?>>? lookup)
     {
         _personLookup = lookup;
         ResolvePageAvatarImages();
@@ -251,6 +258,12 @@ public sealed class InstanceActivityFeed : ViewModelBase
                 // The row names the avatar it is about, so that avatar's picture is the
                 // one it draws. The person's picture only fills the slot when the avatar
                 // has no public image - never in place of the avatar.
+                if (string.IsNullOrWhiteSpace(entry.UserId) &&
+                    _personIds.TryGetValue(PersonKey(entry.UserId, entry.DisplayName), out var resolvedId))
+                {
+                    item.SetUserId(resolvedId);
+                }
+
                 if (_avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
                 {
                     item.SetAvatarImage(image);
@@ -371,13 +384,24 @@ public sealed class InstanceActivityFeed : ViewModelBase
 
         try
         {
-            var url = (await lookup(userId, displayName))?.Trim();
-            if (string.IsNullOrWhiteSpace(url))
+            var result = await lookup(userId, displayName);
+            var resolvedId = result?.UserId?.Trim();
+            var url = result?.ImageUrl?.Trim();
+            if (string.IsNullOrWhiteSpace(resolvedId) && string.IsNullOrWhiteSpace(url))
             {
                 return;
             }
 
-            _personImages[key] = url;
+            if (!string.IsNullOrWhiteSpace(resolvedId))
+            {
+                _personIds[key] = resolvedId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                _personImages[key] = url;
+            }
+
             foreach (var item in Activity)
             {
                 if (item.IsAvatarChange &&
@@ -386,7 +410,15 @@ public sealed class InstanceActivityFeed : ViewModelBase
                         key,
                         StringComparison.Ordinal))
                 {
-                    item.SetPersonImage(url);
+                    if (!string.IsNullOrWhiteSpace(resolvedId))
+                    {
+                        item.SetUserId(resolvedId);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(url))
+                    {
+                        item.SetPersonImage(url);
+                    }
                 }
             }
         }
