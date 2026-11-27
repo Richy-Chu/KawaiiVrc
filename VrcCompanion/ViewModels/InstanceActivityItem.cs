@@ -18,12 +18,19 @@ public sealed class InstanceActivityItem
 
     private ActivityEntry? _avatarEntry;
 
-    public InstanceActivityItem(VrChatLogActivity activity)
+    public InstanceActivityItem(VrChatLogActivity activity, bool isSelf = false)
     {
         Activity = activity;
+        IsSelf = isSelf;
     }
 
     public VrChatLogActivity Activity { get; }
+
+    /// <summary>
+    /// True when the log line was the signed-in account's own action. The Activity page
+    /// already tags its own rows, and this box is read the same way.
+    /// </summary>
+    public bool IsSelf { get; }
 
     public VrChatLogActivityKind Kind => Activity.Kind;
 
@@ -122,7 +129,7 @@ public sealed class InstanceActivityItem
         ? $"Udon · {TimeText}" +
           (HasRepeat ? $" · seen {RepeatText} times" : string.Empty) +
           $"\n{DetailText}"
-        : $"{DisplayName} · {KindLabel} · {TimeText}" +
+        : $"{DisplayName}{(IsSelf ? " (you)" : string.Empty)} · {KindLabel} · {TimeText}" +
           (IsAvatarChange ? $"\n{DetailText}" : string.Empty);
 
     public bool HasUserId => !string.IsNullOrWhiteSpace(Activity.UserId);

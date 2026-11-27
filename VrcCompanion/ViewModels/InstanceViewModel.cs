@@ -165,6 +165,17 @@ public sealed class InstanceViewModel : ViewModelBase
     {
         _lastLogSnapshot = snapshot;
         _lastActivityRevision = snapshot?.ActivityRevision ?? 0;
+        ApplyActivityFeed(snapshot);
+    }
+
+    /// <summary>
+    /// Fills the shared box and tells it which account is signed in, so the reader's own
+    /// joins, leaves and avatar switches carry the same YOU tag the Activity page shows.
+    /// </summary>
+    private void ApplyActivityFeed(VrChatLogSnapshot? snapshot)
+    {
+        var user = _lastCurrentUser ?? _api.CurrentUser;
+        ActivityFeed.SetSelf(user?.Id, user?.DisplayName);
         ActivityFeed.Apply(snapshot?.Activity);
     }
 
@@ -551,7 +562,7 @@ public sealed class InstanceViewModel : ViewModelBase
             var logSnapshot = _logService.Poll();
             _lastLogSnapshot = logSnapshot;
             _lastActivityRevision = logSnapshot?.ActivityRevision ?? 0;
-            ActivityFeed.Apply(logSnapshot?.Activity);
+            ApplyActivityFeed(logSnapshot);
             var apiLocationValue = currentUser?.Location ?? string.Empty;
             var apiLocation = LaunchService.IsLocation(apiLocationValue)
                 ? currentUser!.Location
@@ -787,7 +798,7 @@ public sealed class InstanceViewModel : ViewModelBase
         _lastLogSignature = signature;
         _lastActivityRevision = activityRevision;
         _lastLogSnapshot = snapshot;
-        ActivityFeed.Apply(snapshot?.Activity);
+        ApplyActivityFeed(snapshot);
 
         // A join/leave inside the same instance does not change the instance,
         // world or owner. Rebuild the roster straight from the log so it lands

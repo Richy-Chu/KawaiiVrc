@@ -18,6 +18,8 @@ public sealed class InstanceActivityFeed : ViewModelBase
     private readonly Dictionary<string, InstanceActivityItem> _cache = new(StringComparer.Ordinal);
     private IReadOnlyList<VrChatLogActivity> _events = Array.Empty<VrChatLogActivity>();
     private FilterOption _selectedActivityFilter;
+    private string _selfUserId = string.Empty;
+    private string _selfDisplayName = string.Empty;
 
     public InstanceActivityFeed()
     {
@@ -83,6 +85,48 @@ public sealed class InstanceActivityFeed : ViewModelBase
 
     public void Clear() => Apply(null);
 
+    /// <summary>
+    /// Names the signed-in account so its own joins, leaves and avatar switches can say
+    /// YOU, exactly as the Activity page tags its rows. VRChat's switch line sometimes
+    /// omits the user id, so the display name is kept as the fallback.
+    /// </summary>
+    public void SetSelf(string? userId, string? displayName)
+    {
+        var id = userId ?? string.Empty;
+        var name = displayName ?? string.Empty;
+        if (string.Equals(_selfUserId, id, StringComparison.Ordinal) &&
+            string.Equals(_selfDisplayName, name, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _selfUserId = id;
+        _selfDisplayName = name;
+        // Rows are cached, so the YOU flag baked into them is stale now.
+        _cache.Clear();
+        Rebuild(resetPage: false);
+    }
+
+    /// <summary>
+    /// True when this event is the signed-in account's. When both ids are known the id
+    /// decides, so another player with the same display name is never tagged as you.
+    /// </summary>
+    private bool IsSelf(VrChatLogActivity entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.DisplayName))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_selfUserId) && !string.IsNullOrWhiteSpace(entry.UserId))
+        {
+            return string.Equals(entry.UserId, _selfUserId, StringComparison.Ordinal);
+        }
+
+        return !string.IsNullOrWhiteSpace(_selfDisplayName) &&
+               string.Equals(entry.DisplayName, _selfDisplayName, StringComparison.CurrentCultureIgnoreCase);
+    }
+
     private void Rebuild(bool resetPage)
     {
         var filter = _selectedActivityFilter?.Key ?? "all";
@@ -98,7 +142,7 @@ public sealed class InstanceActivityFeed : ViewModelBase
             var key = KeyFor(entry);
             if (!_cache.TryGetValue(key, out var item))
             {
-                item = new InstanceActivityItem(entry);
+                item = new InstanceActivityItem(entry, IsSelf(entry));
             }
 
             kept[key] = item;

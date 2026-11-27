@@ -428,7 +428,12 @@ public sealed class ContextViewModel : ViewModelBase
     /// box up to date without the page re-reading the instance from VRChat.
     /// </summary>
     internal void ApplyActivity(IReadOnlyList<VrChatLogActivity>? events)
-        => ActivityFeed.Apply(events);
+    {
+        // The box tags this account's own rows the way the Activity page does, so it
+        // needs the signed-in name before the rows are built.
+        ActivityFeed.SetSelf(_accountUserId, _accountName);
+        ActivityFeed.Apply(events);
+    }
 
     private void ApplyLive(VrcUser user, InstanceViewModel? instance)
     {

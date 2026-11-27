@@ -162,11 +162,33 @@
                                            Foreground="{Binding KindBrush}" />
                             </Border>
                             <StackPanel Grid.Column="1" Margin="8,0,8,0" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding Title}"
-                                           FontSize="11"
-                                           FontWeight="SemiBold"
-                                           Foreground="{StaticResource TextBrush}"
-                                           TextTrimming="CharacterEllipsis" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Title}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <!-- The same YOU tag the Activity page puts on the reader's own rows. -->
+                                    <Border Grid.Column="1"
+                                            Background="#33F472B6"
+                                            BorderBrush="#5A3D82"
+                                            BorderThickness="1"
+                                            CornerRadius="5"
+                                            Padding="4,1"
+                                            Margin="6,0,0,0"
+                                            VerticalAlignment="Center"
+                                            ToolTip="This activity is from your own account"
+                                            Visibility="{Binding IsSelf, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock Text="YOU"
+                                                   FontSize="8"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FFD8EA" />
+                                    </Border>
+                                </Grid>
                                 <TextBlock Text="{Binding DetailText}"
                                            Style="{StaticResource MutedText}"
                                            FontSize="9"

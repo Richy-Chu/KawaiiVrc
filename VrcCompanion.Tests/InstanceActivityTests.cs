@@ -29,6 +29,7 @@ public class InstanceActivityTests
     private const string Location = WorldId + ":12345~region(us)";
     private const string OtherLocation = WorldId + ":99999~region(us)";
     private const string SomeoneId = "usr_22222222-2222-2222-2222-222222222222";
+    private const string OtherId = "usr_33333333-3333-3333-3333-333333333333";
 
     [Fact]
     public void TheLogRecordsJoinsLeavesAndUdonEventsWithTheirOwnTime()
@@ -482,11 +483,137 @@ public class InstanceActivityTests
         });
     }
 
-    private static VrChatLogActivity AvatarRow(string name, string avatar, string author, int minute)
+    [Fact]
+    public void TheSignedInAccountsOwnRowsSayYou()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.SetSelf(SomeoneId, "RichyTu");
+        feed.Apply(new[]
+        {
+            Entry(VrChatLogActivityKind.Joined, "RichyTu", 1),
+            Entry(VrChatLogActivityKind.Joined, "Other", 2, OtherId)
+        });
+
+        var mine = feed.Activity.Single(row => row.Title == "RichyTu");
+        var other = feed.Activity.Single(row => row.Title == "Other");
+        // The box tags this account the way the Activity page tags it: YOU on mine only.
+        Assert.True(mine.IsSelf);
+        Assert.False(other.IsSelf);
+        Assert.Contains("(you)", mine.ToolTip, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnAvatarSwitchWithoutAUserIdIsStillYouByName()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.SetSelf(SomeoneId, "RichyTu");
+        feed.Apply(new[]
+        {
+            // VRChat's switch line often omits the id, so the name has to decide.
+            AvatarRow("RichyTu", "Kitten", "Maker", 1) with { UserId = string.Empty },
+            // When both ids are known a shared name never makes someone else you.
+            AvatarRow("RichyTu", "Puppy", "Maker", 2) with { UserId = OtherId }
+        });
+
+        Assert.True(feed.Activity.Single(row => row.AvatarName == "Kitten").IsSelf);
+        Assert.False(feed.Activity.Single(row => row.AvatarName == "Puppy").IsSelf);
+    }
+
+    [Fact]
+    public void TheYouTagAppearsWhenTheAccountIsKnownAfterTheRows()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.Apply(new[] { Entry(VrChatLogActivityKind.Joined, "RichyTu", 1) });
+        Assert.False(feed.Activity.Single().IsSelf);
+
+        // The account arrives after the log read; the cached row must pick it up.
+        feed.SetSelf(SomeoneId, "RichyTu");
+        Assert.True(feed.Activity.Single().IsSelf);
+    }
+
+    [Fact]
+    public void TheInstanceFeedTagsTheSignedInAccountItself()
+    {
+        WpfTestHost.Run(() =>
+        {
+            using var handler = new CountingHandler();
+            using var api = new VrcApiClient(null, handler);
+            TestHooks.SetCurrentUser(api, new VrcUser { Id = SomeoneId, DisplayName = "RichyTu" });
+            var instance = new InstanceViewModel(api, ImageLoader.Shared);
+
+            instance.ApplyLogActivity(Snapshot(
+                4,
+                Entry(VrChatLogActivityKind.Joined, "RichyTu", 1),
+                Entry(VrChatLogActivityKind.Left, "Other", 2, OtherId)));
+
+            Assert.True(instance.ActivityFeed.Activity.Single(row => row.Title == "RichyTu").IsSelf);
+            Assert.False(instance.ActivityFeed.Activity.Single(row => row.Title == "Other").IsSelf);
+        });
+    }
+
+    [Fact]
+    public void TheContextFeedTagsTheSignedInAccountItself()
+    {
+        using var handler = new CountingHandler();
+        using var api = new VrcApiClient(null, handler);
+        using var shell = new MainViewModel(api);
+        var context = new ContextViewModel();
+        TestHooks.AttachContextViewModel(shell, context);
+        context.SetAccount(new VrcUser { Id = SomeoneId, DisplayName = "RichyTu" });
+
+        Assert.True(shell.UpdateContextActivity(Snapshot(
+            3,
+            Entry(VrChatLogActivityKind.Joined, "RichyTu", 1))));
+        Assert.True(context.ActivityFeed.Activity.Single().IsSelf);
+    }
+
+    [Fact]
+    public void TheBoxShowsYouOnTheSignedInAccountsRow()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var feed = new InstanceActivityFeed();
+            feed.SetSelf(SomeoneId, "RichyTu");
+            feed.Apply(new[]
+            {
+                Entry(VrChatLogActivityKind.Joined, "RichyTu", 1),
+                Entry(VrChatLogActivityKind.Joined, "Other", 2, OtherId)
+            });
+
+            var window = new Window
+            {
+                Width = 520,
+                Height = 640,
+                Content = new InstanceActivityView { DataContext = feed }
+            };
+            window.Show();
+            try
+            {
+                Pump(window);
+
+                // One badge, on my row, in the box all three surfaces draw.
+                var you = FindVisualChildren<TextBlock>(window)
+                    .Where(text => text.Text == "YOU" && text.IsVisible)
+                    .ToList();
+                Assert.Single(you);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    private static VrChatLogActivity AvatarRow(
+        string name,
+        string avatar,
+        string author,
+        int minute,
+        string userId = SomeoneId)
         => new(
             VrChatLogActivityKind.AvatarChanged,
             name,
-            SomeoneId,
+            userId,
             avatar,
             new DateTimeOffset(2026, 11, 27, 12, minute, 0, TimeSpan.Zero),
             RepeatCount: 1,
@@ -500,11 +627,15 @@ public class InstanceActivityTests
             Activity: activity,
             ActivityRevision: revision);
 
-    private static VrChatLogActivity Entry(VrChatLogActivityKind kind, string name, int minute)
+    private static VrChatLogActivity Entry(
+        VrChatLogActivityKind kind,
+        string name,
+        int minute,
+        string userId = SomeoneId)
         => new(
             kind,
             name,
-            kind == VrChatLogActivityKind.Udon ? string.Empty : SomeoneId,
+            kind == VrChatLogActivityKind.Udon ? string.Empty : userId,
             kind switch
             {
                 VrChatLogActivityKind.Joined => "Joined the instance",
