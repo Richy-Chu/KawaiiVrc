@@ -57,7 +57,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _worldsLoaded;
     private readonly Dictionary<int, WorldsPage> _worldsPages = new();
     private string? _currentWorldId;
+    private bool _currentWorldResolved;
     private VrcWorld? _currentWorldDetails;
+    private DispatcherTimer? _worldsLiveTimer;
+    private bool _worldsLiveRefreshing;
     private string _worldsQuery = string.Empty;
     private int _worldsPage = 1;
     private bool _worldsHasNext;
@@ -621,7 +624,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SetLaunchModeCommand = Track(new RelayCommand<string>(SetDefaultLaunchMode));
         OpenVrChatCommand = Track(new RelayCommand(OpenVrChat));
         RejoinWorldCommand = Track(new AsyncRelayCommand(
-            RejoinLastWorldAsync,
+            RejoinWorldAsync,
             () => IsLoggedIn && !IsBusy));
         OpenAdvancedLaunchCommand = Track(new RelayCommand(OpenAdvancedLaunch));
         NewLaunchProfileCommand = Track(new RelayCommand(NewLaunchProfile));
@@ -953,6 +956,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             // Log polling is only useful while the popup is on screen.
             InstanceViewModel?.SetActive(value.Key == "instance");
+
+            // The Worlds tab follows joins and leaves without a search while it is shown.
+            if (value.Key == "worlds")
+            {
+                StartWorldsLiveRefresh();
+            }
+            else
+            {
+                StopWorldsLiveRefresh();
+            }
 
             // Automatic browse retries only run while their tab is on screen.
             if (AvatarViewModel is not null)
@@ -4346,40 +4359,40 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// The world this account is in, from the live instance when it is loaded, otherwise from
-    /// the account's own location, otherwise from the game log. The world dialog's instance
-    /// load is not required, so launch (no Instance page visited) still marks correctly.
+    /// The world this account is in, from the live instance when it is known, otherwise from
+    /// the account's own location, otherwise from the game log. While VRChat is running the log
+    /// is authoritative - that is what catches a world switch or a leave - and the process
+    /// probe and log tail stay off the UI thread.
     /// </summary>
     private async Task<string?> ResolveCurrentWorldIdAsync()
     {
-        var worldId = InstanceViewModel?.Instance?.WorldId;
-        if (string.IsNullOrWhiteSpace(worldId))
+        string? worldId = null;
+        var running = false;
+        try
         {
-            worldId = LaunchService.GetWorldIdFromLocation(CurrentUser?.Location);
-        }
-
-        if (string.IsNullOrWhiteSpace(worldId))
-        {
-            try
+            running = await Task.Run(() => _logPlayerService.IsGameRunning);
+            if (running)
             {
-                // Process probing and the log tail both stay off the UI thread, the way
-                // 1.0.83 moved the other log readers.
-                var snapshot = await Task.Run(() => _logPlayerService.IsGameRunning
-                    ? _logPlayerService.Poll()
-                    : null);
+                var snapshot = await Task.Run(() => _logPlayerService.Poll());
                 worldId = LaunchService.GetWorldIdFromLocation(snapshot?.Location);
             }
-            catch (Exception ex)
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("current world from log: " + ex.Message);
+        }
+
+        if (worldId is null && !running)
+        {
+            worldId = InstanceViewModel?.Instance?.WorldId;
+            if (string.IsNullOrWhiteSpace(worldId))
             {
-                Debug.WriteLine("current world from log: " + ex.Message);
+                worldId = LaunchService.GetWorldIdFromLocation(CurrentUser?.Location);
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(worldId))
-        {
-            _currentWorldId = worldId;
-        }
-
+        _currentWorldId = string.IsNullOrWhiteSpace(worldId) ? null : worldId;
+        _currentWorldResolved = true;
         return _currentWorldId;
     }
 
@@ -4417,20 +4430,103 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     private string? KnownCurrentWorldId()
-        => InstanceViewModel?.Instance?.WorldId
-           ?? LaunchService.GetWorldIdFromLocation(CurrentUser?.Location)
-           ?? _currentWorldId;
+        => _currentWorldResolved
+            ? _currentWorldId
+            : InstanceViewModel?.Instance?.WorldId
+              ?? LaunchService.GetWorldIdFromLocation(CurrentUser?.Location)
+              ?? _currentWorldId;
 
     /// <summary>Keeps the YOU'RE HERE badge on world results in step with the live instance.</summary>
     private void RefreshWorldResultMarkers()
     {
         var currentWorldId = KnownCurrentWorldId();
+        var details = _currentWorldDetails is { } cached &&
+                      string.Equals(cached.Id, currentWorldId, StringComparison.OrdinalIgnoreCase)
+            ? cached
+            : null;
+        ApplyCurrentWorldToWorlds(currentWorldId, details);
+    }
+
+    internal static TimeSpan WorldsLiveRefreshInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    internal bool IsWorldsLiveRefreshRunning => _worldsLiveTimer?.IsEnabled == true;
+
+    /// <summary>
+    /// Keeps the open Worlds tab honest: follows the game log, marks the world the account is
+    /// in, moves its card to the front (adding it when the search page never had it) and clears
+    /// the mark when the account leaves. Only runs while Worlds is the shown section.
+    /// </summary>
+    internal async Task RefreshWorldsLiveAsync()
+    {
+        if (_worldsLiveRefreshing || !IsLoggedIn || Worlds.Count == 0)
+        {
+            return;
+        }
+
+        _worldsLiveRefreshing = true;
+        try
+        {
+            var current = await CurrentWorldForResultsAsync();
+            ApplyCurrentWorldToWorlds(current?.Id ?? _currentWorldId, current);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("worlds live refresh: " + ex.Message);
+        }
+        finally
+        {
+            _worldsLiveRefreshing = false;
+        }
+    }
+
+    private void ApplyCurrentWorldToWorlds(string? currentWorldId, VrcWorld? details)
+    {
         foreach (var world in Worlds)
         {
             world.IsCurrentWorld = !string.IsNullOrWhiteSpace(currentWorldId) &&
                                    string.Equals(world.Id, currentWorldId, StringComparison.OrdinalIgnoreCase);
         }
+
+        if (string.IsNullOrWhiteSpace(currentWorldId))
+        {
+            return;
+        }
+
+        var current = Worlds.FirstOrDefault(world => world.IsCurrentWorld);
+        if (current is null && details is not null)
+        {
+            current = new WorldItem(details)
+            {
+                IsFavorite = _favoriteWorlds.Contains(details.Id),
+                IsCurrentWorld = true
+            };
+            Worlds.Insert(0, current);
+            return;
+        }
+
+        var index = current is null ? -1 : Worlds.IndexOf(current);
+        if (index > 0)
+        {
+            Worlds.Move(index, 0);
+        }
     }
+
+    private void StartWorldsLiveRefresh()
+    {
+        if (_worldsLiveTimer is null)
+        {
+            _worldsLiveTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = WorldsLiveRefreshInterval
+            };
+            _worldsLiveTimer.Tick += (_, _) => _ = RefreshWorldsLiveAsync();
+        }
+
+        _worldsLiveTimer.Interval = WorldsLiveRefreshInterval;
+        _worldsLiveTimer.Start();
+    }
+
+    private void StopWorldsLiveRefresh() => _worldsLiveTimer?.Stop();
 
     /// <summary>
     /// Shows one page of worlds. Only this page is published, so the previous
@@ -5279,6 +5375,43 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _ = LaunchLocationAsync(location, chosen, ActiveLaunchArguments);
     }
 
+    private LaunchMode? _lastLaunchedMode;
+
+    /// <summary>
+    /// What the last join launched from this app actually started, not the radio selection:
+    /// choosing Desktop or VR only changes the next launch, and the indicator follows a
+    /// successful join.
+    /// </summary>
+    public bool HasLastLaunchedMode => _lastLaunchedMode is not null;
+
+    public string LastLaunchedModeLabel => _lastLaunchedMode switch
+    {
+        LaunchMode.Desktop => "Desktop",
+        LaunchMode.Vr => "VR",
+        _ => string.Empty
+    };
+
+    public bool IsLastLaunchDesktop => _lastLaunchedMode == LaunchMode.Desktop;
+
+    public bool IsLastLaunchVr => _lastLaunchedMode == LaunchMode.Vr;
+
+    public string LastLaunchedModeText => _lastLaunchedMode switch
+    {
+        LaunchMode.Desktop => "Launched in desktop mode",
+        LaunchMode.Vr => "Launched in VR mode",
+        _ => "No world launched from the app yet"
+    };
+
+    private void MarkLaunchedMode(LaunchMode mode)
+    {
+        _lastLaunchedMode = mode;
+        OnPropertyChanged(nameof(HasLastLaunchedMode));
+        OnPropertyChanged(nameof(LastLaunchedModeLabel));
+        OnPropertyChanged(nameof(IsLastLaunchDesktop));
+        OnPropertyChanged(nameof(IsLastLaunchVr));
+        OnPropertyChanged(nameof(LastLaunchedModeText));
+    }
+
     private async Task LaunchLocationAsync(string location, LaunchMode chosen, string extraArguments)
     {
         try
@@ -5304,6 +5437,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ClearError();
             if (outcome == LaunchOutcome.AttachedToRunningGame)
             {
+                MarkLaunchedMode(chosen);
                 ShowInfo("Opened the instance inside the running VRChat client.");
                 return;
             }
@@ -5326,6 +5460,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 return;
             }
 
+            MarkLaunchedMode(chosen);
             ShowInfo($"Opening VRChat in {chosen.ToString().ToLowerInvariant()} mode and joining the instance.");
         }
         catch (Exception ex)
@@ -5979,37 +6114,47 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// entry is the same one the instance-history UI uses, so private instances
     /// still go through the normal short-name and self-invite fallback path.
     /// </summary>
-    private async Task RejoinLastWorldAsync()
+    internal async Task RejoinWorldAsync()
     {
         if (!IsLoggedIn || CurrentUser is null || IsBusy)
         {
             return;
         }
 
-        InstanceHistoryEntry? latest;
-        try
+        // The instance the account is in right now wins over history: the pinned "You are
+        // here" row and a just-switched world must be what REJOIN WORLD targets, not an older
+        // entry the history has not caught up with.
+        var liveLocation = await ResolveLiveLocationAsync();
+        InstanceHistoryEntry? latest = null;
+        if (liveLocation is null)
         {
-            latest = _instanceHistoryStore
-                .ForAccount(CurrentUser.Id)
-                .Where(entry => LaunchService.IsLocation(entry.Location))
-                .OrderByDescending(entry => entry.LastSeenAt)
-                .ThenByDescending(entry => entry.JoinedAt)
-                .FirstOrDefault();
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"rejoin history: {ex}");
-            ShowError("Could not read your recent world history.");
-            return;
+            try
+            {
+                latest = _instanceHistoryStore
+                    .ForAccount(CurrentUser.Id)
+                    .Where(entry => LaunchService.IsLocation(entry.Location))
+                    .OrderByDescending(entry => entry.LastSeenAt)
+                    .ThenByDescending(entry => entry.JoinedAt)
+                    .FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"rejoin history: {ex}");
+                ShowError("Could not read your recent world history.");
+                return;
+            }
+
+            if (latest is null)
+            {
+                ShowError("There is no recent VRChat world to rejoin yet.");
+                return;
+            }
         }
 
-        if (latest is null)
-        {
-            ShowError("There is no recent VRChat world to rejoin yet.");
-            return;
-        }
+        var location = liveLocation ?? latest!.Location;
 
-        if (LaunchService.IsGameRunning())
+        // Probing goes through the seam so a test can never close a real VRChat.
+        if (LaunchService.GameRunningProbe())
         {
             // VRChat refuses a URL launch into the instance it is already in
             // (it opens the Worlds page instead), and it exposes no rejoin API.
@@ -6027,11 +6172,82 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             await Task.Delay(1200);
         }
 
-        var worldName = string.IsNullOrWhiteSpace(latest.WorldName)
-            ? "your last world"
-            : latest.WorldName;
+        var worldName = await WorldNameForRejoinAsync(location, latest);
         ShowInfo($"Rejoining {worldName}…");
-        await LaunchLocationAsync(latest.Location, DefaultLaunchMode, ActiveLaunchArguments);
+        await LaunchLocationAsync(location, DefaultLaunchMode, ActiveLaunchArguments);
+    }
+
+    /// <summary>
+    /// Where the account is right now, read fresh from the log while VRChat runs so a world
+    /// switch is caught immediately. Null while in-game but not in a world, or when neither
+    /// the log nor the account knows a location.
+    /// </summary>
+    private async Task<string?> ResolveLiveLocationAsync()
+    {
+        var running = false;
+        try
+        {
+            running = await Task.Run(() => _logPlayerService.IsGameRunning);
+            if (running)
+            {
+                var snapshot = await Task.Run(() => _logPlayerService.Poll());
+                return LaunchService.IsLocation(snapshot?.Location) ? snapshot!.Location : null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("rejoin live location: " + ex.Message);
+        }
+
+        if (running)
+        {
+            return null;
+        }
+
+        if (InstanceViewModel?.Instance?.Location is { } instance &&
+            LaunchService.IsLocation(instance))
+        {
+            return instance;
+        }
+
+        return CurrentUser is not null && LaunchService.IsLocation(CurrentUser.Location)
+            ? CurrentUser.Location
+            : null;
+    }
+
+    private async Task<string> WorldNameForRejoinAsync(string location, InstanceHistoryEntry? latest)
+    {
+        if (latest is not null && string.Equals(latest.Location, location, StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(latest.WorldName))
+        {
+            return latest.WorldName;
+        }
+
+        var worldId = LaunchService.GetWorldIdFromLocation(location);
+        if (worldId is not null)
+        {
+            if (_currentWorldDetails is { } cached &&
+                string.Equals(cached.Id, worldId, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(cached.Name))
+            {
+                return cached.Name;
+            }
+
+            try
+            {
+                var world = await _api.GetWorldAsync(worldId);
+                if (world is not null && !string.IsNullOrWhiteSpace(world.Name))
+                {
+                    return world.Name;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("rejoin world name: " + ex.Message);
+            }
+        }
+
+        return "your current world";
     }
 
     // ------------------------------------------------------ instance history

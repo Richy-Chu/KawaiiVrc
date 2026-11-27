@@ -109,6 +109,179 @@ public class WorldCurrentInstanceTests
     }
 
     [Fact]
+    public void WorldsTabFollowsJoinsLeavesAndSwitchesWithoutSearch()
+    {
+        var logPath = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "vrccompanion-worlds-live-" + Guid.NewGuid().ToString("N") + ".log");
+        try
+        {
+            System.IO.File.WriteAllText(logPath, string.Join('\n', new[]
+            {
+                $"2026.11.14 12:00:00 Log - [Behaviour] Joining {WorldId}:{InstanceId}",
+                string.Empty
+            }));
+
+            WpfTestHost.RunAsync(async () =>
+            {
+                using var handler = new LiveHandler();
+                using var api = new VrcApiClient(null, handler);
+                using var shell = new MainViewModel(api);
+                TestHooks.SetCurrentUser(shell, new VrcUser
+                {
+                    Id = "usr_00000000-0000-0000-0000-000000000001",
+                    DisplayName = "Me",
+                    Location = "offline"
+                });
+                TestHooks.SetLoggedIn(shell);
+                TestHooks.UseLogPlayer(
+                    shell,
+                    new VrChatLogPlayerService(() => logPath, () => true));
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "worlds");
+                Settle.Until(
+                    () => shell.Worlds.Count >= 3 && shell.IsWorldsLiveRefreshRunning,
+                    Settle.PumpBackground,
+                    "the Worlds tab never loaded with its live timer running");
+                Assert.Equal(WorldId, shell.Worlds[0].Id);
+                Assert.True(shell.Worlds[0].IsCurrentWorld);
+
+                // A switch is caught without another search.
+                System.IO.File.AppendAllText(
+                    logPath,
+                    $"\n2026.11.14 12:05:00 Log - [Behaviour] Joining {OtherWorldId}:99999~region(eu)\n");
+                await shell.RefreshWorldsLiveAsync();
+
+                Assert.Equal(OtherWorldId, shell.Worlds[0].Id);
+                Assert.True(shell.Worlds[0].IsCurrentWorld);
+                Assert.False(shell.Worlds.Single(world => world.Id == WorldId).IsCurrentWorld);
+
+                // Leaving clears the badge and leaves the cards where they are.
+                System.IO.File.AppendAllText(
+                    logPath,
+                    "\n2026.11.14 12:10:00 Log - [Behaviour] OnLeftRoom\n");
+                await shell.RefreshWorldsLiveAsync();
+
+                Assert.DoesNotContain(shell.Worlds, world => world.IsCurrentWorld);
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "friends");
+                Assert.False(shell.IsWorldsLiveRefreshRunning);
+            });
+        }
+        finally
+        {
+            System.IO.File.Delete(logPath);
+        }
+    }
+
+    [Fact]
+    public void RejoinTargetsTheInstanceInTheLogAndFollowsAWorldSwitch()
+    {
+        var logPath = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "vrccompanion-rejoin-" + Guid.NewGuid().ToString("N") + ".log");
+        try
+        {
+            System.IO.File.WriteAllText(logPath, string.Join('\n', new[]
+            {
+                $"2026.11.14 12:00:00 Log - [Behaviour] Joining {WorldId}:{InstanceId}",
+                string.Empty
+            }));
+
+            WpfTestHost.RunAsync(async () =>
+            {
+                using var handler = new LiveHandler();
+                using var api = new VrcApiClient(null, handler);
+                using var shell = new MainViewModel(api);
+                TestHooks.SetCurrentUser(shell, new VrcUser
+                {
+                    Id = "usr_00000000-0000-0000-0000-000000000001",
+                    DisplayName = "Me",
+                    Location = "offline"
+                });
+                TestHooks.SetLoggedIn(shell);
+                TestHooks.UseLogPlayer(
+                    shell,
+                    new VrChatLogPlayerService(() => logPath, () => true));
+                TestHooks.UseGameRunningProbe(() => false);
+                TestHooks.UseHandlerPathProvider(() => null);
+                var launched = new List<string>();
+                TestHooks.UseUriLauncher(uri => launched.Add(uri));
+                TestHooks.UseHandlerLauncher((handler, arguments) => launched.Add(arguments));
+
+                // Choosing a mode alone must not light the indicator.
+                shell.IsVrDefault = true;
+                Assert.False(shell.HasLastLaunchedMode);
+
+                await shell.RejoinWorldAsync();
+                Assert.True(
+                    launched.Count == 1,
+                    $"rejoin launched nothing; info={shell.InfoMessage} error={shell.ErrorMessage}");
+                Assert.Contains(WorldId, launched[0]);
+                Assert.Contains("12345", launched[0]);
+                Assert.True(shell.HasLastLaunchedMode);
+                Assert.Equal("VR", shell.LastLaunchedModeLabel);
+                Assert.True(shell.IsLastLaunchVr);
+
+                // A switch while the app is open is what the next rejoin uses.
+                System.IO.File.AppendAllText(
+                    logPath,
+                    $"\n2026.11.14 12:05:00 Log - [Behaviour] Joining {OtherWorldId}:99999~region(eu)\n");
+                await shell.RejoinWorldAsync();
+                Assert.Equal(2, launched.Count);
+
+                Assert.Contains(OtherWorldId, launched[1]);
+                Assert.Contains("99999", launched[1]);
+                Assert.DoesNotContain("12345", launched[1]);
+
+                // Selecting the other mode alone leaves the indicator alone; the next launch
+                // moves it, and a real window draws the red VR / green desktop light.
+                shell.IsDesktopDefault = true;
+                Assert.Equal("VR", shell.LastLaunchedModeLabel);
+                TestHooks.UseHandlerPathProvider(() => @"C:\fake\VRChat.exe");
+                await shell.RejoinWorldAsync();
+                Assert.Equal("Desktop", shell.LastLaunchedModeLabel);
+                Assert.True(shell.IsLastLaunchDesktop);
+
+                var window = new MainWindow(shell, initializeOnLoad: false)
+                {
+                    Width = 1400,
+                    Height = 900,
+                    WindowStyle = WindowStyle.None,
+                    ShowInTaskbar = false,
+                    ShowActivated = false,
+                    WindowStartupLocation = WindowStartupLocation.Manual,
+                    Left = 100,
+                    Top = 100
+                };
+                window.Show();
+                try
+                {
+                    shell.SelectedSection = shell.Sections.Single(section => section.Key == "friends");
+                    window.UpdateLayout();
+                    window.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+
+                    var indicator = FindVisualChildren<Border>(window)
+                        .First(border =>
+                            Equals(border.ToolTip, "Launched in desktop mode") && border.IsVisible);
+                    var light = FindVisualChildren<System.Windows.Shapes.Ellipse>(indicator).First();
+                    Assert.Equal(
+                        ((SolidColorBrush)window.FindResource("GreenBrush")).Color,
+                        ((SolidColorBrush)light.Fill).Color);
+                }
+                finally
+                {
+                    window.Close();
+                }
+            });
+        }
+        finally
+        {
+            System.IO.File.Delete(logPath);
+        }
+    }
+
+    [Fact]
     public async Task SearchResultsMarkTheWorldYouAreIn()
     {
         using var handler = new LiveHandler();
@@ -121,6 +294,9 @@ public class WorldCurrentInstanceTests
             Location = $"{WorldId}:{InstanceId}"
         });
         TestHooks.SetLoggedIn(shell);
+        TestHooks.UseLogPlayer(
+            shell,
+            new VrChatLogPlayerService(() => string.Empty, () => false));
 
         // Launch condition: no Instance page was ever opened, so nothing has loaded the
         // live instance. The world still has to be marked and come first.
@@ -150,6 +326,9 @@ public class WorldCurrentInstanceTests
                 Location = $"{WorldId}:{InstanceId}"
             });
             TestHooks.SetLoggedIn(shell);
+            TestHooks.UseLogPlayer(
+                shell,
+                new VrChatLogPlayerService(() => string.Empty, () => false));
 
             var window = new MainWindow(shell, initializeOnLoad: false)
             {
@@ -223,15 +402,30 @@ public class WorldCurrentInstanceTests
                     """));
             }
 
-            if (path.EndsWith($"/worlds/{WorldId}", StringComparison.Ordinal))
+            if (path.EndsWith($"/worlds/{WorldId}", StringComparison.Ordinal) ||
+                path.EndsWith($"/worlds/{OtherWorldId}", StringComparison.Ordinal) ||
+                path.EndsWith($"/worlds/{ThirdWorldId}", StringComparison.Ordinal))
             {
-                var slim = SlimInstances ?? new() { (InstanceId, 2) };
+                var isMain = path.EndsWith($"/worlds/{WorldId}", StringComparison.Ordinal);
+                var worldId = isMain
+                    ? WorldId
+                    : path.EndsWith($"/worlds/{OtherWorldId}", StringComparison.Ordinal)
+                        ? OtherWorldId
+                        : ThirdWorldId;
+                var name = isMain
+                    ? "Popcorn Palace"
+                    : worldId == OtherWorldId
+                        ? "Moonlit Meadow"
+                        : "Third Star";
+                var slim = isMain
+                    ? SlimInstances ?? new() { (InstanceId, 2) }
+                    : new() { ("99999~region(eu)", 4) };
                 var rows = string.Join(
                     ",",
                     slim.Select(instance => $$"""
                         {
                           "instanceId": "{{instance.InstanceId}}",
-                          "location": "{{WorldId}}:{{instance.InstanceId}}",
+                          "location": "{{worldId}}:{{instance.InstanceId}}",
                           "userCount": {{instance.Occupants}},
                           "capacity": 50,
                           "region": "us",
@@ -240,8 +434,8 @@ public class WorldCurrentInstanceTests
                         """));
                 return Task.FromResult(Json($$"""
                     {
-                      "id": "{{WorldId}}",
-                      "name": "Popcorn Palace",
+                      "id": "{{worldId}}",
+                      "name": "{{name}}",
                       "authorName": "spacebaar",
                       "slimInstances": [ {{rows}} ]
                     }

@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1066 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1068 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.134**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.135**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,33 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.135 changed
+
+- **The Worlds tab follows joins, switches and leaves on its own.** `SelectedSection` starts
+  `StartWorldsLiveRefresh` on `worlds` and stops it anywhere else; the 5 s timer
+  (`WorldsLiveRefreshInterval`) calls `RefreshWorldsLiveAsync`, which resolves the world from the
+  game log while VRChat runs, marks it, moves its card to the front and inserts it when the
+  current page never had it, then clears the mark on a leave. No search is repeated. The same
+  path is what `RefreshWorldResultMarkers` uses when `InstanceViewModel.Instance` changes.
+- **The log is authoritative while the game runs.** `ResolveCurrentWorldIdAsync` polls the log
+  (off the UI thread, process probe included) and does not fall back to a possibly stale loaded
+  instance; `_currentWorldResolved` makes the last answer (including "nobody") the one
+  `KnownCurrentWorldId` reports. Do not make `Instance` win over a running game's log here, or a
+  world switch/leave on the Worlds tab will be missed.
+- **REJOIN WORLD targets where the account is now.** `RejoinWorldAsync` reads the live location
+  first (`ResolveLiveLocationAsync`, fresh log while running, then the loaded instance, then the
+  account location) and only falls back to `InstanceHistoryStore` when there is no current
+  location. It updates on a world switch, so it cannot relaunch yesterday's instance. The
+  running-game probe uses `LaunchService.GameRunningProbe` so tests can never close a real
+  VRChat.
+- **The launch bar says what was actually launched.** `MarkLaunchedMode` runs after a successful
+  join (attached or fresh client) in `LaunchLocationAsync`, not when the Desktop/VR radio changes:
+  `HasLastLaunchedMode`, `LastLaunchedModeLabel`, `IsLastLaunchDesktop`/`IsLastLaunchVr` feed a
+  pill with a green Desktop light or a red VR light next to the LAUNCH AS row.
+- **Tests: 1068.** `WorldCurrentInstanceTests` adds the Worlds tab's log-driven switch and leave
+  (timer running, no search), and a rejoin that follows a switched instance, ignores a radio
+  change until launched, and renders the green desktop light in a real window.
 
 ### What 1.0.134 changed
 

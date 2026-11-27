@@ -952,12 +952,41 @@
                                          IsChecked="{Binding IsVrDefault, Mode=TwoWay}" />
                         </StackPanel>
 
-                        <TextBlock Grid.Column="2"
-                                   Text="{Binding LaunchDefaultText}"
-                                   Style="{StaticResource MutedText}"
-                                   VerticalAlignment="Center"
-                                   Margin="18,0,12,0"
-                                   TextTrimming="CharacterEllipsis" />
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,12,0">
+                            <!-- Lights up only after a world is launched from the app; choosing
+                                 Desktop or VR above changes the next launch, not this. -->
+                            <Border Visibility="{Binding HasLastLaunchedMode, Converter={StaticResource BoolToVis}}"
+                                    Background="#22101520"
+                                    BorderBrush="{StaticResource SoftBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="9"
+                                    Padding="8,4"
+                                    Margin="0,0,10,0"
+                                    ToolTip="{Binding LastLaunchedModeText}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="8" Height="8" Margin="0,0,6,0">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Setter Property="Fill" Value="{StaticResource GreenBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsLastLaunchVr}" Value="True">
+                                                        <Setter Property="Fill" Value="{StaticResource RedBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock Text="{Binding LastLaunchedModeLabel}"
+                                               FontSize="10.5"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}" />
+                                </StackPanel>
+                            </Border>
+                            <TextBlock Text="{Binding LaunchDefaultText}"
+                                       Style="{StaticResource MutedText}"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
 
                         <Button Grid.Column="3"
                                 Style="{StaticResource PrimaryButton}"
@@ -969,7 +998,7 @@
                                 MinWidth="150"
                                 Margin="0,0,7,0"
                                 Command="{Binding RejoinWorldCommand}"
-                                ToolTip="Rejoin the most recent VRChat instance. VRChat restarts automatically when needed.">
+                                ToolTip="Rejoin the instance you are in, or your most recent one when you are not in a world. VRChat restarts automatically when needed.">
                             <Button.Background>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1" Opacity="0.84">
                                     <GradientStop Color="#8B5CF6" Offset="0" />
