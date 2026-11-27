@@ -139,6 +139,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _contextLiveRefreshRunning;
     private bool _contextLiveRefreshPending;
     private string _contextLogSignature = string.Empty;
+    private int _contextActivityRevision = -1;
     private InstanceHistoryRecorder? _instanceHistoryRecorder;
     private DispatcherTimer? _instanceHistoryTimer;
     private bool _instanceHistoryPolling;
@@ -4847,7 +4848,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             openUserProfile: OpenUserProfile,
             liveRoster: LiveInstanceRosterAsync,
             currentInstance: () => InstanceViewModel?.Instance,
-            refreshLiveState: RefreshLiveStateForDialogAsync);
+            refreshLiveState: RefreshLiveStateForDialogAsync,
+            activityFeed: InstanceViewModel?.ActivityFeed);
         WorldDialog = dialog;
         ClearInfo();
         _ = dialog.LoadAsync(forceRefresh: false, cancellation.Token);
@@ -6494,21 +6496,47 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         if (signature.Length == 0)
         {
             _contextLogSignature = string.Empty;
+            _contextActivityRevision = -1;
+            // Leaving the room empties the activity box. That is a local apply, not a
+            // reload: there is no instance left to read and nothing else on the page moved.
+            UpdateContextActivity(null);
             return;
         }
 
-        // The roster signature cannot see an Udon event that changes no player, and the
-        // activity box would then wait for a manual Refresh. The log service's revision
-        // covers exactly those changes, so Context follows them on the same poll.
-        signature += "|activity:" + (snapshot?.ActivityRevision ?? 0);
-
+        // The roster signature cannot see an Udon line. When only the activity moved, the
+        // box is updated on its own: a world that writes Udon events every few seconds
+        // must not make the whole page re-read the instance from VRChat.
+        var activityRevision = snapshot!.ActivityRevision;
         if (string.Equals(signature, _contextLogSignature, StringComparison.Ordinal))
         {
+            if (activityRevision != _contextActivityRevision)
+            {
+                _contextActivityRevision = activityRevision;
+                UpdateContextActivity(snapshot);
+            }
+
             return;
         }
 
         _contextLogSignature = signature;
+        _contextActivityRevision = activityRevision;
         QueueContextLiveRefresh();
+    }
+
+    /// <summary>
+    /// Applies only the log's activity rows to Context. The roster, the world, the
+    /// history and VRChat are untouched, so this is safe to call as often as the log
+    /// produces an event.
+    /// </summary>
+    internal bool UpdateContextActivity(VrChatLogSnapshot? snapshot)
+    {
+        if (ContextViewModel is not { } context)
+        {
+            return false;
+        }
+
+        context.ApplyActivity(snapshot?.Activity);
+        return true;
     }
 
     /// <summary>

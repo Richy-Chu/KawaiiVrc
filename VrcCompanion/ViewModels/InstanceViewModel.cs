@@ -50,6 +50,7 @@ public sealed class InstanceViewModel : ViewModelBase
     private IReadOnlyList<FriendItem> _lastFriends = Array.Empty<FriendItem>();
     private VrChatLogSnapshot? _lastLogSnapshot;
     private string _lastLogSignature = string.Empty;
+    private int _lastActivityRevision = -1;
     private bool _isActive;
 
     public InstanceViewModel(VrcApiClient api, ImageLoader images)
@@ -155,6 +156,24 @@ public sealed class InstanceViewModel : ViewModelBase
 
     /// <summary>Bumped by the log service whenever the activity list changes.</summary>
     public int LogActivityRevision => _lastLogSnapshot?.ActivityRevision ?? 0;
+
+    /// <summary>
+    /// Publishes a log snapshot's activity without the roster, the instance or VRChat.
+    /// The tests use it the way the tab does, one snapshot at a time.
+    /// </summary>
+    internal void ApplyLogActivity(VrChatLogSnapshot? snapshot)
+    {
+        _lastLogSnapshot = snapshot;
+        _lastActivityRevision = snapshot?.ActivityRevision ?? 0;
+        ActivityFeed.Apply(snapshot?.Activity);
+    }
+
+    /// <summary>
+    /// The activity box shown on the Instance tab and in the world dialog's Players
+    /// panel. It is filled by the same poll that fills the roster, so neither surface
+    /// reads the log or VRChat again to show it.
+    /// </summary>
+    public InstanceActivityFeed ActivityFeed { get; } = new();
 
     public string PlayerSearch
     {
@@ -531,6 +550,8 @@ public sealed class InstanceViewModel : ViewModelBase
         {
             var logSnapshot = _logService.Poll();
             _lastLogSnapshot = logSnapshot;
+            _lastActivityRevision = logSnapshot?.ActivityRevision ?? 0;
+            ActivityFeed.Apply(logSnapshot?.Activity);
             var apiLocationValue = currentUser?.Location ?? string.Empty;
             var apiLocation = LaunchService.IsLocation(apiLocationValue)
                 ? currentUser!.Location
@@ -748,13 +769,25 @@ public sealed class InstanceViewModel : ViewModelBase
         }
 
         var signature = BuildLogSignature(snapshot);
-        if (signature.Length == 0 || string.Equals(signature, _lastLogSignature, StringComparison.Ordinal))
+        if (signature.Length == 0)
+        {
+            return;
+        }
+
+        // The roster signature cannot see an Udon line, so the revision is compared too:
+        // a world that keeps writing Udon events still updates the activity box while no
+        // player changes.
+        var activityRevision = snapshot?.ActivityRevision ?? 0;
+        if (string.Equals(signature, _lastLogSignature, StringComparison.Ordinal) &&
+            activityRevision == _lastActivityRevision)
         {
             return;
         }
 
         _lastLogSignature = signature;
+        _lastActivityRevision = activityRevision;
         _lastLogSnapshot = snapshot;
+        ActivityFeed.Apply(snapshot?.Activity);
 
         // A join/leave inside the same instance does not change the instance,
         // world or owner. Rebuild the roster straight from the log so it lands
@@ -1453,6 +1486,8 @@ public sealed class InstanceViewModel : ViewModelBase
         WorldImage = null;
         _players.Clear();
         _lastLogSnapshot = null;
+        _lastActivityRevision = -1;
+        ActivityFeed.Clear();
         _hasCompletePlayerList = false;
         _ownerText = string.Empty;
         _ownerKind = string.Empty;

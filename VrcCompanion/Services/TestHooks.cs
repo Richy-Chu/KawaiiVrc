@@ -144,6 +144,13 @@ internal static class TestHooks
         => AttachViewModel(shell, nameof(MainViewModel.GroupViewModel), groups);
 
     /// <summary>
+    /// Attaches the Context page without a session, so its activity feed can be fed a log
+    /// snapshot exactly as the shell does.
+    /// </summary>
+    public static void AttachContextViewModel(MainViewModel shell, ContextViewModel context)
+        => AttachViewModel(shell, nameof(MainViewModel.ContextViewModel), context);
+
+    /// <summary>
     /// Attaches a history view model to the shell without restoring a session.
     /// The shell keeps its setter private, so this goes through it by reflection.
     /// </summary>

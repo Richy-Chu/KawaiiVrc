@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1082 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1089 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.141**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.142**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,36 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.142 changed
+
+- **The activity box is one control, drawn in three places.** `ViewModels/InstanceActivityFeed` holds
+  the list, the filter (All / Joined / Left / Udon), the eight-row page and the row cache;
+  `Controls/InstanceActivityView` draws it. Context (`ContextViewModel.ActivityFeed`), the Instance
+  tab (`InstanceViewModel.ActivityFeed`, bound as `{Binding InstanceViewModel.ActivityFeed}` because
+  that page's DataContext is the shell) and the world dialog's Players panel
+  (`WorldDialogViewModel.ActivityFeed`, the Instance tab's own feed, passed by `OpenWorld`) all bind
+  the same control. Do not copy the markup into a surface: the second copy is how the filters
+  drift apart.
+- **The box updates without the page reloading.** `ObserveContextLogSnapshot` used to fold
+  `ActivityRevision` into the roster signature, so any Udon line made Context queue a full live
+  refresh (`QueueContextLiveRefresh` - an instance read). The signature is the roster alone again,
+  and a revision that moved on its own goes through `MainViewModel.UpdateContextActivity`, which
+  calls `ContextViewModel.ApplyActivity` and nothing else. `QueueContextLiveRefresh` is for roster
+  changes only; a world that writes Udon events every few seconds must never turn into an API call.
+- **A repeated Udon line is one row.** `VrChatLogPlayerService.RecordActivity` folds a consecutive
+  identical Udon line into the row above it (`RepeatCount`, and the newer time), so the 100-row cap
+  holds events instead of a world's loop, and the row shows `x N`. Non-consecutive repeats stay
+  separate rows, which is what a timeline should show.
+- **Every stamp on the three surfaces is 12-hour.** `InstanceActivityItem.TimeText` is `h:mm:ss tt`
+  and the Instance tab and Players panel stamps already used `h:mm tt` / `h:mm:ss tt`. New rows stay
+  in that family; a `HH:mm:ss` value reads as a different feature beside them.
+- **Tests: 1089.** `InstanceActivityTests` pins the log line shapes and their own times, instance
+  scoping, the cap, a poll that finds nothing handing back the same list, the fold (150 identical
+  Udon lines become one row with `x 150` and the last time), the filter, the empty box,
+  `UpdateContextActivity` moving the rows with zero HTTP requests and emptying on a leave, the
+  Instance tab taking its rows from its own log snapshot, the world dialog holding that same feed,
+  and a real window drawing the rows and following the filter.
 
 ### What 1.0.141 changed
 

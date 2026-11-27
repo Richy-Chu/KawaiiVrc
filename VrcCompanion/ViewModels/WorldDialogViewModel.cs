@@ -565,6 +565,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
     private readonly Func<string, CancellationToken, Task<IReadOnlyList<InstanceRosterPlayer>?>>? _liveRoster;
     private readonly Func<VrcInstance?>? _currentInstance;
     private readonly Func<CancellationToken, Task>? _refreshLiveState;
+    private readonly InstanceActivityFeed? _activityFeed;
     private WorldInstanceItem? _selectedInstance;
     private DispatcherTimer? _playerRefreshTimer;
     private DispatcherTimer? _liveRefreshTimer;
@@ -615,7 +616,8 @@ public sealed class WorldDialogViewModel : ViewModelBase
         Action<string, string, string>? openUserProfile = null,
         Func<string, CancellationToken, Task<IReadOnlyList<InstanceRosterPlayer>?>>? liveRoster = null,
         Func<VrcInstance?>? currentInstance = null,
-        Func<CancellationToken, Task>? refreshLiveState = null)
+        Func<CancellationToken, Task>? refreshLiveState = null,
+        InstanceActivityFeed? activityFeed = null)
     {
         _summary = summary;
         _api = api;
@@ -626,6 +628,7 @@ public sealed class WorldDialogViewModel : ViewModelBase
         _liveRoster = liveRoster;
         _currentInstance = currentInstance;
         _refreshLiveState = refreshLiveState;
+        _activityFeed = activityFeed;
         HeroImage = summary.Image;
 
         InstanceTypes = new ObservableCollection<InstanceTypeOption>(PersonalInstanceTypes);
@@ -675,6 +678,12 @@ public sealed class WorldDialogViewModel : ViewModelBase
     }
 
     public WorldItem Summary => _summary;
+
+    /// <summary>
+    /// The live instance activity box under the Players panel. It is the Instance tab's
+    /// own feed, fed by the log poll that already fills that roster.
+    /// </summary>
+    public InstanceActivityFeed? ActivityFeed => _activityFeed;
 
     public VrcWorld? World
     {

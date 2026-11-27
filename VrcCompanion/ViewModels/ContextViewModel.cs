@@ -42,9 +42,6 @@ public sealed class ContextViewModel : ViewModelBase
     private bool _isLoading;
     private bool _isStale;
     private bool _loaded;
-    private FilterOption _selectedActivityFilter;
-    private readonly Dictionary<string, InstanceActivityItem> _activityCache = new(StringComparer.Ordinal);
-    private IReadOnlyList<VrChatLogActivity> _logActivity = Array.Empty<VrChatLogActivity>();
 
     public ContextViewModel()
         : this(new ContinuityStore(), new ContextSnapshotStore())
@@ -55,7 +52,6 @@ public sealed class ContextViewModel : ViewModelBase
     {
         _store = store;
         _snapshots = snapshots;
-        _selectedActivityFilter = ActivityFilters[0];
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsLoading);
         CopySnapshotCommand = new RelayCommand(CopySnapshot);
         OpenPlayerCommand = new RelayCommand<InstancePlayerItem>(
@@ -80,28 +76,17 @@ public sealed class ContextViewModel : ViewModelBase
 
     public ObservableCollection<ContinuitySessionItem> TodaySessions { get; } = new();
 
-    /// <summary>The activity rows the selected filter keeps, newest first.</summary>
-    public ObservableCollection<InstanceActivityItem> Activity { get; } = new();
+    /// <summary>
+    /// The instance activity box. It is the same feed the Instance tab and the world
+    /// dialog's Players panel draw, so all three read one list and one filter.
+    /// </summary>
+    public InstanceActivityFeed ActivityFeed { get; } = new();
 
     public PagedList<InstancePlayerItem> PlayersPage { get; } = new();
 
     public PagedList<InstancePlayerItem> FriendsHerePage { get; } = new();
 
     public PagedList<ContinuityPersonItem> RecentPeoplePage { get; } = new();
-
-    /// <summary>
-    /// Eight rows a page: this box sits under the roster, and an event feed is read
-    /// from the top, so a short page is enough and a busy instance builds few rows.
-    /// </summary>
-    public PagedList<InstanceActivityItem> ActivityPage { get; } = new(8);
-
-    public ObservableCollection<FilterOption> ActivityFilters { get; } = new()
-    {
-        new FilterOption("all", "All"),
-        new FilterOption("joined", "Joined"),
-        new FilterOption("left", "Left"),
-        new FilterOption("udon", "Udon")
-    };
 
     public AsyncRelayCommand RefreshCommand { get; }
 
@@ -268,31 +253,6 @@ public sealed class ContextViewModel : ViewModelBase
     public bool HasRecentPeople => RecentPeople.Count > 0;
 
     public bool HasTodaySessions => TodaySessions.Count > 0;
-
-    public bool HasActivity => Activity.Count > 0;
-
-    /// <summary>Which kinds the activity box shows. Changing it re-pages the same rows.</summary>
-    public FilterOption SelectedActivityFilter
-    {
-        get => _selectedActivityFilter;
-        set
-        {
-            if (value is null || ReferenceEquals(value, _selectedActivityFilter))
-            {
-                return;
-            }
-
-            _selectedActivityFilter = value;
-            OnPropertyChanged();
-            RebuildActivity(resetPage: true);
-        }
-    }
-
-    public string ActivityText => _logActivity.Count == 0
-        ? "Nothing yet in this instance."
-        : Activity.Count == _logActivity.Count
-            ? $"{Activity.Count:N0} event(s)"
-            : $"{Activity.Count:N0} of {_logActivity.Count:N0} event(s)";
 
     /// <summary>True after a live or saved refresh has populated the page.</summary>
     public bool IsLoaded => _loaded;
@@ -463,87 +423,12 @@ public sealed class ContextViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Takes the log's activity list as it was at the last read. The rows are cached by
-    /// what they describe, so a refresh that finds the same events updates no row.
+    /// Takes the log's activity list as it was at the last read, without touching the
+    /// roster, world or history. A world that writes Udon lines can therefore bring this
+    /// box up to date without the page re-reading the instance from VRChat.
     /// </summary>
     internal void ApplyActivity(IReadOnlyList<VrChatLogActivity>? events)
-    {
-        _logActivity = events ?? Array.Empty<VrChatLogActivity>();
-        RebuildActivity(resetPage: false);
-    }
-
-    private void RebuildActivity(bool resetPage)
-    {
-        var filter = _selectedActivityFilter?.Key ?? "all";
-        var next = new List<InstanceActivityItem>(_logActivity.Count);
-        var kept = new Dictionary<string, InstanceActivityItem>(_logActivity.Count, StringComparer.Ordinal);
-        foreach (var entry in _logActivity)
-        {
-            if (!MatchesActivityFilter(entry.Kind, filter))
-            {
-                continue;
-            }
-
-            var key = ActivityKey(entry);
-            if (!_activityCache.TryGetValue(key, out var item))
-            {
-                item = new InstanceActivityItem(entry);
-            }
-
-            kept[key] = item;
-            next.Add(item);
-        }
-
-        // The cache only holds what the filter shows; the rest would leak one row per
-        // event the reader never asked to see.
-        _activityCache.Clear();
-        foreach (var pair in kept)
-        {
-            _activityCache[pair.Key] = pair.Value;
-        }
-
-        // Newest first, and OrderByDescending is stable, so lines written in the same
-        // second keep the order VRChat wrote them in.
-        var ordered = next.OrderByDescending(item => item.Activity.At).ToList();
-        var same = Activity.Count == ordered.Count;
-        for (var index = 0; same && index < ordered.Count; index++)
-        {
-            same = ReferenceEquals(Activity[index], ordered[index]);
-        }
-
-        if (!same)
-        {
-            Activity.Clear();
-            foreach (var item in ordered)
-            {
-                Activity.Add(item);
-            }
-        }
-
-        ActivityPage.SetSource(ordered, resetPage);
-        OnPropertyChanged(nameof(HasActivity));
-        OnPropertyChanged(nameof(ActivityText));
-    }
-
-    private static bool MatchesActivityFilter(VrChatLogActivityKind kind, string filter) => filter switch
-    {
-        "joined" => kind == VrChatLogActivityKind.Joined,
-        "left" => kind == VrChatLogActivityKind.Left,
-        "udon" => kind == VrChatLogActivityKind.Udon,
-        _ => true
-    };
-
-    private static string ActivityKey(VrChatLogActivity entry)
-        => string.Concat(
-            ((int)entry.Kind).ToString(CultureInfo.InvariantCulture),
-            "|",
-            entry.At.UtcTicks.ToString(CultureInfo.InvariantCulture),
-            "|",
-            entry.UserId,
-            "|",
-            entry.DisplayName,
-            "|",
-            entry.Detail);
+        => ActivityFeed.Apply(events);
 
     private void ApplyLive(VrcUser user, InstanceViewModel? instance)
     {

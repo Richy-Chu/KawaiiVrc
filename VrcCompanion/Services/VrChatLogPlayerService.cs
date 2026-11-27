@@ -22,14 +22,17 @@ public enum VrChatLogActivityKind
 /// <summary>
 /// One join, leave or Udon event read from VRChat's own log. The timestamp is the
 /// line's own local time, so the row shows when it happened rather than when the
-/// app noticed it.
+/// app noticed it. <see cref="RepeatCount"/> folds a run of identical Udon lines
+/// into one row: a world that writes the same line every frame must not fill the
+/// list with one message.
 /// </summary>
 public sealed record VrChatLogActivity(
     VrChatLogActivityKind Kind,
     string DisplayName,
     string UserId,
     string Detail,
-    DateTimeOffset At);
+    DateTimeOffset At,
+    int RepeatCount = 1);
 
 public sealed record VrChatLogSnapshot(
     string Location,
@@ -460,17 +463,36 @@ public sealed class VrChatLogPlayerService
         string detail,
         string line)
     {
-        _activity.Add(new VrChatLogActivity(
-            kind,
-            displayName ?? string.Empty,
-            userId ?? string.Empty,
-            detail ?? string.Empty,
-            LineTimestamp(line)));
-        if (_activity.Count > ActivityLimit)
+        var at = LineTimestamp(line);
+        if (kind == VrChatLogActivityKind.Udon &&
+            _activity.Count > 0 &&
+            _activity[^1] is { Kind: VrChatLogActivityKind.Udon } previous &&
+            string.Equals(previous.Detail, detail, StringComparison.Ordinal))
         {
-            // A busy instance can log joins faster than anyone reads them; the box
-            // shows the tail, so the oldest rows are the ones to drop.
-            _activity.RemoveRange(0, _activity.Count - ActivityLimit);
+            // The line right above says the same thing, so the world is repeating it.
+            // Folding it in keeps the newest 100 *events* instead of one world's loop,
+            // and the row keeps the time of the last time it happened.
+            _activity[^1] = previous with
+            {
+                RepeatCount = previous.RepeatCount + 1,
+                At = at
+            };
+        }
+        else
+        {
+            _activity.Add(new VrChatLogActivity(
+                kind,
+                displayName ?? string.Empty,
+                userId ?? string.Empty,
+                detail ?? string.Empty,
+                at,
+                RepeatCount: 1));
+            if (_activity.Count > ActivityLimit)
+            {
+                // A busy instance can log joins faster than anyone reads them; the box
+                // shows the tail, so the oldest rows are the ones to drop.
+                _activity.RemoveRange(0, _activity.Count - ActivityLimit);
+            }
         }
 
         _activitySnapshot = null;

@@ -58,11 +58,22 @@ public sealed class InstanceActivityItem
         ? KindLabel
         : Activity.Detail;
 
+    /// <summary>How many identical lines this row stands for; 1 for everything but folded Udon noise.</summary>
+    public int RepeatCount => Activity.RepeatCount;
+
+    public bool HasRepeat => Activity.RepeatCount > 1;
+
+    public string RepeatText => Activity.RepeatCount > 1
+        ? $"× {Activity.RepeatCount.ToString("N0", CultureInfo.CurrentCulture)}"
+        : string.Empty;
+
     /// <summary>The log line's own time, in the app's 12-hour style.</summary>
     public string TimeText => Activity.At.ToLocalTime().ToString("h:mm:ss tt", CultureInfo.CurrentCulture);
 
     public string ToolTip => IsUdon
-        ? $"Udon · {TimeText}\n{DetailText}"
+        ? $"Udon · {TimeText}" +
+          (HasRepeat ? $" · seen {RepeatText} times" : string.Empty) +
+          $"\n{DetailText}"
         : $"{DisplayName} · {KindLabel} · {TimeText}";
 
     public bool HasUserId => !string.IsNullOrWhiteSpace(Activity.UserId);
