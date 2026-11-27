@@ -16,6 +16,30 @@ public static class VrModeDetector
     private static DateTime _checkedAt = DateTime.MinValue;
     private static bool _running;
 
+    /// <summary>Tests stand in for SteamVR/OVRServer presence; production probes processes.</summary>
+    internal static Func<bool> VrRunningProbe { get; set; } = DetectVrRunning;
+
+    internal static void ClearCacheForTests()
+    {
+        lock (Sync)
+        {
+            _checkedAt = DateTime.MinValue;
+        }
+    }
+
+    internal static void ResetForTests()
+    {
+        VrRunningProbe = DetectVrRunning;
+        lock (Sync)
+        {
+            _checkedAt = DateTime.MinValue;
+            _running = false;
+        }
+    }
+
+    internal static bool DetectVrRunning()
+        => IsProcessRunning("vrmonitor") || IsProcessRunning("OVRServer_x64");
+
     public static bool IsVrRunning()
     {
         lock (Sync)
@@ -27,7 +51,7 @@ public static class VrModeDetector
             }
 
             _checkedAt = now;
-            _running = IsProcessRunning("vrmonitor") || IsProcessRunning("OVRServer_x64");
+            _running = VrRunningProbe();
             return _running;
         }
     }

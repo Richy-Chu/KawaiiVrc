@@ -175,6 +175,79 @@ public class WorldCurrentInstanceTests
     }
 
     [Fact]
+    public void CurrentWorldStaysFirstThroughPagingAndTabSwitch()
+    {
+        var logPath = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "vrccompanion-worlds-pages-" + Guid.NewGuid().ToString("N") + ".log");
+        try
+        {
+            System.IO.File.WriteAllText(logPath, string.Join('\n', new[]
+            {
+                $"2026.11.14 12:00:00 Log - [Behaviour] Joining {OtherWorldId}:99999~region(eu)",
+                string.Empty
+            }));
+
+            WpfTestHost.RunAsync(async () =>
+            {
+                using var handler = new LiveHandler { ManyWorlds = true };
+                using var api = new VrcApiClient(null, handler);
+                using var shell = new MainViewModel(api);
+                TestHooks.SetCurrentUser(shell, new VrcUser
+                {
+                    Id = "usr_00000000-0000-0000-0000-000000000001",
+                    DisplayName = "Me",
+                    Location = "offline"
+                });
+                TestHooks.SetLoggedIn(shell);
+                TestHooks.UseLogPlayer(
+                    shell,
+                    new VrChatLogPlayerService(() => logPath, () => true));
+
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "worlds");
+                Settle.Until(
+                    () => shell.Worlds.Count >= 24,
+                    Settle.PumpBackground,
+                    "the Worlds tab never loaded its first page");
+                await shell.RefreshWorldsLiveAsync();
+                Assert.Equal(OtherWorldId, shell.Worlds[0].Id);
+                Assert.True(shell.Worlds[0].IsCurrentWorld);
+
+                // Switch to a world that was not on the popularity page at all.
+                System.IO.File.AppendAllText(
+                    logPath,
+                    $"\n2026.11.14 12:05:00 Log - [Behaviour] Joining {ThirdWorldId}:55555~region(us)\n");
+                await shell.RefreshWorldsLiveAsync();
+                Assert.Equal(ThirdWorldId, shell.Worlds[0].Id);
+                Assert.True(shell.Worlds[0].IsCurrentWorld);
+
+                // Page away and back: the cached first page must keep the live world first.
+                await shell.GoToWorldsPageAsync(2);
+                Assert.Equal(2, shell.WorldsPageNumber);
+                Assert.DoesNotContain(shell.Worlds, world => world.IsCurrentWorld);
+                await shell.GoToWorldsPageAsync(1);
+                Assert.Equal(ThirdWorldId, shell.Worlds[0].Id);
+                Assert.True(shell.Worlds[0].IsCurrentWorld);
+
+                // Leave the tab and come back: the immediate live refresh re-applies it.
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "friends");
+                shell.SelectedSection = shell.Sections.Single(section => section.Key == "worlds");
+                Settle.Until(
+                    () => shell.Worlds.Count > 0 &&
+                          shell.Worlds[0].Id == ThirdWorldId &&
+                          shell.Worlds[0].IsCurrentWorld,
+                    Settle.PumpBackground,
+                    "returning to Worlds lost the current world's first card");
+                Assert.True(shell.IsWorldsLiveRefreshRunning);
+            });
+        }
+        finally
+        {
+            System.IO.File.Delete(logPath);
+        }
+    }
+
+    [Fact]
     public void RejoinTargetsTheInstanceInTheLogAndFollowsAWorldSwitch()
     {
         var logPath = System.IO.Path.Combine(
@@ -204,14 +277,17 @@ public class WorldCurrentInstanceTests
                     shell,
                     new VrChatLogPlayerService(() => logPath, () => true));
                 TestHooks.UseGameRunningProbe(() => false);
-                TestHooks.UseHandlerPathProvider(() => null);
+                // Every launch path goes through the seams: no real VRChat, no registry handler.
+                TestHooks.UseHandlerPathProvider(() => @"C:\fake\VRChat.exe");
                 var launched = new List<string>();
                 TestHooks.UseUriLauncher(uri => launched.Add(uri));
                 TestHooks.UseHandlerLauncher((handler, arguments) => launched.Add(arguments));
 
-                // Choosing a mode alone must not light the indicator.
+                // Choosing a mode alone does not turn the pill on: it reports what is running.
                 shell.IsVrDefault = true;
-                Assert.False(shell.HasLastLaunchedMode);
+                TestHooks.UseVrModeProbe(() => true);
+                await shell.RefreshRunningLaunchModeAsync();
+                Assert.False(shell.HasRunningLaunchMode);
 
                 await shell.RejoinWorldAsync();
                 Assert.True(
@@ -219,11 +295,20 @@ public class WorldCurrentInstanceTests
                     $"rejoin launched nothing; info={shell.InfoMessage} error={shell.ErrorMessage}");
                 Assert.Contains(WorldId, launched[0]);
                 Assert.Contains("12345", launched[0]);
-                Assert.True(shell.HasLastLaunchedMode);
-                Assert.Equal("VR", shell.LastLaunchedModeLabel);
-                Assert.True(shell.IsLastLaunchVr);
+
+                // The game is now up in VR; the light follows the running mode, not the radio.
+                TestHooks.UseGameRunningProbe(() => true);
+                TestHooks.UseVrModeProbe(() => true);
+                await shell.RefreshRunningLaunchModeAsync();
+                Assert.True(shell.HasRunningLaunchMode);
+                Assert.Equal("VR", shell.RunningLaunchModeLabel);
+                Assert.True(shell.IsRunningVr);
+                shell.IsDesktopDefault = true;
+                Assert.Equal("VR", shell.RunningLaunchModeLabel);
 
                 // A switch while the app is open is what the next rejoin uses.
+                TestHooks.UseGameRunningProbe(() => false);
+                shell.IsVrDefault = true;
                 System.IO.File.AppendAllText(
                     logPath,
                     $"\n2026.11.14 12:05:00 Log - [Behaviour] Joining {OtherWorldId}:99999~region(eu)\n");
@@ -234,14 +319,16 @@ public class WorldCurrentInstanceTests
                 Assert.Contains("99999", launched[1]);
                 Assert.DoesNotContain("12345", launched[1]);
 
-                // Selecting the other mode alone leaves the indicator alone; the next launch
-                // moves it, and a real window draws the red VR / green desktop light.
+                // A desktop run (no VR runtime) moves the label even though the radio says VR.
+                TestHooks.UseGameRunningProbe(() => false);
                 shell.IsDesktopDefault = true;
-                Assert.Equal("VR", shell.LastLaunchedModeLabel);
-                TestHooks.UseHandlerPathProvider(() => @"C:\fake\VRChat.exe");
                 await shell.RejoinWorldAsync();
-                Assert.Equal("Desktop", shell.LastLaunchedModeLabel);
-                Assert.True(shell.IsLastLaunchDesktop);
+                TestHooks.UseGameRunningProbe(() => true);
+                TestHooks.UseVrModeProbe(() => false);
+                await shell.RefreshRunningLaunchModeAsync();
+                Assert.Equal("Desktop", shell.RunningLaunchModeLabel);
+                Assert.True(shell.IsRunningDesktop);
+                Assert.True(shell.HasRunningLaunchMode);
 
                 var window = new MainWindow(shell, initializeOnLoad: false)
                 {
@@ -263,7 +350,8 @@ public class WorldCurrentInstanceTests
 
                     var indicator = FindVisualChildren<Border>(window)
                         .First(border =>
-                            Equals(border.ToolTip, "Launched in desktop mode") && border.IsVisible);
+                            Equals(border.ToolTip, "VRChat is running in Desktop mode") &&
+                            border.IsVisible);
                     var light = FindVisualChildren<System.Windows.Shapes.Ellipse>(indicator).First();
                     Assert.Equal(
                         ((SolidColorBrush)window.FindResource("GreenBrush")).Color,
@@ -386,6 +474,9 @@ public class WorldCurrentInstanceTests
     {
         public List<(string InstanceId, int Occupants)>? SlimInstances { get; set; }
 
+        /// <summary>Answers the popularity page with 30 rows, current world not among them.</summary>
+        public bool ManyWorlds { get; set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
@@ -394,6 +485,25 @@ public class WorldCurrentInstanceTests
 
             if (path.EndsWith("/worlds", StringComparison.Ordinal))
             {
+                if (ManyWorlds)
+                {
+                    var rows = Enumerable.Range(1, 30)
+                        .Select(index => new
+                        {
+                            id = $"wrld_10000000-0000-0000-0000-{index:D12}",
+                            name = $"World {index}",
+                            authorName = "spacebaar"
+                        })
+                        .ToList();
+                    rows.Insert(5, new
+                    {
+                        id = OtherWorldId,
+                        name = "Moonlit Meadow",
+                        authorName = "spacebaar"
+                    });
+                    return Task.FromResult(Json(System.Text.Json.JsonSerializer.Serialize(rows)));
+                }
+
                 return Task.FromResult(Json($$"""
                     [
                       { "id": "{{OtherWorldId}}", "name": "Moonlit Meadow", "authorName": "spacebaar" },

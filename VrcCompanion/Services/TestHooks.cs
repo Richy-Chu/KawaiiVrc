@@ -360,6 +360,8 @@ internal static class TestHooks
         UseHandlerPathProvider(null);
         UseHandlerLauncher(null);
         UseGameRunningProbe(null);
+        UseVrModeProbe(null);
+        VrModeDetector.ResetForTests();
         UseRunningGameLauncher(null);
         UseFolderLauncher(null);
         UseDownloadPathProvider(null);
@@ -386,6 +388,13 @@ internal static class TestHooks
     /// <summary>Tests pin whether VRChat is already running; null restores process detection.</summary>
     public static void UseGameRunningProbe(Func<bool>? probe)
         => LaunchService.GameRunningProbe = probe ?? LaunchService.IsGameRunning;
+
+    /// <summary>Tests pin whether a VR runtime is present; null restores process detection.</summary>
+    public static void UseVrModeProbe(Func<bool>? probe)
+    {
+        VrModeDetector.VrRunningProbe = probe ?? VrModeDetector.DetectVrRunning;
+        VrModeDetector.ClearCacheForTests();
+    }
 
     /// <summary>Tests observe the running-game attach path instead of opening VRChat's pipe.</summary>
     public static void UseRunningGameLauncher(Func<string, CancellationToken, Task<bool>>? launcher)

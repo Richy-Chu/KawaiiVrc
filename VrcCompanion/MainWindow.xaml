@@ -953,30 +953,21 @@
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,12,0">
-                            <!-- Lights up only after a world is launched from the app; choosing
-                                 Desktop or VR above changes the next launch, not this. -->
-                            <Border Visibility="{Binding HasLastLaunchedMode, Converter={StaticResource BoolToVis}}"
+                            <!-- Green for whichever mode VRChat is actually running, whatever the
+                                 radio says; the pill disappears when the game is closed. -->
+                            <Border Visibility="{Binding HasRunningLaunchMode, Converter={StaticResource BoolToVis}}"
                                     Background="#22101520"
                                     BorderBrush="{StaticResource SoftBorderBrush}"
                                     BorderThickness="1"
                                     CornerRadius="9"
                                     Padding="8,4"
                                     Margin="0,0,10,0"
-                                    ToolTip="{Binding LastLaunchedModeText}">
+                                    ToolTip="{Binding RunningLaunchModeText}">
                                 <StackPanel Orientation="Horizontal">
-                                    <Ellipse Width="8" Height="8" Margin="0,0,6,0">
-                                        <Ellipse.Style>
-                                            <Style TargetType="Ellipse">
-                                                <Setter Property="Fill" Value="{StaticResource GreenBrush}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsLastLaunchVr}" Value="True">
-                                                        <Setter Property="Fill" Value="{StaticResource RedBrush}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Ellipse.Style>
-                                    </Ellipse>
-                                    <TextBlock Text="{Binding LastLaunchedModeLabel}"
+                                    <Ellipse Width="8" Height="8"
+                                             Margin="0,0,6,0"
+                                             Fill="{StaticResource GreenBrush}" />
+                                    <TextBlock Text="{Binding RunningLaunchModeLabel}"
                                                FontSize="10.5"
                                                FontWeight="SemiBold"
                                                Foreground="{StaticResource TextBrush}" />

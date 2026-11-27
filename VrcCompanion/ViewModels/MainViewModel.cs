@@ -60,6 +60,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _currentWorldResolved;
     private VrcWorld? _currentWorldDetails;
     private DispatcherTimer? _worldsLiveTimer;
+    private DispatcherTimer? _runningModeTimer;
     private bool _worldsLiveRefreshing;
     private string _worldsQuery = string.Empty;
     private int _worldsPage = 1;
@@ -1012,7 +1013,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     _ = ActivityFeedViewModel.LoadAsync();
                     break;
                 case "worlds":
-                    _ = EnsureWorldsLoadedAsync();
+                    _ = LoadWorldsSectionAsync();
                     break;
                 case "instance":
                     _ = LoadInstanceAsync();
@@ -2871,6 +2872,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _instanceHistoryTimer.Tick += (_, _) => PollInstanceHistory();
         _instanceHistoryTimer.Start();
 
+        // The launch pill reports the live VRChat run state, so a mode switch made outside the
+        // app is caught too; both process probes run off the UI thread.
+        _runningModeTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = RunningLaunchModeInterval
+        };
+        _runningModeTimer.Tick += (_, _) => _ = RefreshRunningLaunchModeAsync();
+        _runningModeTimer.Start();
+        _ = RefreshRunningLaunchModeAsync();
+
         _activityPollTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             // Realtime is the primary path. This poll is the safety net for
@@ -4276,6 +4287,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// Opening or returning to Worlds also re-applies the live world, so the first page keeps
+    /// its YOU'RE HERE card after a tab switch or after paging away and back.
+    /// </summary>
+    private async Task LoadWorldsSectionAsync()
+    {
+        await EnsureWorldsLoadedAsync();
+        await RefreshWorldsLiveAsync();
+    }
+
     private async Task EnsureWorldsLoadedAsync()
     {
         if (_worldsLoaded || !IsLoggedIn || IsBusy || !string.IsNullOrWhiteSpace(WorldQuery))
@@ -4501,6 +4522,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 IsCurrentWorld = true
             };
             Worlds.Insert(0, current);
+            SyncCurrentWorldIntoPageOne(currentWorldId, details);
             return;
         }
 
@@ -4508,6 +4530,33 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         if (index > 0)
         {
             Worlds.Move(index, 0);
+        }
+
+        SyncCurrentWorldIntoPageOne(currentWorldId, details);
+    }
+
+    /// <summary>
+    /// Keeps page 1's cache holding the live world too: paging to page 2 and back, or leaving
+    /// Worlds and returning, publishes that cache instead of re-running the search.
+    /// </summary>
+    private void SyncCurrentWorldIntoPageOne(string currentWorldId, VrcWorld? details)
+    {
+        if (details is null || !_worldsPages.TryGetValue(1, out var page))
+        {
+            return;
+        }
+
+        if (page.Worlds.Any(world => string.Equals(world.Id, currentWorldId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        var rows = page.Worlds.ToList();
+        rows.Insert(0, details);
+        _worldsPages[1] = new WorldsPage(rows, page.HasNext);
+        if (_worldsPage == 1)
+        {
+            PublishWorldsPage(1, _worldsPages[1]);
         }
     }
 
@@ -5375,41 +5424,66 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _ = LaunchLocationAsync(location, chosen, ActiveLaunchArguments);
     }
 
-    private LaunchMode? _lastLaunchedMode;
+    private bool _isGameRunningNow;
+    private bool _isRunningVr;
+    private readonly System.Threading.SemaphoreSlim _runningModeGate = new(1, 1);
+
+    internal static TimeSpan RunningLaunchModeInterval { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// What the last join launched from this app actually started, not the radio selection:
-    /// choosing Desktop or VR only changes the next launch, and the indicator follows a
-    /// successful join.
+    /// What VRChat is actually running as, not the radio selection: the light is green for
+    /// whichever mode is live, and the pill disappears when the game is closed.
     /// </summary>
-    public bool HasLastLaunchedMode => _lastLaunchedMode is not null;
+    public bool HasRunningLaunchMode => _isGameRunningNow;
 
-    public string LastLaunchedModeLabel => _lastLaunchedMode switch
+    public string RunningLaunchModeLabel => _isRunningVr ? "VR" : "Desktop";
+
+    public bool IsRunningDesktop => _isGameRunningNow && !_isRunningVr;
+
+    public bool IsRunningVr => _isGameRunningNow && _isRunningVr;
+
+    public string RunningLaunchModeText => !_isGameRunningNow
+        ? "VRChat is not running"
+        : _isRunningVr
+            ? "VRChat is running in VR"
+            : "VRChat is running in Desktop mode";
+
+    /// <summary>Reads the live run state off the UI thread and updates the launch light.</summary>
+    internal async Task RefreshRunningLaunchModeAsync()
     {
-        LaunchMode.Desktop => "Desktop",
-        LaunchMode.Vr => "VR",
-        _ => string.Empty
-    };
+        // Serialised rather than dropped: a caller that asks after a launch must see the
+        // probes that start after its own state changed, not an older tick's answer.
+        await _runningModeGate.WaitAsync();
+        try
+        {
+            var running = await Task.Run(() => LaunchService.GameRunningProbe());
+            var vr = running && await Task.Run(() => VrModeDetector.IsVrRunning());
+            ApplyRunningLaunchMode(running, vr);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("running launch mode: " + ex.Message);
+        }
+        finally
+        {
+            _runningModeGate.Release();
+        }
+    }
 
-    public bool IsLastLaunchDesktop => _lastLaunchedMode == LaunchMode.Desktop;
-
-    public bool IsLastLaunchVr => _lastLaunchedMode == LaunchMode.Vr;
-
-    public string LastLaunchedModeText => _lastLaunchedMode switch
+    private void ApplyRunningLaunchMode(bool running, bool vr)
     {
-        LaunchMode.Desktop => "Launched in desktop mode",
-        LaunchMode.Vr => "Launched in VR mode",
-        _ => "No world launched from the app yet"
-    };
+        if (_isGameRunningNow == running && _isRunningVr == vr)
+        {
+            return;
+        }
 
-    private void MarkLaunchedMode(LaunchMode mode)
-    {
-        _lastLaunchedMode = mode;
-        OnPropertyChanged(nameof(HasLastLaunchedMode));
-        OnPropertyChanged(nameof(LastLaunchedModeLabel));
-        OnPropertyChanged(nameof(IsLastLaunchDesktop));
-        OnPropertyChanged(nameof(IsLastLaunchVr));
-        OnPropertyChanged(nameof(LastLaunchedModeText));
+        _isGameRunningNow = running;
+        _isRunningVr = vr;
+        OnPropertyChanged(nameof(HasRunningLaunchMode));
+        OnPropertyChanged(nameof(RunningLaunchModeLabel));
+        OnPropertyChanged(nameof(IsRunningDesktop));
+        OnPropertyChanged(nameof(IsRunningVr));
+        OnPropertyChanged(nameof(RunningLaunchModeText));
     }
 
     private async Task LaunchLocationAsync(string location, LaunchMode chosen, string extraArguments)
@@ -5437,7 +5511,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ClearError();
             if (outcome == LaunchOutcome.AttachedToRunningGame)
             {
-                MarkLaunchedMode(chosen);
+                _ = RefreshRunningLaunchModeAsync();
                 ShowInfo("Opened the instance inside the running VRChat client.");
                 return;
             }
@@ -5460,7 +5534,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            MarkLaunchedMode(chosen);
+            _ = RefreshRunningLaunchModeAsync();
             ShowInfo($"Opening VRChat in {chosen.ToString().ToLowerInvariant()} mode and joining the instance.");
         }
         catch (Exception ex)

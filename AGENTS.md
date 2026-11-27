@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1068 tests and takes about 4 minutes. CI builds with SDK 8, while a
+A full run is 1069 tests and takes about 4 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.135**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.136**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,26 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.136 changed
+
+- **The live world survives paging and tab switches.** `SyncCurrentWorldIntoPageOne` writes the
+  resolved world into `_worldsPages[1]` (inserting its record when the popularity page never had
+  it), and `LoadWorldsSectionAsync` refreshes the live world immediately after
+  `EnsureWorldsLoadedAsync` on every visit. Without both, paging to 2 and back or leaving Worlds
+  and returning republished a cache that lacked the world or its front slot. Page 1 is always
+  sorted current-first by `PublishWorldsPage`.
+- **The launch pill reports the live run, not the radio.** `RefreshRunningLaunchModeAsync` probes
+  `LaunchService.GameRunningProbe` and `VrModeDetector.IsVrRunning` off the UI thread every 5 s
+  (`RunningLaunchModeInterval`) and through a `SemaphoreSlim` so a refresh asked for after a
+  launch cannot be dropped behind an older one. `HasRunningLaunchMode` hides the pill when
+  VRChat is closed; the light is green for either mode and the label is the mode that is
+  actually running. `VrModeDetector.VrRunningProbe`/`ClearCacheForTests` and
+  `TestHooks.UseVrModeProbe` isolate the probe from a real SteamVR.
+- **Tests: 1069.** `CurrentWorldStaysFirstThroughPagingAndTabSwitch` switches worlds after the
+  page loaded, pages to 2 and back, then leaves and returns, asserting the new world is first and
+  marked each time. The rejoin test now checks the pill against probes (radio changes do not move
+  it; VR then Desktop do) and the real window draws the green light for Desktop.
 
 ### What 1.0.135 changed
 
