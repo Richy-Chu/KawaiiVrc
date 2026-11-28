@@ -9651,11 +9651,19 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ImageUrl = imageUrl,
             ThumbnailImageUrl = imageUrl,
             ReleaseStatus = "unavailable",
-            Description =
-                "VRChat's log named this avatar without its author, and the player's profile did not name its id, so its record cannot be confirmed. A public avatar with the same name may be somebody else's; this is the picture the row has."
+            Description = string.IsNullOrWhiteSpace(imageUrl)
+                ? "VRChat's log named this avatar without its author, and the player's profile did not name its id, so its record cannot be confirmed. A public avatar with the same name may be somebody else's, so no picture is shown for it."
+                : "VRChat's log named this avatar without its author, and the player's profile did not name its id, so its record cannot be confirmed. A public avatar with the same name may be somebody else's; this is the picture the row has."
         };
     }
 
+    /// <summary>
+    /// The picture a card draws when the row itself has none. Only an avatar this player was
+    /// recorded wearing under the name the log wrote may stand in: the store's row nearest in
+    /// time is a different avatar as often as not - an avatar called FND borrowing whatever
+    /// room-shaped avatar the player wore minutes earlier is exactly what that produced - so
+    /// the name, the creator and the record confirmation all have to agree.
+    /// </summary>
     private string ResolveActivityAvatarImage(ActivityEntry entry)
     {
         if (entry.HasAvatarImage)
@@ -9664,18 +9672,38 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         var accountId = _api.CurrentUser?.Id;
-        if (string.IsNullOrWhiteSpace(accountId) || string.IsNullOrWhiteSpace(entry.UserId))
+        var name = entry.EffectiveAvatarName;
+        if (string.IsNullOrWhiteSpace(accountId) ||
+            string.IsNullOrWhiteSpace(entry.UserId) ||
+            string.IsNullOrWhiteSpace(name))
         {
             return string.Empty;
         }
 
-        var nearest = FriendAvatarStore.Shared
+        var known = FriendAvatarStore.Shared
             .Load(accountId, entry.UserId)
-            .OrderBy(avatar => Math.Abs((avatar.LastSeen - entry.Timestamp).TotalMinutes))
+            .Where(avatar =>
+                avatar.IsConfirmed &&
+                !string.IsNullOrWhiteSpace(avatar.AvatarId) &&
+                string.Equals(avatar.Name, name.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                ImageUrlHelper.AuthorFits(avatar.AuthorName, entry.AvatarAuthor))
+            .OrderByDescending(avatar => avatar.IsCurrent)
+            .ThenByDescending(avatar => avatar.LastSeen)
             .FirstOrDefault();
-        return nearest?.ThumbnailUrl is { Length: > 0 } thumbnail
+
+        AvatarPictureDiagnostics.Record(
+            "card-picture",
+            entry.UserId,
+            name,
+            entry.AvatarAuthor,
+            known?.ThumbnailUrl ?? known?.ImageUrl,
+            known is null
+                ? "no confirmed history row under this exact name: the card keeps no picture"
+                : "confirmed history row under the name the log wrote");
+
+        return known?.ThumbnailUrl is { Length: > 0 } thumbnail
             ? thumbnail
-            : nearest?.ImageUrl ?? string.Empty;
+            : known?.ImageUrl ?? string.Empty;
     }
 
     private async Task OpenActivityUserAsync(ActivityEntry? entry)

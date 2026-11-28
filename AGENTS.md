@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1144 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1146 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.166**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.167**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,33 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.167 changed
+
+- **A card never borrows an unrelated avatar from the player's history.**
+  `MainViewModel.ResolveActivityAvatarImage` filled a row's missing picture with the history
+  row whose `LastSeen` was nearest the event's time, whatever that avatar was called. That is
+  how an "FND" card drew the room-shaped avatar the player had worn minutes earlier while
+  VRChat's own panel showed the real FND. It now takes only a row that is confirmed
+  (`FriendAvatar.IsConfirmed`), carries an id, has the exact name the log wrote and a creator
+  that fits; with none it returns no picture, and the locked card says so. This feeds
+  `CreateActivityAvatarFallback`, `PrivateActivityAvatar`, `UnavailableActivityAvatar` and
+  `LockedActivityAvatar`, so the Activity page and the instance Avatar filter agree.
+- **A row's own picture is not replaced by the profile's unnamed avatar.**
+  `ActivityFeedViewModel.ApplyKnownLoggedAvatar` accepted the friend's current record when
+  VRChat omitted that avatar's name, and overwrote the picture the row already drew. The row's
+  picture is the one the switch is about; a different file id now stops the profile from
+  claiming that row (`ImageUrlHelper.PicturesDiffer`, which only counts two different VRChat
+  file ids as different).
+- **The locked card explains a missing picture.** `LockedActivityAvatar` says why no picture
+  is shown when there is none instead of claiming "this is the picture the row has".
+- **Tests: 1146.** `MainViewModelSectionTests` adds
+  `ACardNeverBorrowsAnUnrelatedAvatarFromThePlayersHistory` and
+  `ACardDrawsTheHistoryAvatarUnderTheNameTheLogWrote`. Note `InstanceActivityTests`'
+  `ThePlayersOwnAvatarBeatsASameNamedAvatarFromTheSearch` and
+  `AnAvatarFoundByNameCannotReplaceThePlayersOwnAvatar` pin the opposite rule for the instance
+  box: the profile's own avatar picture outranks a name search even when its name is unknown,
+  because the search can answer with a namesake. Do not tighten that path.
 
 ### What 1.0.166 changed
 

@@ -195,6 +195,19 @@ public static class ImageUrlHelper
                 resolution);
 
     /// <summary>
+    /// True when two picture URLs are known to show different VRChat files. A missing file
+    /// id on either side is not a contradiction, so only two different ids count.
+    /// </summary>
+    public static bool PicturesDiffer(string? left, string? right)
+    {
+        var first = ExtractFileId(left);
+        var second = ExtractFileId(right);
+        return !string.IsNullOrWhiteSpace(first) &&
+               !string.IsNullOrWhiteSpace(second) &&
+               !string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// True when an avatar's author does not contradict the author VRChat's log named for a
     /// switch. A different author means a different avatar that only shares the name, so a
     /// lookup must not present it as the avatar this person switched to.

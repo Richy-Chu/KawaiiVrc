@@ -246,6 +246,9 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
             }
         }
 
+        // The profile's own avatar outranks a name search even when VRChat omits that
+        // avatar's name: the search can answer with a different avatar that shares the
+        // name, which is exactly the picture a row must not draw.
         ApplyAvatarImage(
             sameAvatar ? url : null,
             priority: 2,

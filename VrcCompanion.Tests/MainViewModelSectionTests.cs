@@ -243,6 +243,111 @@ public class MainViewModelSectionTests
     }
 
     [Fact]
+    public void ACardNeverBorrowsAnUnrelatedAvatarFromThePlayersHistory()
+    {
+        RunOnSta(() =>
+        {
+            var probe = new NamesakeProbeHandler();
+            TestHooks.UseCommunityHandler(probe);
+            try
+            {
+                using var api = new VrcApiClient(null, probe);
+                var shell = new MainViewModel(api);
+                TestHooks.SetCurrentUser(api, new VrcUser { Id = "acct_card", DisplayName = "Me" });
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                // This player wore a room-shaped avatar shortly before the switch, so it is
+                // the nearest row in their saved history. The log named FND and no picture
+                // of FND is known, so the card must not draw that other avatar.
+                FriendAvatarStore.Shared.Observe(
+                    "acct_card",
+                    "usr_card",
+                    "avtr_room",
+                    "Room",
+                    "https://api.vrchat.cloud/api/1/file/file_room/1/file",
+                    "https://api.vrchat.cloud/api/1/image/file_room/1/256",
+                    "Room Maker");
+
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_card",
+                    DisplayName = "hellkitty",
+                    AvatarName = "FND",
+                    Details = "changed avatar · FND",
+                    Timestamp = DateTimeOffset.UtcNow
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() =>
+                    avatars.SelectedAvatar?.Description.Contains("without its author") == true);
+                Assert.Equal("FND", avatars.SelectedAvatar!.Name);
+                Assert.Equal(string.Empty, avatars.SelectedAvatar.ImageUrl);
+                Assert.Equal(string.Empty, avatars.SelectedAvatar.ThumbnailImageUrl);
+                Assert.True(avatars.SelectedAvatar.IsUnavailable);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
+    public void ACardDrawsTheHistoryAvatarUnderTheNameTheLogWrote()
+    {
+        RunOnSta(() =>
+        {
+            var probe = new NamesakeProbeHandler();
+            TestHooks.UseCommunityHandler(probe);
+            try
+            {
+                using var api = new VrcApiClient(null, probe);
+                var shell = new MainViewModel(api);
+                TestHooks.SetCurrentUser(api, new VrcUser { Id = "acct_card_named", DisplayName = "Me" });
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                FriendAvatarStore.Shared.Observe(
+                    "acct_card_named",
+                    "usr_card_named",
+                    "avtr_fnd",
+                    "FND",
+                    "https://api.vrchat.cloud/api/1/file/file_fnd/1/file",
+                    "https://api.vrchat.cloud/api/1/image/file_fnd/1/256",
+                    "FND Maker");
+
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_card_named",
+                    DisplayName = "hellkitty",
+                    AvatarName = "FND",
+                    AvatarAuthor = "FND Maker",
+                    Details = "changed avatar · FND",
+                    Timestamp = DateTimeOffset.UtcNow
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                // No picture of its own, so the card draws the avatar the player was
+                // recorded wearing under that exact name and creator.
+                Settle.Until(() =>
+                    avatars.SelectedAvatar?.ImageUrl.Contains("file_fnd") == true);
+                Assert.Equal("FND", avatars.SelectedAvatar!.Name);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
     public void ANameOnlyRowOpensThePublicAvatarItsPictureBelongsTo()
     {
         RunOnSta(() =>

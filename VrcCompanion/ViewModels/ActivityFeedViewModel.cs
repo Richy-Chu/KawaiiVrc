@@ -669,7 +669,12 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             avatarName,
             StringComparison.OrdinalIgnoreCase);
         var nameUnknown = string.IsNullOrWhiteSpace(friend.CurrentAvatarName);
-        if (!string.IsNullOrWhiteSpace(friend.CurrentAvatar) &&
+        // A row that already draws a picture is not overwritten by a different one. When the
+        // profile omits the avatar's name, its current avatar may be a later switch, and the
+        // picture on screen is the one this row is about.
+        var pictureConflicts = ImageUrlHelper.PicturesDiffer(entry.AvatarUrl, ownAvatarUrl);
+        if (!pictureConflicts &&
+            !string.IsNullOrWhiteSpace(friend.CurrentAvatar) &&
             (nameMatches || (nameUnknown && !string.IsNullOrWhiteSpace(ownAvatarUrl))))
         {
             entry.AvatarId = friend.CurrentAvatar;
