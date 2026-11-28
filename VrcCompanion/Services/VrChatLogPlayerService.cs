@@ -329,8 +329,10 @@ public sealed class VrChatLogPlayerService
                 if (!string.Equals(InstanceKey(location), InstanceKey(_location), StringComparison.Ordinal))
                 {
                     _players.Clear();
-                    _avatarNames.Clear();
-                    _avatarAuthors.Clear();
+                    // Which avatar a player wears is not the room's business: VRChat only
+                    // writes "Switching … to avatar …" when it loads an avatar, and a
+                    // rejoin usually reuses the avatars already in memory, so keeping
+                    // these is what lets the box show everyone's avatar again.
                     _blockedNames.Clear();
                     _unblockedNames.Clear();
                     // Joins and leaves belong to the room they happened in, so a new
@@ -384,6 +386,15 @@ public sealed class VrChatLogPlayerService
             var userId = joined.Groups["id"].Value;
             Add(name, userId);
             RecordActivity(VrChatLogActivityKind.Joined, name, userId, "Joined the instance", line);
+            // A rejoin does not make VRChat re-log an avatar it already has loaded, so
+            // the Avatar filter would only show the few players who happened to switch.
+            // Show the avatar this player was last seen wearing, at the moment they
+            // joined; RecordAvatarChange folds it into a real switch line if one follows.
+            if (_avatarNames.TryGetValue(name, out var worn) && !string.IsNullOrWhiteSpace(worn))
+            {
+                RecordAvatarChange(name, worn, line);
+            }
+
             return;
         }
 
@@ -416,8 +427,7 @@ public sealed class VrChatLogPlayerService
         if (LeftRoom.IsMatch(line))
         {
             _players.Clear();
-            _avatarNames.Clear();
-            _avatarAuthors.Clear();
+            // The avatars stay known across a leave; see the Joining branch.
             _blockedNames.Clear();
             _unblockedNames.Clear();
             ClearActivity();
@@ -470,6 +480,17 @@ public sealed class VrChatLogPlayerService
     /// </summary>
     private void RecordAvatarChange(string player, string avatarName, string line)
     {
+        // A join re-shows the avatar we already knew, and VRChat sometimes repeats a
+        // switch line; either way the newest row for this player already says it.
+        var previous = _activity.LastOrDefault(entry =>
+            entry.Kind == VrChatLogActivityKind.AvatarChanged &&
+            string.Equals(entry.DisplayName, player, StringComparison.CurrentCultureIgnoreCase));
+        if (previous is not null &&
+            string.Equals(previous.AvatarName, avatarName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         var userId = _players.Values
             .FirstOrDefault(candidate =>
                 string.Equals(candidate.DisplayName, player, StringComparison.CurrentCultureIgnoreCase))

@@ -99,6 +99,40 @@ public class InstanceActivityTests
     }
 
     [Fact]
+    public void RejoiningShowsEveryAvatarAgainWithoutDuplicatingTheSwitch()
+    {
+        using var log = new LogFile(
+            $"2026.11.27 12:00:00 Log        -  [Behaviour] Joining {Location}",
+            $"2026.11.27 12:00:05 Log        -  [Behaviour] OnPlayerJoined Someone ({SomeoneId})",
+            "2026.11.27 12:00:06 Log        -  [Behaviour] Switching Someone to avatar Hays 2.0 (mixed)");
+
+        var service = new VrChatLogPlayerService(() => log.Path);
+        var first = service.Poll();
+        Assert.Single(first!.Activity!.Where(entry =>
+            entry.Kind == VrChatLogActivityKind.AvatarChanged));
+
+        // Leave and rejoin the same instance. VRChat does not log a switch for an avatar
+        // it still has loaded, so the avatar has to come from what we already knew.
+        log.Append(
+            "2026.11.27 12:00:20 Log        -  [Behaviour] OnLeftRoom",
+            $"2026.11.27 12:02:00 Log        -  [Behaviour] Joining {Location}",
+            $"2026.11.27 12:02:05 Log        -  [Behaviour] OnPlayerJoined Someone ({SomeoneId})",
+            "2026.11.27 12:02:06 Log        -  [Behaviour] Switching Someone to avatar Hays 2.0 (mixed)");
+
+        var second = service.Poll();
+        var row = Assert.Single(second!.Activity!.Where(entry =>
+            entry.Kind == VrChatLogActivityKind.AvatarChanged));
+        Assert.Equal("Someone", row.DisplayName);
+        Assert.Equal(SomeoneId, row.UserId);
+        Assert.Equal("Hays 2.0 (mixed)", row.AvatarName);
+        // The row is stamped with the join, and the switch line that follows it does not
+        // add a second row for the same avatar.
+        Assert.Equal(new DateTime(2026, 11, 27, 12, 2, 5), row.At.LocalDateTime);
+        // The roster keeps the avatar too.
+        Assert.True(second.Avatars!.ContainsKey(SomeoneId));
+    }
+
+    [Fact]
     public void TheActivityListKeepsItsNewestHundredRowsAndDoesNotRepeatAPoll()
     {
         var lines = new List<string> { $"2026.11.27 11:00:00 Log        -  [Behaviour] Joining {Location}" };
