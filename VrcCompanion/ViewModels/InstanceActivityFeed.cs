@@ -27,15 +27,18 @@ public sealed class InstanceActivityFeed : ViewModelBase
     private Func<string, string?, Task<string?>>? _avatarImageResolver;
     private Func<string, string, string?>? _personImageResolver;
     private readonly Dictionary<string, string> _personImages = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _personAvatars = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _personIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _personImageLookups = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _personAvatarLookupsDone = new(StringComparer.Ordinal);
     private Func<string, string, Task<PersonLookup?>>? _personLookup;
 
     /// <summary>
     /// What VRChat's user record gives an avatar row: the player's id, so the row can open
-    /// their profile, and their picture, which fills the slot when the avatar has none.
+    /// their profile, their picture, which fills an otherwise empty slot, and the avatar
+    /// they are wearing, which is the picture the Activity page draws for a switch.
     /// </summary>
-    public sealed record PersonLookup(string? UserId, string? ImageUrl);
+    public sealed record PersonLookup(string? UserId, string? ImageUrl, string? AvatarImageUrl = null);
 
     public InstanceActivityFeed()
     {
@@ -144,9 +147,9 @@ public sealed class InstanceActivityFeed : ViewModelBase
     }
 
     /// <summary>
-    /// The person's own picture, which the Activity page draws on a switch row. It is
-    /// filled from the roster the reader already sees, and always wins over the changed
-    /// avatar's picture, so both surfaces show the same face for the same switch.
+    /// The person's own profile picture, which fills an avatar slot no avatar picture
+    /// could: it is a face, so it never stands in for the avatar. Taken from the roster
+    /// the reader already sees, so a known player costs no request.
     /// </summary>
     public void SetPersonImageResolver(Func<string, string, string?>? resolver)
     {
@@ -255,13 +258,20 @@ public sealed class InstanceActivityFeed : ViewModelBase
 
             if (item.IsAvatarChange)
             {
-                // The row names the avatar it is about, so that avatar's picture is the
-                // one it draws. The person's picture only fills the slot when the avatar
-                // has no public image - never in place of the avatar.
+                // The row names the avatar it is about, so an avatar's picture is the one
+                // it draws. The player's own current avatar wins over a same-named avatar
+                // found by search, and their profile picture only fills the slot when
+                // neither avatar picture is known.
+                var personKey = PersonKey(entry.UserId, entry.DisplayName);
                 if (string.IsNullOrWhiteSpace(entry.UserId) &&
-                    _personIds.TryGetValue(PersonKey(entry.UserId, entry.DisplayName), out var resolvedId))
+                    _personIds.TryGetValue(personKey, out var resolvedId))
                 {
                     item.SetUserId(resolvedId);
+                }
+
+                if (_personAvatars.TryGetValue(personKey, out var ownAvatar))
+                {
+                    item.SetPersonAvatarImage(ownAvatar);
                 }
 
                 if (_avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
@@ -271,7 +281,7 @@ public sealed class InstanceActivityFeed : ViewModelBase
 
                 var person = _personImageResolver?.Invoke(entry.UserId, entry.DisplayName);
                 if (string.IsNullOrWhiteSpace(person) &&
-                    _personImages.TryGetValue(PersonKey(entry.UserId, entry.DisplayName), out var fetched))
+                    _personImages.TryGetValue(personKey, out var fetched))
                 {
                     person = fetched;
                 }
@@ -344,6 +354,21 @@ public sealed class InstanceActivityFeed : ViewModelBase
             var displayName = item.Activity.DisplayName;
             var personKey = PersonKey(userId, displayName);
 
+            if (_personLookup is not null &&
+                !string.IsNullOrWhiteSpace(displayName) &&
+                _personImageLookups.Add(personKey))
+            {
+                _ = ResolvePersonImageAsync(userId, displayName, personKey);
+            }
+
+            // The player's own current avatar is the picture the Activity page draws, and
+            // a name search can hand back a different avatar that shares the name. It is
+            // applied first so the search below cannot outrank it.
+            if (_personAvatars.TryGetValue(personKey, out var personAvatar))
+            {
+                item.SetPersonAvatarImage(personAvatar);
+            }
+
             var key = AvatarKey(item.AvatarName, item.AvatarAuthor);
             if (_avatarImages.TryGetValue(key, out var knownAvatar))
             {
@@ -358,16 +383,13 @@ public sealed class InstanceActivityFeed : ViewModelBase
                 item.SetPersonImage(knownPerson);
             }
 
-            // Both run: the avatar's picture replaces the person fallback when it
-            // answers, and the person's picture covers a private or unlisted avatar.
-            if (_personLookup is not null &&
-                !string.IsNullOrWhiteSpace(displayName) &&
-                _personImageLookups.Add(personKey))
-            {
-                _ = ResolvePersonImageAsync(userId, displayName, personKey);
-            }
-
-            if (_avatarImageResolver is not null && _avatarImageLookups.Add(key))
+            // The name search is the fallback, so it waits for the player's own record
+            // first: when that record has an avatar picture there is nothing ambiguous
+            // left to search for.
+            if (_avatarImageResolver is not null &&
+                !_personAvatars.ContainsKey(personKey) &&
+                (_personLookup is null || _personAvatarLookupsDone.Contains(personKey)) &&
+                _avatarImageLookups.Add(key))
             {
                 _ = ResolveAvatarImageAsync(item.AvatarName, item.AvatarAuthor, key);
             }
@@ -387,10 +409,7 @@ public sealed class InstanceActivityFeed : ViewModelBase
             var result = await lookup(userId, displayName);
             var resolvedId = result?.UserId?.Trim();
             var url = result?.ImageUrl?.Trim();
-            if (string.IsNullOrWhiteSpace(resolvedId) && string.IsNullOrWhiteSpace(url))
-            {
-                return;
-            }
+            var avatar = result?.AvatarImageUrl?.Trim();
 
             if (!string.IsNullOrWhiteSpace(resolvedId))
             {
@@ -400,6 +419,11 @@ public sealed class InstanceActivityFeed : ViewModelBase
             if (!string.IsNullOrWhiteSpace(url))
             {
                 _personImages[key] = url;
+            }
+
+            if (!string.IsNullOrWhiteSpace(avatar))
+            {
+                _personAvatars[key] = avatar;
             }
 
             foreach (var item in Activity)
@@ -415,6 +439,11 @@ public sealed class InstanceActivityFeed : ViewModelBase
                         item.SetUserId(resolvedId);
                     }
 
+                    if (!string.IsNullOrWhiteSpace(avatar))
+                    {
+                        item.SetPersonAvatarImage(avatar);
+                    }
+
                     if (!string.IsNullOrWhiteSpace(url))
                     {
                         item.SetPersonImage(url);
@@ -425,6 +454,13 @@ public sealed class InstanceActivityFeed : ViewModelBase
         catch (Exception ex)
         {
             Debug.WriteLine($"instance person image {displayName}: {ex.Message}");
+        }
+        finally
+        {
+            // The record answered (or failed), so the name search may take over when the
+            // profile has no avatar picture of its own.
+            _personAvatarLookupsDone.Add(key);
+            ResolvePageAvatarImages();
         }
     }
 

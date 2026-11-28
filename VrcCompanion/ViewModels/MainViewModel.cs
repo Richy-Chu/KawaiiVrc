@@ -6550,11 +6550,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// The player behind an avatar row: their id, so the row can open their profile, and
-    /// the picture Activity would draw (profile icon, profile picture, or current avatar).
-    /// The roster supplies it when it knows the player; when VRChat's log carried no user
-    /// id, the exact display name finds the same record, so the row gets a face and a
-    /// Profile action instead of an empty slot.
+    /// The player behind an avatar row: their id, so the row can open their profile, the
+    /// picture Activity would draw (profile icon, profile picture, or current avatar),
+    /// and the avatar their profile is wearing, which is the avatar picture Activity draws
+    /// for a switch. The roster supplies it when it knows the player; when VRChat's log
+    /// carried no user id, the exact display name finds the same record, so the row gets a
+    /// face, an avatar and a Profile action instead of an empty slot.
     /// </summary>
     private async Task<InstanceActivityFeed.PersonLookup?> FindActivityPersonAsync(
         string userId,
@@ -6579,7 +6580,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 ? null
                 : new InstanceActivityFeed.PersonLookup(
                     user.Id,
-                    ImageUrlHelper.PersonThumbnailUrl(user));
+                    ImageUrlHelper.PersonThumbnailUrl(user),
+                    // The avatar on their profile is what Activity draws for a switch,
+                    // and unlike a name search it cannot be another player's avatar.
+                    ImageUrlHelper.PickAvatarThumbnailUrl(
+                        null,
+                        null,
+                        user.CurrentAvatarThumbnailImageUrl,
+                        user.CurrentAvatarImageUrl,
+                        256));
         }
         catch (Exception ex)
         {

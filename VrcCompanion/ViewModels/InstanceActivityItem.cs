@@ -21,6 +21,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     private ActivityEntry? _avatarEntry;
     private string _avatarImageUrl = string.Empty;
     private string _resolvedUserId = string.Empty;
+    private int _avatarImagePriority;
     private bool _showsPersonPicture;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -164,10 +165,20 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// The switched avatar's own picture. It always wins over a person picture, so the
-    /// row shows the avatar it names whenever VRChat has a picture of it.
+    /// The switched avatar's picture, found from the name the log wrote. It always wins
+    /// over a person picture, so the row shows an avatar rather than a face.
     /// </summary>
-    public void SetAvatarImage(string? url)
+    public void SetAvatarImage(string? url) => ApplyAvatarImage(url, priority: 1);
+
+    /// <summary>
+    /// The avatar on the player's own VRChat profile, which is exactly the picture the
+    /// Activity page draws on an "Avatar changed" row. A name search can return a
+    /// different avatar that happens to share the name, so the player's own record wins
+    /// over it whenever VRChat gives its picture.
+    /// </summary>
+    public void SetPersonAvatarImage(string? url) => ApplyAvatarImage(url, priority: 2);
+
+    private void ApplyAvatarImage(string? url, int priority)
     {
         if (!IsAvatarChange)
         {
@@ -175,11 +186,12 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         }
 
         var next = url?.Trim() ?? string.Empty;
-        if (next.Length == 0)
+        if (next.Length == 0 || (_avatarImageUrl.Length > 0 && priority < _avatarImagePriority))
         {
             return;
         }
 
+        _avatarImagePriority = priority;
         _showsPersonPicture = false;
         ApplyImage(next);
         if (_avatarEntry is { } entry)

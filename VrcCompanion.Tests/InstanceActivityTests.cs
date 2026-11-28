@@ -792,6 +792,62 @@ public class InstanceActivityTests
     }
 
     [Fact]
+    public void ThePlayersOwnAvatarBeatsASameNamedAvatarFromTheSearch()
+    {
+        const string own = "https://files.vrchat.cloud/chloe-davina.png";
+        var searches = 0;
+        var feed = new InstanceActivityFeed();
+        feed.SetAvatarImageResolver((_, _) =>
+        {
+            searches++;
+            return Task.FromResult<string?>("https://files.vrchat.cloud/someone-elses-davina.png");
+        });
+        feed.SetPersonLookup((_, _) => Task.FromResult<InstanceActivityFeed.PersonLookup?>(
+            new InstanceActivityFeed.PersonLookup(SomeoneId, null, own)));
+
+        feed.Apply(new[] { AvatarRow("chloe", "DAVINA", "Jamuu", 1) });
+
+        // Her own record says which DAVINA she wears, so the ambiguous name search is not
+        // even asked - it used to hand back a different avatar that shares the name.
+        var row = Assert.Single(feed.Activity);
+        Assert.Equal(own, row.AvatarImageUrl);
+        Assert.Equal(own, row.AvatarEntry!.AvatarUrl);
+        Assert.Equal(0, searches);
+        Assert.DoesNotContain("profile picture", row.AvatarImageTooltip);
+    }
+
+    [Fact]
+    public void AnAvatarFoundByNameCannotReplaceThePlayersOwnAvatar()
+    {
+        const string own = "https://files.vrchat.cloud/own.png";
+        var row = new InstanceActivityItem(AvatarRow("chloe", "DAVINA", "Jamuu", 1));
+
+        row.SetPersonAvatarImage(own);
+        row.SetAvatarImage("https://files.vrchat.cloud/other-davina.png");
+
+        Assert.Equal(own, row.AvatarImageUrl);
+    }
+
+    [Fact]
+    public void WithoutAnAvatarOnTheProfileTheNameSearchStillPaintsTheRow()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.SetPersonLookup((_, _) => Task.FromResult<InstanceActivityFeed.PersonLookup?>(
+            new InstanceActivityFeed.PersonLookup(
+                SomeoneId,
+                "https://files.vrchat.cloud/person.png",
+                null)));
+        feed.SetAvatarImageResolver((_, _) =>
+            Task.FromResult<string?>("https://files.vrchat.cloud/avatar.png"));
+
+        feed.Apply(new[] { AvatarRow("Someone", "Kitten", "Maker", 1) });
+
+        // A private avatar leaves the profile without a picture, so the search is the only
+        // source left and its answer is still better than a face.
+        Assert.Equal("https://files.vrchat.cloud/avatar.png", feed.Activity.Single().AvatarImageUrl);
+    }
+
+    [Fact]
     public void ARosterPictureIsTheSamePictureTheActivityPageDraws()
     {
         var user = new VrcUser
