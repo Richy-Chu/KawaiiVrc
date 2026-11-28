@@ -119,6 +119,9 @@ public sealed class ActivityFeedService
                         UserName = friend.Username,
                         DisplayName = friend.DisplayName,
                         AvatarUrl = avatarPicture,
+                        AvatarPictureSource = string.IsNullOrWhiteSpace(avatarPicture)
+                            ? string.Empty
+                            : "The player's own VRChat record - the avatar they switched to",
                         AvatarId = friend.CurrentAvatar ?? string.Empty,
                         // The friend's current record is the only source that may call a
                         // refused avatar private, and its author is what lets the popup

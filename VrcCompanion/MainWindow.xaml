@@ -11977,6 +11977,7 @@
                                                 <RowDefinition Height="Auto" />
                                                 <RowDefinition Height="Auto" />
                                                 <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
                                             </Grid.RowDefinitions>
                                             <TextBlock Text="Created" FontSize="11" Foreground="{StaticResource DimBrush}" Margin="0,0,14,4" />
                                             <TextBlock Grid.Column="1" Text="{Binding AvatarViewModel.SelectedAvatar.CreatedText}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,4" />
@@ -11991,6 +11992,12 @@
                                                             ContentTemplate="{StaticResource AvatarTagChips}"
                                                             HorizontalAlignment="Left"
                                                             Visibility="{Binding AvatarViewModel.SelectedAvatar.HasTags, Converter={StaticResource BoolToVis}}" />
+                                            <!-- Where this card's picture came from. A right and a borrowed picture look
+                                                 identical in the image, so the card names the source. -->
+                                            <TextBlock Grid.Row="4" Text="Picture" FontSize="11" Foreground="{StaticResource DimBrush}" Margin="0,4,14,0"
+                                                       Visibility="{Binding AvatarViewModel.SelectedAvatar.HasPictureSource, Converter={StaticResource BoolToVis}}" />
+                                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding AvatarViewModel.SelectedAvatar.PictureSource}" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                                       Visibility="{Binding AvatarViewModel.SelectedAvatar.HasPictureSource, Converter={StaticResource BoolToVis}}" />
                                         </Grid>
                                     </StackPanel>
                                 </Border>

@@ -686,6 +686,11 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             // only one that may be reported as private when VRChat refuses the record.
             entry.AvatarIdIsCurrentAvatar = true;
             entry.AvatarUrl = ownAvatarUrl ?? string.Empty;
+            entry.AvatarPictureSource = string.IsNullOrWhiteSpace(entry.AvatarUrl)
+                ? string.Empty
+                : nameMatches
+                    ? "The player's own VRChat record - this avatar's name"
+                    : "The player's current VRChat record (VRChat did not report this avatar's name)";
             AvatarPictureDiagnostics.Record(
                 "person-record",
                 friend.Id,
@@ -763,6 +768,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         entry.AvatarUrl = !string.IsNullOrWhiteSpace(known.ThumbnailUrl)
             ? known.ThumbnailUrl
             : known.ImageUrl;
+        entry.AvatarPictureSource = "Saved avatar history - the same name and creator";
         AvatarPictureDiagnostics.Record(
             "history",
             friend.Id,
@@ -818,6 +824,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         if (!string.IsNullOrWhiteSpace(image))
         {
             row.AvatarUrl = image;
+            row.AvatarPictureSource = "The account's own VRChat record";
         }
 
         return true;
@@ -992,9 +999,29 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 if (direct is not null)
                 {
                     // A saved id may belong to another avatar that shares the name, so the
-                    // author the log named has to agree before the record is accepted.
+                    // author the log named has to agree before the record is accepted. Its
+                    // name has to agree too: an id read from a friend record a moment after
+                    // the switch can open the avatar they wore before it, and adopting that
+                    // record drew the previous avatar's picture on this row and renamed it.
                     var authorFits = AvatarAuthorFits(entry, direct);
-                    if (!direct.IsPrivate && !direct.IsUnavailable && authorFits)
+                    var nameFits = string.IsNullOrWhiteSpace(direct.Name) ||
+                                   string.IsNullOrWhiteSpace(avatarName) ||
+                                   string.Equals(
+                                       direct.Name.Trim(),
+                                       avatarName.Trim(),
+                                       StringComparison.OrdinalIgnoreCase);
+                    if (!nameFits)
+                    {
+                        AvatarPictureDiagnostics.Record(
+                            "row-record",
+                            entry.UserId,
+                            avatarName,
+                            entry.AvatarAuthor,
+                            entry.AvatarUrl,
+                            $"the record for this id is another avatar ({direct.Name}): not adopted");
+                    }
+
+                    if (!direct.IsPrivate && !direct.IsUnavailable && authorFits && nameFits)
                     {
                         AvatarLookupCache.Remember(direct);
                         var directImage = !string.IsNullOrWhiteSpace(direct.ThumbnailImageUrl)
@@ -1005,6 +1032,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                             entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(directImage, 256) ?? directImage;
                         }
 
+                        entry.AvatarPictureSource = "VRChat's record for this row's saved id";
                         AvatarPictureDiagnostics.Record(
                             "row-record",
                             entry.UserId,
@@ -1018,7 +1046,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                         return;
                     }
 
-                    if (direct.IsPrivate && authorFits)
+                    if (direct.IsPrivate && authorFits && nameFits)
                     {
                         // VRChat answered for this exact id and said private. That is the
                         // answer, not a reason to look for a different avatar by name.
@@ -1072,6 +1100,8 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                         entry.AvatarUrl,
                         "public index record carrying the row's own id");
 
+                    entry.AvatarPictureSource = "A public avatar index (by this row's id)";
+
                     if (_accountId is not null && !string.IsNullOrWhiteSpace(entry.UserId))
                     {
                         _friendAvatars.RememberDetails(
@@ -1120,6 +1150,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 ? match.ThumbnailImageUrl
                 : match.ImageUrl;
             entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(image, 256) ?? image;
+            entry.AvatarPictureSource = "A public avatar index (by name and creator)";
             entry.SetAvatarName(string.IsNullOrWhiteSpace(match.Name) ? avatarName : match.Name);
             AvatarPictureDiagnostics.Record(
                 "row-name-search",
@@ -2286,6 +2317,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 entry.AvatarUrl = !string.IsNullOrWhiteSpace(match.ThumbnailUrl)
                     ? match.ThumbnailUrl
                     : match.ImageUrl;
+                entry.AvatarPictureSource = "Saved avatar history - the same name and creator";
             }
 
             names.TryAdd(match.AvatarId, match.Name);

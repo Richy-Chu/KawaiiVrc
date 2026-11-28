@@ -650,6 +650,68 @@ public class ActivityFeedSnapshotTests
     }
 
     [Fact]
+    public async Task ARecordNamingAnotherAvatarNeverRenamesTheSwitch()
+    {
+        TestHooks.UseCommunityHandler(new AuthorCheckAvatarHandler());
+        try
+        {
+            var directory = Path.Combine(
+                Path.GetTempPath(),
+                "VrcCompanionTests",
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var handler = new StaleIdAvatarHandler();
+                using var api = new VrcApiClient(null, handler);
+                var store = new ActivityStore(Path.Combine(directory, "activity.json"));
+                // A saved log row: the switch was "Misu", and the id it captured still opens
+                // the avatar the player wore before the switch.
+                store.Save(
+                    "acct_stale",
+                    new[]
+                    {
+                        new ActivityEntry
+                        {
+                            Id = "avatar-usr_stale-log-misu",
+                            Type = ActivityType.AvatarChanged,
+                            UserId = "usr_stale",
+                            DisplayName = "Stale",
+                            UserName = "stale",
+                            AvatarName = "Misu",
+                            AvatarId = "avtr_stale",
+                            Details = "changed avatar · Misu",
+                            Timestamp = DateTimeOffset.UtcNow,
+                            Location = "wrld_test:1",
+                            IsOnline = true
+                        }
+                    });
+
+                var feed = new ActivityFeedViewModel(
+                    api,
+                    store,
+                    new FriendAvatarStore(Path.Combine(directory, "avatars.json")));
+                feed.SetAccount("acct_stale");
+
+                Settle.Until(() => handler.AvatarGets > 0);
+                await Task.Delay(200);
+
+                var entry = Assert.Single(feed.Entries);
+                Assert.Equal("Misu", entry.EffectiveAvatarName);
+                Assert.DoesNotContain("Old Avatar", entry.Details);
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public void EachAvatarRowDrawsThatPlayersOwnCurrentAvatarPicture()
     {
         using var api = new VrcApiClient();
@@ -1256,6 +1318,47 @@ public class ActivityFeedSnapshotTests
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Answers every avatar read with a record called "Old Avatar", whatever id is asked
+    /// for. It is the avatar a player wore before a switch whose friend record has not caught
+    /// up yet, which is what used to be drawn on the new row.
+    /// </summary>
+    private sealed class StaleIdAvatarHandler : System.Net.Http.HttpMessageHandler
+    {
+        public int AvatarGets { get; private set; }
+
+        protected override System.Threading.Tasks.Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath.Contains("/avatars/", StringComparison.Ordinal) == true)
+            {
+                AvatarGets++;
+                return System.Threading.Tasks.Task.FromResult(
+                    new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                    {
+                        Content = new System.Net.Http.StringContent(
+                            """
+                            {
+                              "id": "avtr_stale",
+                              "name": "Old Avatar",
+                              "releaseStatus": "public",
+                              "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_old_avatar/1/256"
+                            }
+                            """,
+                            System.Text.Encoding.UTF8,
+                            "application/json")
+                    });
+            }
+
+            return System.Threading.Tasks.Task.FromResult(
+                new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new System.Net.Http.StringContent("[]", System.Text.Encoding.UTF8, "application/json")
+                });
         }
     }
 

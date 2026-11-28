@@ -9027,6 +9027,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 avatar.ImageUrl = placeholder.ImageUrl;
                 avatar.ThumbnailImageUrl = placeholder.ThumbnailImageUrl;
+                avatar.PictureSource = placeholder.PictureSource;
             }
 
             avatar.IsWearing = string.Equals(
@@ -9160,6 +9161,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                                 entry.AvatarAuthor,
                                 entry.AvatarUrl,
                                 "record read by the row's id, creator agrees");
+                            avatar.PictureSource = entry.AvatarIdIsCurrentAvatar
+                                ? "The player's current VRChat record (read by its id)"
+                                : "VRChat's record for this row's saved id";
                             return avatar;
                         }
 
@@ -9204,6 +9208,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                         entry.AvatarAuthor,
                         entry.AvatarUrl,
                         "public index record carrying the row's own id");
+                    publicById.PictureSource = "A public avatar index (by this row's id)";
                     return publicById;
                 }
             }
@@ -9310,6 +9315,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // The index identified a record VRChat will not expose. Keep its useful
         // name/metadata, but deliberately leave the actions locked.
         indexed.ReleaseStatus = "unavailable";
+        indexed.PictureSource = "A public avatar index (the record itself is not exposed)";
         indexed.Description =
             "VRChat did not expose this avatar's record. It may be private or unlisted, so it can only be viewed.";
         if (!string.IsNullOrWhiteSpace(entry.AvatarUrl))
@@ -9441,6 +9447,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 }
 
                 AvatarLookupCache.Remember(full);
+                full.PictureSource = "A public avatar index (by name and creator)";
                 return full;
             }
         }
@@ -9449,6 +9456,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Debug.WriteLine($"activity avatar name record {match.Id}: {ex.Message}");
         }
 
+        match.PictureSource = "A public avatar index (by name and creator)";
         return match;
     }
 
@@ -9503,7 +9511,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private Avatar CreateActivityAvatarFallback(ActivityEntry entry)
     {
         var name = entry.EffectiveAvatarName;
-        var imageUrl = ResolveActivityAvatarImage(entry);
+        var picture = ResolveActivityAvatarImage(entry);
+        var imageUrl = picture.Url;
 
         return new Avatar
         {
@@ -9513,6 +9522,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 : name,
             ImageUrl = imageUrl,
             ThumbnailImageUrl = imageUrl,
+            PictureSource = string.IsNullOrWhiteSpace(imageUrl) ? "Looking it up…" : picture.Source,
             // This is a temporary object shown while the real record loads. Even
             // when the row has an id, that id has not been confirmed as private,
             // so never label a potentially public avatar as private.
@@ -9578,6 +9588,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 }
 
                 AvatarLookupCache.Remember(avatar);
+                avatar.PictureSource = "A public avatar index (by this row's picture)";
                 return avatar;
             }
         }
@@ -9587,6 +9598,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         AvatarLookupCache.Remember(indexed);
+        indexed.PictureSource = "A public avatar index (by this row's picture)";
         return indexed;
     }
 
@@ -9598,13 +9610,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     private Avatar PrivateActivityAvatar(ActivityEntry entry, string? name)
     {
-        var imageUrl = ResolveActivityAvatarImage(entry);
+        var picture = ResolveActivityAvatarImage(entry);
+        var imageUrl = picture.Url;
         return new Avatar
         {
             Id = entry.AvatarId,
             Name = string.IsNullOrWhiteSpace(name) ? "Private avatar" : name,
             ImageUrl = imageUrl,
             ThumbnailImageUrl = imageUrl,
+            PictureSource = string.Equals(picture.Source, CardPicture.OwnRowSource, StringComparison.Ordinal)
+                ? "The player's own VRChat record (VRChat does not expose the record)"
+                : picture.Source,
             ReleaseStatus = "private",
             Description =
                 "This is the avatar this player was wearing. VRChat does not expose another " +
@@ -9619,13 +9635,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     private Avatar UnavailableActivityAvatar(ActivityEntry entry, string? name)
     {
-        var imageUrl = ResolveActivityAvatarImage(entry);
+        var picture = ResolveActivityAvatarImage(entry);
+        var imageUrl = picture.Url;
         return new Avatar
         {
             Id = entry.AvatarId,
             Name = string.IsNullOrWhiteSpace(name) ? "Avatar unavailable" : name,
             ImageUrl = imageUrl,
             ThumbnailImageUrl = imageUrl,
+            PictureSource = string.Equals(picture.Source, CardPicture.OwnRowSource, StringComparison.Ordinal)
+                ? "This row's own picture (the saved id could not be confirmed)"
+                : picture.Source,
             ReleaseStatus = "unavailable",
             Description =
                 "This row's saved avatar id could not be confirmed against VRChat or the " +
@@ -9641,7 +9661,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     private Avatar LockedActivityAvatar(ActivityEntry entry, string? name)
     {
-        var imageUrl = ResolveActivityAvatarImage(entry);
+        var picture = ResolveActivityAvatarImage(entry);
+        var imageUrl = picture.Url;
         return new Avatar
         {
             // No id: the picture is what the row has, and nothing should be fetched or worn
@@ -9650,6 +9671,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Name = string.IsNullOrWhiteSpace(name) ? "Private or unlisted avatar" : name,
             ImageUrl = imageUrl,
             ThumbnailImageUrl = imageUrl,
+            PictureSource = picture.Source,
             ReleaseStatus = "unavailable",
             Description = string.IsNullOrWhiteSpace(imageUrl)
                 ? "VRChat's log named this avatar without its author, and the player's profile did not name its id, so its record cannot be confirmed. A public avatar with the same name may be somebody else's, so no picture is shown for it."
@@ -9664,11 +9686,22 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// room-shaped avatar the player wore minutes earlier is exactly what that produced - so
     /// the name, the creator and the record confirmation all have to agree.
     /// </summary>
-    private string ResolveActivityAvatarImage(ActivityEntry entry)
+    /// <summary>What a card's picture is, and where it came from.</summary>
+    private readonly record struct CardPicture(string Url, string Source)
+    {
+        /// <summary>The row's own picture, with no more specific source recorded for it.</summary>
+        internal const string OwnRowSource = "This row's own picture";
+    }
+
+    private CardPicture ResolveActivityAvatarImage(ActivityEntry entry)
     {
         if (entry.HasAvatarImage)
         {
-            return entry.AvatarUrl;
+            return new CardPicture(
+                entry.AvatarUrl,
+                string.IsNullOrWhiteSpace(entry.AvatarPictureSource)
+                    ? CardPicture.OwnRowSource
+                    : entry.AvatarPictureSource);
         }
 
         var accountId = _api.CurrentUser?.Id;
@@ -9677,7 +9710,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             string.IsNullOrWhiteSpace(entry.UserId) ||
             string.IsNullOrWhiteSpace(name))
         {
-            return string.Empty;
+            return new CardPicture(string.Empty, "None - the row has no picture to start from");
         }
 
         var known = FriendAvatarStore.Shared
@@ -9701,9 +9734,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 ? "no confirmed history row under this exact name: the card keeps no picture"
                 : "confirmed history row under the name the log wrote");
 
-        return known?.ThumbnailUrl is { Length: > 0 } thumbnail
-            ? thumbnail
-            : known?.ImageUrl ?? string.Empty;
+        if (known is null)
+        {
+            return new CardPicture(
+                string.Empty,
+                "None - no confirmed avatar with this name was found for this player");
+        }
+
+        return new CardPicture(
+            known.ThumbnailUrl is { Length: > 0 } thumbnail ? thumbnail : known.ImageUrl ?? string.Empty,
+            "Saved avatar history - the player was recorded wearing this avatar under this name");
     }
 
     private async Task OpenActivityUserAsync(ActivityEntry? entry)

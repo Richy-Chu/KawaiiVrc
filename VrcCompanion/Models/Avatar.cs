@@ -15,6 +15,7 @@ public sealed class Avatar : INotifyPropertyChanged
     private bool _isWearing;
     private bool _isLocalFavorite;
     private bool _isOwnedByCurrentUser;
+    private string _pictureSource = string.Empty;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -35,6 +36,33 @@ public sealed class Avatar : INotifyPropertyChanged
 
     [JsonPropertyName("thumbnailImageUrl")]
     public string ThumbnailImageUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Where the picture on this card came from - the player's own VRChat record, this
+    /// account's saved avatar history, a public avatar index, the picture the row already
+    /// had, or nowhere. VRChat does not report it; the app sets it when it builds the card,
+    /// so a reader can tell a confirmed picture from a borrowed one at a glance. Not part of
+    /// the API payload, so it is never serialized.
+    /// </summary>
+    [JsonIgnore]
+    public string PictureSource
+    {
+        get => _pictureSource;
+        set
+        {
+            if (string.Equals(_pictureSource, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _pictureSource = value ?? string.Empty;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PictureSource)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPictureSource)));
+        }
+    }
+
+    [JsonIgnore]
+    public bool HasPictureSource => !string.IsNullOrWhiteSpace(PictureSource);
 
     [JsonPropertyName("tags")]
     public List<string> Tags { get; set; } = new();

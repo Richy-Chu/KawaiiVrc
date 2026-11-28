@@ -118,6 +118,14 @@ public sealed class ActivityEntry : INotifyPropertyChanged
     public bool AvatarIdIsAuthoritative { get; set; }
 
     /// <summary>
+    /// Where <see cref="AvatarUrl"/> came from: the player's own record, this account's
+    /// saved history, or a public avatar index. The avatar card shows it so a reader can
+    /// tell a confirmed picture from one borrowed off a stale record. Not persisted.
+    /// </summary>
+    [JsonIgnore]
+    public string AvatarPictureSource { get; set; } = string.Empty;
+
+    /// <summary>
     /// True when <see cref="AvatarId"/> came from the player's current VRChat record.
     /// Only that may be reported as private when VRChat refuses the record: an id
     /// remembered from older history can belong to another avatar with the same name or to

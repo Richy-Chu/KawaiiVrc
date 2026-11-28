@@ -26,6 +26,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     private string _personAvatarName = string.Empty;
     private int _avatarImagePriority;
     private bool _showsPersonPicture;
+    private string _avatarPictureSource = string.Empty;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -273,8 +274,10 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         ApplyImage(next, source);
         if (_avatarEntry is { } entry)
         {
-            // The popup draws this picture while the record itself loads.
+            // The popup draws this picture while the record itself loads, and names where it
+            // came from so a borrowed picture is visible on the card.
             entry.AvatarUrl = next;
+            entry.AvatarPictureSource = source;
         }
     }
 
@@ -286,6 +289,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         }
 
         _avatarImageUrl = next;
+        _avatarPictureSource = source;
         AvatarPictureDiagnostics.Record(
             "instance-row",
             Activity.UserId,
@@ -380,6 +384,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
             ? _personAvatarAuthor
             : string.IsNullOrWhiteSpace(AvatarAuthor) ? null : AvatarAuthor,
         AvatarUrl = _showsPersonPicture ? string.Empty : _avatarImageUrl,
+        AvatarPictureSource = _showsPersonPicture ? string.Empty : _avatarPictureSource,
         Details = AvatarName.Length == 0 ? "changed avatar" : "changed avatar · " + AvatarName,
         Timestamp = Activity.At
     };

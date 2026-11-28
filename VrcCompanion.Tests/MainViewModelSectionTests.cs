@@ -243,6 +243,46 @@ public class MainViewModelSectionTests
     }
 
     [Fact]
+    public void TheCardNamesWhereItsPictureCameFrom()
+    {
+        RunOnSta(() =>
+        {
+            var probe = new NamesakeProbeHandler();
+            TestHooks.UseCommunityHandler(probe);
+            try
+            {
+                using var api = new VrcApiClient(null, probe);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_source",
+                    DisplayName = "Source",
+                    AvatarName = "Misu",
+                    AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_source/1/256",
+                    AvatarPictureSource = "Saved avatar history - the same name and creator",
+                    Details = "changed avatar · Misu"
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() => avatars.SelectedAvatar is not null);
+                Assert.Equal(
+                    "Saved avatar history - the same name and creator",
+                    avatars.SelectedAvatar!.PictureSource);
+                Assert.True(avatars.SelectedAvatar.HasPictureSource);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
     public void ACardNeverBorrowsAnUnrelatedAvatarFromThePlayersHistory()
     {
         RunOnSta(() =>
