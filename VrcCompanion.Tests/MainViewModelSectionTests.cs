@@ -164,12 +164,15 @@ public class MainViewModelSectionTests
                 TestHooks.SetLoggedIn(shell);
                 var avatars = new AvatarViewModel(api);
                 TestHooks.AttachAvatarViewModel(shell, avatars);
+                // The log wrote the author, so this row can be identified by name and
+                // author - the documented case where the public record still resolves.
                 var entry = new ActivityEntry
                 {
                     Type = ActivityType.AvatarChanged,
                     UserId = "usr_activity",
                     DisplayName = "Activity Person",
                     AvatarName = "Mellzie",
+                    AvatarAuthor = "Avatar Maker",
                     Details = "changed avatar · Mellzie"
                 };
 
@@ -183,6 +186,54 @@ public class MainViewModelSectionTests
                 Assert.True(avatars.SelectedAvatar!.CanUse);
                 Assert.Equal("Public Avatar", avatars.SelectedAvatar.Name);
                 Assert.Equal("avtr_public_change", entry.AvatarId);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
+    public void ANameOnlyRowWithoutAnAuthorKeepsItsPictureAndLocksTheRecord()
+    {
+        RunOnSta(() =>
+        {
+            var probe = new NamesakeProbeHandler();
+            TestHooks.UseCommunityHandler(probe);
+            try
+            {
+                using var api = new VrcApiClient(null, probe);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "chloe",
+                    AvatarName = "DAVINA",
+                    AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_row_picture/1/256",
+                    Details = "changed avatar · DAVINA"
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                // The only public DAVINA the search could return is by another author, so
+                // no public record is opened at all: the row's picture stays and the record
+                // is read-only.
+                Settle.Until(() =>
+                    avatars.SelectedAvatar?.Description.Contains("without its author") == true);
+                Assert.Equal("DAVINA", avatars.SelectedAvatar!.Name);
+                Assert.Contains("file_row_picture", avatars.SelectedAvatar.ImageUrl);
+                Assert.True(avatars.SelectedAvatar.IsUnavailable);
+                Assert.False(avatars.SelectedAvatar.CanUse);
+                Assert.Equal(string.Empty, avatars.SelectedAvatar.Id);
+                Assert.Contains("without its author", avatars.SelectedAvatar.Description);
+                Assert.Equal(0, probe.Searches);
+                Assert.Equal(0, probe.AvatarGets);
+                Assert.Equal(string.Empty, entry.AvatarId);
             }
             finally
             {
@@ -889,6 +940,60 @@ public class MainViewModelSectionTests
                         "name": "DAVINA",
                         "authorName": "Someone Else",
                         "releaseStatus": "public"
+                      }
+                    ]
+                    """);
+            }
+
+            // The popup may load favourites in the background.
+            return Json("[]");
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
+    private sealed class NamesakeProbeHandler : HttpMessageHandler
+    {
+        private int _searches;
+        private int _avatarGets;
+
+        public int Searches => Volatile.Read(ref _searches);
+
+        public int AvatarGets => Volatile.Read(ref _avatarGets);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.Contains("/avatars/", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _avatarGets);
+                return Json("""
+                    {
+                      "id": "avtr_namesake_davina",
+                      "name": "DAVINA",
+                      "authorName": "Someone Else",
+                      "releaseStatus": "public"
+                    }
+                    """);
+            }
+
+            if (path.EndsWith("/avatars", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _searches);
+                return Json("""
+                    [
+                      {
+                        "id": "avtr_namesake_davina",
+                        "name": "DAVINA",
+                        "authorName": "Someone Else",
+                        "releaseStatus": "public",
+                        "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_namesake/1/256"
                       }
                     ]
                     """);

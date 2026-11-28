@@ -9016,6 +9016,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // the row picture came from. A name search could return a different avatar that
         // shares the name, so it must not overrule this id.
         var authoritative = entry.HasAvatar && entry.AvatarIdIsAuthoritative;
+        // The log named no author and the player's own record gave no id, so the only thing
+        // this row has is the name - and a public avatar that shares it may well be someone
+        // else's. It keeps the picture it draws and opens a locked record instead.
+        var nameOnly = entry.HasAvatarName &&
+                       !entry.HasAvatar &&
+                       string.IsNullOrWhiteSpace(entry.AvatarAuthor);
         Avatar? knownPrivate = null;
         if (entry.HasAvatar)
         {
@@ -9054,16 +9060,23 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
         }
 
-        if (entry.HasAvatarName && !authoritative)
+        if (entry.HasAvatarName && !authoritative && !nameOnly)
         {
-            // A log-only row knows the avatar name but not its id, and an older
-            // name lookup may have cached a private same-name record. Search
-            // the public indexes so a verified public record can replace it.
+            // A log-only row knows the avatar name and the author the log wrote, and
+            // an older name lookup may have cached a private same-name record. Search
+            // the public indexes so a verified record by that author can replace it.
             var named = await ResolveActivityAvatarByNameAsync(entry);
             if (named is not null)
             {
                 return named;
             }
+        }
+
+        if (nameOnly)
+        {
+            // Nothing identifies this avatar beyond its name, so no public record is opened;
+            // the row still shows the picture it already draws.
+            return LockedActivityAvatar(entry, name);
         }
 
         if (knownPrivate is not null)
@@ -9311,6 +9324,28 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ReleaseStatus = "unavailable",
             Description =
                 "VRChat has not confirmed this avatar's record yet. The app is checking the public indexes; reopen it if it does not resolve."
+        };
+    }
+
+    /// <summary>
+    /// The row's own picture with a record that cannot be opened or worn. VRChat's log named
+    /// the avatar without its author and the player's profile did not name its id, so a
+    /// public avatar with the same name could be a different avatar entirely.
+    /// </summary>
+    private Avatar LockedActivityAvatar(ActivityEntry entry, string? name)
+    {
+        var imageUrl = ResolveActivityAvatarImage(entry);
+        return new Avatar
+        {
+            // No id: the picture is what the row has, and nothing should be fetched or worn
+            // from a record this row cannot identify.
+            Id = string.Empty,
+            Name = string.IsNullOrWhiteSpace(name) ? "Private or unlisted avatar" : name,
+            ImageUrl = imageUrl,
+            ThumbnailImageUrl = imageUrl,
+            ReleaseStatus = "unavailable",
+            Description =
+                "VRChat's log named this avatar without its author, and the player's profile did not name its id, so its record cannot be confirmed. A public avatar with the same name may be somebody else's; this is the picture the row has."
         };
     }
 

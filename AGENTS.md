@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1123 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1124 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.156**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.157**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,21 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.157 changed
+
+- **A name-only row with no author opens a locked record, not a public namesake.**
+  `ResolveActivityAvatarAsync` searched the public indexes whenever a row had a name, so a
+  private DAVINA could open a public "Davina by _Jamuu". `nameOnly` (has an avatar name, no
+  id at all, and no `AvatarAuthor` from the log) now skips the id lookup, the name search and
+  the community image index, and returns `LockedActivityAvatar`: the row's own picture, its
+  name, `ReleaseStatus = "unavailable"`, an empty id, and a description saying why. Author
+  rows still resolve by name and author; id rows still open their record untouched.
+  `AvatarChangedNameOnlyOpensAndResolvesThePublicAvatar` now supplies the log's author (it pins
+  the author-matched path), and `ANameOnlyRowWithoutAnAuthorKeepsItsPictureAndLocksTheRecord`
+  pins the locked path with a namesake probe handler asserting zero searches and zero avatar
+  reads.
+- **Tests: 1124.**
 
 ### What 1.0.156 changed
 
