@@ -96,6 +96,18 @@ public sealed class ActivityFeedService
                 if (!string.IsNullOrWhiteSpace(avatarKey) &&
                     !string.Equals(avatarKey, previousAvatarKey, StringComparison.Ordinal))
                 {
+                    // The row draws the friend's own current avatar picture, never a user icon
+                    // and never a same-named avatar; record what it drew and where it came from.
+                    var avatarPicture = AvatarChangeThumbnailUrl(friend);
+                    AvatarPictureDiagnostics.Record(
+                        "activity-row",
+                        friend.Id,
+                        friend.CurrentAvatarName,
+                        friend.CurrentAvatarAuthorName,
+                        avatarPicture,
+                        string.IsNullOrWhiteSpace(avatarPicture)
+                            ? "the friend's record carried no avatar picture"
+                            : "the friend's own current avatar picture");
                     entries.Add(new ActivityEntry
                     {
                         // A -> B -> A must produce two events. The old id only
@@ -106,7 +118,7 @@ public sealed class ActivityFeedService
                         UserId = friend.Id,
                         UserName = friend.Username,
                         DisplayName = friend.DisplayName,
-                        AvatarUrl = AvatarChangeThumbnailUrl(friend),
+                        AvatarUrl = avatarPicture,
                         AvatarId = friend.CurrentAvatar ?? string.Empty,
                         // The friend's current record is the only source that may call a
                         // refused avatar private, and its author is what lets the popup

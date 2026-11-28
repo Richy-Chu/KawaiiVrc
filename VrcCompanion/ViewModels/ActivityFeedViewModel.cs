@@ -322,6 +322,21 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         }
 
         _accountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId;
+        if (_accountId is not null)
+        {
+            // Rows saved before avatars carried a confirmation flag may be old name-search
+            // guesses. Say how many there are; they stay on the profile, but a name alone
+            // never names a switch any more.
+            var (confirmed, unconfirmed) = _friendAvatars.CountByConfirmation(_accountId);
+            AvatarPictureDiagnostics.Record(
+                "history-load",
+                _accountId,
+                null,
+                null,
+                null,
+                $"{confirmed} confirmed avatar row(s), {unconfirmed} row(s) from before rows were confirmed");
+        }
+
         CheckedFriendCount = 0;
         _profileAvatarLookups.Clear();
         _loggedAvatarLookups.Clear();
@@ -666,6 +681,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             // only one that may be reported as private when VRChat refuses the record.
             entry.AvatarIdIsCurrentAvatar = true;
             entry.AvatarUrl = ownAvatarUrl ?? string.Empty;
+            AvatarPictureDiagnostics.Record(
+                "person-record",
+                friend.Id,
+                avatarName,
+                entry.AvatarAuthor,
+                entry.AvatarUrl,
+                "the friend's own current record");
             if (string.IsNullOrWhiteSpace(entry.AvatarAuthor) &&
                 !string.IsNullOrWhiteSpace(friend.CurrentAvatarAuthorName))
             {
@@ -700,6 +722,35 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             return;
         }
 
+        // The log named no id, so the only claim here is this player's own history entry
+        // under that name. Rows stored by the old name search look the same as real
+        // history, so an unconfirmed row is never allowed to name a switch: it would be
+        // exactly the same-named stranger's avatar that poisoned this history in the first
+        // place. The row keeps whatever its own record gave and stays openable by picture.
+        if (!known.IsConfirmed)
+        {
+            AvatarPictureDiagnostics.Record(
+                "history",
+                friend.Id,
+                avatarName,
+                entry.AvatarAuthor,
+                known.ThumbnailUrl,
+                "unconfirmed history row: a name alone cannot identify an avatar");
+            return;
+        }
+
+        if (!ImageUrlHelper.AuthorFits(known.AuthorName, entry.AvatarAuthor))
+        {
+            AvatarPictureDiagnostics.Record(
+                "history",
+                friend.Id,
+                avatarName,
+                entry.AvatarAuthor,
+                known.ThumbnailUrl,
+                "history row by another creator");
+            return;
+        }
+
         entry.AvatarId = known.AvatarId;
         // This is an avatar this player was actually seen wearing under this name, so its
         // id identifies the switch even though VRChat's log carries no id.
@@ -707,6 +758,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         entry.AvatarUrl = !string.IsNullOrWhiteSpace(known.ThumbnailUrl)
             ? known.ThumbnailUrl
             : known.ImageUrl;
+        AvatarPictureDiagnostics.Record(
+            "history",
+            friend.Id,
+            avatarName,
+            entry.AvatarAuthor,
+            entry.AvatarUrl,
+            "confirmed history row under the name the log wrote");
     }
 
     /// <summary>
@@ -772,14 +830,56 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             return null;
         }
 
+        // A name is not an identity. With no creator from the log, any cached or found
+        // avatar under that name may belong to somebody else entirely - VRChat names are
+        // not unique - and adopting its picture is how one player's row ended up drawing
+        // a stranger's avatar. The row keeps the picture its own record gave, or none.
+        if (string.IsNullOrWhiteSpace(avatarAuthor))
+        {
+            AvatarPictureDiagnostics.Record(
+                "name-picture",
+                null,
+                avatarName,
+                null,
+                null,
+                "the log named no creator: no search, the row keeps its own picture");
+            return null;
+        }
+
         var remembered = AvatarLookupCache.FindByName(avatarName);
         if (remembered is not null && ImageUrlHelper.AuthorFits(remembered.AuthorName, avatarAuthor))
         {
+            AvatarPictureDiagnostics.Record(
+                "name-picture",
+                null,
+                avatarName,
+                avatarAuthor,
+                AvatarImage(remembered),
+                "cached record by the same creator");
             return AvatarImage(remembered);
         }
 
         var match = await FindLoggedAvatarAsync(avatarName, avatarAuthor);
-        return match is null ? null : AvatarImage(match);
+        if (match is null)
+        {
+            AvatarPictureDiagnostics.Record(
+                "name-picture",
+                null,
+                avatarName,
+                avatarAuthor,
+                null,
+                "no record by that creator");
+            return null;
+        }
+
+        AvatarPictureDiagnostics.Record(
+            "name-picture",
+            null,
+            avatarName,
+            avatarAuthor,
+            AvatarImage(match),
+            "index record by the creator the log named");
+        return AvatarImage(match);
     }
 
     /// <summary>
@@ -900,6 +1000,14 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                             entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(directImage, 256) ?? directImage;
                         }
 
+                        AvatarPictureDiagnostics.Record(
+                            "row-record",
+                            entry.UserId,
+                            avatarName,
+                            entry.AvatarAuthor,
+                            entry.AvatarUrl,
+                            "record read by the row's saved id, creator agrees");
+
                         entry.SetAvatarName(string.IsNullOrWhiteSpace(direct.Name) ? avatarName : direct.Name);
                         SaveHistory();
                         return;
@@ -951,6 +1059,14 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
                     entry.SetAvatarName(
                         string.IsNullOrWhiteSpace(publicById.Name) ? avatarName : publicById.Name);
+                    AvatarPictureDiagnostics.Record(
+                        "row-public-id",
+                        entry.UserId,
+                        avatarName,
+                        entry.AvatarAuthor,
+                        entry.AvatarUrl,
+                        "public index record carrying the row's own id");
+
                     if (_accountId is not null && !string.IsNullOrWhiteSpace(entry.UserId))
                     {
                         _friendAvatars.RememberDetails(
@@ -976,6 +1092,15 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                     AvatarLookupCache.Remember(knownPrivate);
                 }
 
+                AvatarPictureDiagnostics.Record(
+                    "row-refused",
+                    entry.UserId,
+                    avatarName,
+                    entry.AvatarAuthor,
+                    entry.AvatarUrl,
+                    entry.AvatarIdIsCurrentAvatar
+                        ? "the player's current record refused the id: private"
+                        : "a saved id was refused: no name search may replace it");
                 return;
             }
 
@@ -991,6 +1116,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 : match.ImageUrl;
             entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(image, 256) ?? image;
             entry.SetAvatarName(string.IsNullOrWhiteSpace(match.Name) ? avatarName : match.Name);
+            AvatarPictureDiagnostics.Record(
+                "row-name-search",
+                entry.UserId,
+                avatarName,
+                entry.AvatarAuthor,
+                entry.AvatarUrl,
+                "index record by the creator the log named");
 
             // A name search is a guess about which avatar the player wore; storing it in
             // their avatar history made the guess permanent for every later row.
@@ -2126,6 +2258,20 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 continue;
             }
 
+            if (!match.IsConfirmed)
+            {
+                // A row without confirmation may be an old name-search guess; a name alone
+                // is not enough to turn it into this row's avatar.
+                AvatarPictureDiagnostics.Record(
+                    "history-name",
+                    entry.UserId,
+                    entry.EffectiveAvatarName,
+                    entry.AvatarAuthor,
+                    match.ThumbnailUrl,
+                    "unconfirmed history row skipped");
+                continue;
+            }
+
             entry.AvatarId = match.AvatarId;
             // This avatar is in the player's own history under this name, so the id
             // identifies the switch; a name search must not overrule it.
@@ -2236,6 +2382,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 entry.AvatarUrl,
                 avatar.Id,
                 avatar.ReleaseStatus);
+            AvatarPictureDiagnostics.Record(
+                "picture-index",
+                entry.UserId,
+                entry.EffectiveAvatarName,
+                entry.AvatarAuthor,
+                entry.AvatarUrl,
+                "index matched this row's own picture");
             changed = true;
         }
 

@@ -164,14 +164,15 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         }
 
         _showsPersonPicture = true;
-        ApplyImage(next);
+        ApplyImage(next, "the player's own profile picture (a face, not the avatar)");
     }
 
     /// <summary>
     /// The switched avatar's picture, found from the name the log wrote. It always wins
     /// over a person picture, so the row shows an avatar rather than a face.
     /// </summary>
-    public void SetAvatarImage(string? url) => ApplyAvatarImage(url, priority: 1);
+    public void SetAvatarImage(string? url)
+        => ApplyAvatarImage(url, priority: 1, "index record by the name and creator the log wrote");
 
     /// <summary>
     /// The avatar on the player's own VRChat profile, which is exactly the picture the
@@ -245,10 +246,13 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
             }
         }
 
-        ApplyAvatarImage(sameAvatar ? url : null, priority: 2);
+        ApplyAvatarImage(
+            sameAvatar ? url : null,
+            priority: 2,
+            "the player's own current VRChat record");
     }
 
-    private void ApplyAvatarImage(string? url, int priority)
+    private void ApplyAvatarImage(string? url, int priority, string source)
     {
         if (!IsAvatarChange)
         {
@@ -263,7 +267,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
 
         _avatarImagePriority = priority;
         _showsPersonPicture = false;
-        ApplyImage(next);
+        ApplyImage(next, source);
         if (_avatarEntry is { } entry)
         {
             // The popup draws this picture while the record itself loads.
@@ -271,7 +275,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         }
     }
 
-    private void ApplyImage(string next)
+    private void ApplyImage(string next, string source)
     {
         if (string.Equals(_avatarImageUrl, next, StringComparison.Ordinal))
         {
@@ -279,6 +283,13 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         }
 
         _avatarImageUrl = next;
+        AvatarPictureDiagnostics.Record(
+            "instance-row",
+            Activity.UserId,
+            AvatarName,
+            AvatarAuthor,
+            next,
+            source);
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvatarImageUrl)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasAvatarImage)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvatarImageTooltip)));

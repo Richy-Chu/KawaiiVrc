@@ -23,6 +23,16 @@ public sealed class FriendAvatar : INotifyPropertyChanged
 
     public string AvatarId { get; set; } = string.Empty;
 
+    /// <summary>The avatar's creator, when a VRChat record or the player's payload named one.</summary>
+    public string AuthorName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True when this row came from the player's own VRChat record or from a record
+    /// matched by its picture. A row without it may be a name-search guess from an older
+    /// version, so it is never allowed to name a switch on its name alone.
+    /// </summary>
+    public bool IsConfirmed { get; set; }
+
     public string Name
     {
         get => _name;

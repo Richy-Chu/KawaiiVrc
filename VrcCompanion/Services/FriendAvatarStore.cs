@@ -140,6 +140,7 @@ public sealed class FriendAvatarStore
     /// <summary>
     /// Records the current avatar for every user in a friend-list response.
     /// One file write covers the whole refresh; unchanged avatars are ignored.
+    /// The payload is the player's own VRChat record, so these rows are confirmed.
     /// </summary>
     public void ObserveAll(string? accountId, IEnumerable<VrcUser> users, DateTimeOffset? seenAt = null)
     {
@@ -174,9 +175,11 @@ public sealed class FriendAvatarStore
                         name: null,
                         user.CurrentAvatarImageUrl,
                         user.CurrentAvatarThumbnailImageUrl,
+                        author: user.CurrentAvatarAuthorName,
                         releaseStatus: null,
                         seenAt ?? DateTimeOffset.UtcNow,
-                        isCurrent: true);
+                        isCurrent: true,
+                        confirmed: true);
                 }
 
                 if (changed)
@@ -200,6 +203,7 @@ public sealed class FriendAvatarStore
         string? name,
         string? imageUrl,
         string? thumbnailUrl,
+        string? author = null,
         string? releaseStatus = null,
         DateTimeOffset? seenAt = null)
     {
@@ -228,9 +232,11 @@ public sealed class FriendAvatarStore
                     name,
                     imageUrl,
                     thumbnailUrl,
+                    author,
                     releaseStatus,
                     seenAt ?? DateTimeOffset.UtcNow,
-                    isCurrent: true);
+                    isCurrent: true,
+                    confirmed: true);
                 if (changed)
                 {
                     WriteFile(file);
@@ -279,9 +285,13 @@ public sealed class FriendAvatarStore
                     string.IsNullOrWhiteSpace(avatar.ThumbnailImageUrl)
                         ? avatar.ImageUrl
                         : avatar.ThumbnailImageUrl,
+                    author: avatar.AuthorName,
                     avatar.ReleaseStatus,
                     DateTimeOffset.UtcNow,
-                    isCurrent);
+                    isCurrent,
+                    // Every caller of this method read the avatar's own record (by id or by a
+                    // matching picture), which is evidence that this user wore it.
+                    confirmed: true);
                 if (changed)
                 {
                     WriteFile(file);
@@ -341,9 +351,11 @@ public sealed class FriendAvatarStore
         string? name,
         string? imageUrl,
         string? thumbnailUrl,
+        string? author,
         string? releaseStatus,
         DateTimeOffset seenAt,
-        bool isCurrent)
+        bool isCurrent,
+        bool confirmed)
     {
         if (string.IsNullOrWhiteSpace(avatarId))
         {
@@ -375,6 +387,22 @@ public sealed class FriendAvatarStore
             !string.Equals(entry.Name, name, StringComparison.Ordinal))
         {
             entry.Name = name;
+            changed = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(author) &&
+            !string.Equals(entry.AuthorName, author, StringComparison.Ordinal))
+        {
+            entry.AuthorName = author;
+            changed = true;
+        }
+
+        // A row written before this flag existed came from a name search as often as
+        // from the player's own record, so it stays unconfirmed until a record-backed
+        // observation confirms it.
+        if (confirmed && !entry.Confirmed)
+        {
+            entry.Confirmed = true;
             changed = true;
         }
 
@@ -430,6 +458,79 @@ public sealed class FriendAvatarStore
         return changed;
     }
 
+    /// <summary>
+    /// Drops rows that can neither be identified nor drawn - a stored id with no picture
+    /// and no name. They can never be shown on a profile and can never be checked against
+    /// a switch, so keeping them only leaves a wrong id for a name lookup to find. Runs in
+    /// memory on load; the next real write persists the pruned file.
+    /// </summary>
+    private static void PruneUnusable(StoredFile file)
+    {
+        foreach (var account in file.Accounts.Values)
+        {
+            if (account?.Users is null)
+            {
+                continue;
+            }
+
+            foreach (var avatars in account.Users.Values)
+            {
+                avatars?.RemoveAll(avatar =>
+                    avatar is null ||
+                    (string.IsNullOrWhiteSpace(avatar.ImageUrl) &&
+                     string.IsNullOrWhiteSpace(avatar.ThumbnailUrl) &&
+                     string.IsNullOrWhiteSpace(avatar.Name)));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Counts the history rows this account has that no VRChat record ever confirmed. The
+    /// old name-search writes look exactly like these, so they are reported (and never used
+    /// to name a switch on their own) instead of being deleted blindly.
+    /// </summary>
+    internal (int Confirmed, int Unconfirmed) CountByConfirmation(string? accountId)
+    {
+        if (string.IsNullOrWhiteSpace(accountId))
+        {
+            return (0, 0);
+        }
+
+        lock (_sync)
+        {
+            var file = LoadFile();
+            if (!file.Accounts.TryGetValue(accountId, out var account) ||
+                account?.Users is null)
+            {
+                return (0, 0);
+            }
+
+            var confirmed = 0;
+            var unconfirmed = 0;
+            foreach (var avatars in account.Users.Values)
+            {
+                foreach (var avatar in avatars ?? new List<StoredFriendAvatar>())
+                {
+                    if (avatar is null)
+                    {
+                        continue;
+                    }
+
+                    if (avatar.Confirmed)
+                    {
+                        confirmed++;
+                    }
+                    else
+                    {
+                        unconfirmed++;
+                    }
+                }
+            }
+
+            return (confirmed, unconfirmed);
+        }
+    }
+
     private static StoredFriendAvatar? Find(StoredAccount account, string userId, string avatarId)
         => account.Users.TryGetValue(userId, out var avatars) && avatars is not null
             ? avatars.FirstOrDefault(candidate =>
@@ -467,6 +568,8 @@ public sealed class FriendAvatarStore
         {
             AvatarId = stored.AvatarId,
             Name = stored.Name ?? string.Empty,
+            AuthorName = stored.AuthorName ?? string.Empty,
+            IsConfirmed = stored.Confirmed,
             ImageUrl = image,
             ThumbnailUrl = thumbnail,
             ReleaseStatus = stored.ReleaseStatus ?? string.Empty,
@@ -501,6 +604,7 @@ public sealed class FriendAvatarStore
             var file = JsonSerializer.Deserialize<StoredFile>(File.ReadAllText(_path), JsonOptions);
             file ??= new StoredFile();
             file.Accounts ??= new Dictionary<string, StoredAccount>(StringComparer.Ordinal);
+            PruneUnusable(file);
             _cachedFile = file;
             _cachedFileLastWrite = lastWrite;
             return file;
@@ -568,6 +672,19 @@ public sealed class FriendAvatarStore
 
         [JsonPropertyName("name")]
         public string? Name { get; set; }
+
+        /// <summary>The avatar's creator, learned from the record or the player's payload.</summary>
+        [JsonPropertyName("authorName")]
+        public string? AuthorName { get; set; }
+
+        /// <summary>
+        /// True when the id came from the player's own VRChat record or from a record
+        /// matched by the picture. Rows written before 1.0.166 have no flag: the old
+        /// name-search writes are indistinguishable from real history, so they are not
+        /// trusted to name a switch by name alone any more.
+        /// </summary>
+        [JsonPropertyName("confirmed")]
+        public bool Confirmed { get; set; }
 
         [JsonPropertyName("imageUrl")]
         public string? ImageUrl { get; set; }

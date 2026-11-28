@@ -9153,6 +9153,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                         if (authorFits)
                         {
                             AvatarLookupCache.Remember(avatar);
+                            AvatarPictureDiagnostics.Record(
+                                "popup-record",
+                                entry.UserId,
+                                name,
+                                entry.AvatarAuthor,
+                                entry.AvatarUrl,
+                                "record read by the row's id, creator agrees");
                             return avatar;
                         }
 
@@ -9190,6 +9197,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 if (publicById is not null && ActivityAvatarAuthorFits(entry, publicById))
                 {
                     AvatarLookupCache.Remember(publicById);
+                    AvatarPictureDiagnostics.Record(
+                        "popup-public-id",
+                        entry.UserId,
+                        name,
+                        entry.AvatarAuthor,
+                        entry.AvatarUrl,
+                        "public index record carrying the row's own id");
                     return publicById;
                 }
             }
@@ -9213,6 +9227,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // Only a current-record id can be called private. A saved id may be an older
             // avatar (or another avatar that shares the name), and a public record that
             // failed the author check is not this avatar either, so both stay read-only.
+            AvatarPictureDiagnostics.Record(
+                "popup-refused",
+                entry.UserId,
+                name,
+                entry.AvatarAuthor,
+                entry.AvatarUrl,
+                entry.AvatarIdIsCurrentAvatar && rejectedPublic is null
+                    ? "the player's current record refused the id: private"
+                    : "the saved id is not this row's avatar: read-only card, row picture kept");
             return entry.AvatarIdIsCurrentAvatar && rejectedPublic is null
                 ? PrivateActivityAvatar(entry, name)
                 : UnavailableActivityAvatar(entry, name);

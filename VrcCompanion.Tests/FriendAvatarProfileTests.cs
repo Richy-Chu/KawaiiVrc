@@ -1268,6 +1268,52 @@ public class FriendAvatarProfileTests
     }
 
     [Fact]
+    public void AVrchatRecordConfirmsAHistoryRowAndRemembersItsCreator()
+    {
+        var directory = NewDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "avatars.json");
+            // Written before rows carried a confirmation flag, exactly like the old
+            // name-search guesses: an id, a name and a picture, nothing else.
+            File.WriteAllText(
+                path,
+                """
+                {"accounts":{"acct_me":{"users":{"usr_legacy":[{
+                  "avatarId":"avtr_legacy",
+                  "name":"Old Guess",
+                  "imageUrl":"https://example.test/legacy.png",
+                  "seenAt":"2026-01-01T00:00:00+00:00"
+                }]}}}}
+                """);
+
+            var store = new FriendAvatarStore(path);
+            var legacy = Assert.Single(store.Load("acct_me", "usr_legacy"));
+            Assert.False(legacy.IsConfirmed);
+            Assert.Equal(string.Empty, legacy.AuthorName);
+
+            // The friend's own payload reports the same avatar, so the row becomes
+            // confirmed and gains the creator that lets a later row check it.
+            store.Observe(
+                "acct_me",
+                "usr_legacy",
+                "avtr_legacy",
+                "Old Guess",
+                "https://example.test/legacy.png",
+                "https://example.test/legacy.png",
+                "Real Maker");
+
+            var confirmed = Assert.Single(store.Load("acct_me", "usr_legacy"));
+            Assert.True(confirmed.IsConfirmed);
+            Assert.Equal("Real Maker", confirmed.AuthorName);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void RefusedAvatarRecordStaysPicturedAndLocked()
     {
         var directory = NewDirectory();

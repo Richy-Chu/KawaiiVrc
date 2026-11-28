@@ -626,6 +626,140 @@ public class ActivityFeedSnapshotTests
     }
 
     [Fact]
+    public async Task AnAuthorlessSwitchDoesNotTakeAnotherAvatarsCachedPicture()
+    {
+        TestHooks.UseCommunityHandler(new AuthorCheckAvatarHandler());
+        try
+        {
+            using var api = new VrcApiClient(null, new AuthorCheckAvatarHandler());
+            var feed = new ActivityFeedViewModel(api);
+
+            // One switch named the creator, so that avatar is in the session cache.
+            Assert.False(string.IsNullOrWhiteSpace(
+                await feed.ResolveLoggedAvatarImageAsync("Author Check", "Creator Two")));
+
+            // A second row with the same avatar name named no creator. It cannot tell that
+            // record from any other avatar that shares the name, so the cached picture must
+            // not stand in for it - that is how a row drew somebody else's avatar.
+            Assert.Null(await feed.ResolveLoggedAvatarImageAsync("Author Check", null));
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public void EachAvatarRowDrawsThatPlayersOwnCurrentAvatarPicture()
+    {
+        using var api = new VrcApiClient();
+        var feed = new ActivityFeedViewModel(api);
+
+        static VrcUser Friend(string id, string avatar, string file) => new()
+        {
+            Id = id,
+            DisplayName = id,
+            Username = id,
+            CurrentAvatar = avatar,
+            CurrentAvatarName = avatar,
+            CurrentAvatarThumbnailImageUrl =
+                $"https://api.vrchat.cloud/api/1/image/{file}/1/256",
+            Location = "wrld_test:1",
+            Status = "active"
+        };
+
+        feed.ApplyFriends(new[]
+        {
+            Friend("usr_row_a", "avtr_a_one", "file_a_one"),
+            Friend("usr_row_b", "avtr_b_one", "file_b_one")
+        });
+        feed.ApplyFriends(new[]
+        {
+            Friend("usr_row_a", "avtr_a_two", "file_a_two"),
+            Friend("usr_row_b", "avtr_b_two", "file_b_two")
+        });
+
+        var rows = feed.Entries
+            .Where(entry => entry.Type == ActivityType.AvatarChanged)
+            .ToList();
+        var rowA = Assert.Single(rows, entry => entry.UserId == "usr_row_a");
+        var rowB = Assert.Single(rows, entry => entry.UserId == "usr_row_b");
+        Assert.Contains("file_a_two", rowA.AvatarUrl);
+        Assert.Contains("file_b_two", rowB.AvatarUrl);
+        Assert.DoesNotContain("file_b_two", rowA.AvatarUrl);
+        Assert.DoesNotContain("file_a_two", rowB.AvatarUrl);
+    }
+
+    [Fact]
+    public void AnAvatarRememberedBeforeRowsWereConfirmedDoesNotNameASwitch()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "VrcCompanionTests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "avatars.json");
+            // A history row as the old name search wrote it: an id and a picture, no creator
+            // and no confirmation, because the guess was never checked against a record.
+            File.WriteAllText(
+                path,
+                """
+                {"accounts":{"acct_guess":{"users":{"usr_guess":[{
+                  "avatarId":"avtr_guess",
+                  "name":"Same Name",
+                  "imageUrl":"https://api.vrchat.cloud/api/1/file/file_guess/1/file",
+                  "thumbnailUrl":"https://api.vrchat.cloud/api/1/image/file_guess/1/256",
+                  "seenAt":"2026-01-01T00:00:00+00:00"
+                }]}}}}
+                """);
+
+            TestHooks.UseCommunityHandler(new AuthorCheckAvatarHandler());
+            using var api = new VrcApiClient(null, new AuthorCheckAvatarHandler());
+            var store = new FriendAvatarStore(path);
+            var feed = new ActivityFeedViewModel(
+                api,
+                new ActivityStore(Path.Combine(directory, "activity.json")),
+                store);
+            feed.SetAccount("acct_guess");
+            var friend = new VrcUser
+            {
+                Id = "usr_guess",
+                DisplayName = "Guesser",
+                Username = "guesser",
+                Location = "wrld_test:1"
+            };
+
+            feed.ApplyLoggedAvatarChange(friend, "Same Name");
+
+            var guessed = Assert.Single(feed.Entries);
+            Assert.Equal(string.Empty, guessed.AvatarId);
+            Assert.False(guessed.AvatarIdIsAuthoritative);
+
+            // A row the player's own record confirmed still names the switch.
+            store.Observe(
+                "acct_guess",
+                "usr_guess",
+                "avtr_real",
+                "Same Name",
+                "https://api.vrchat.cloud/api/1/file/file_real/1/file",
+                "https://api.vrchat.cloud/api/1/image/file_real/1/256",
+                "Real Maker");
+            feed.ApplyLoggedAvatarChange(friend, "Same Name");
+
+            Assert.Contains(
+                feed.Entries,
+                row => string.Equals(row.AvatarId, "avtr_real", StringComparison.Ordinal));
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void TheAccountCatchingUpGivesTheSelfLogRowItsOwnAvatar()
     {
         using var api = new VrcApiClient();
