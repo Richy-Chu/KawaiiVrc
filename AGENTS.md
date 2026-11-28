@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1129 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1130 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.160**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.161**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,28 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.161 changed
+
+- **The profile's avatar author reaches the Activity and instance Activity popups.** VRChat's
+  log only prints an author on the `Unpacking Avatar (name by author)` line it writes when it
+  loads an avatar, so a switch to an avatar already cached in the session has a name and no
+  author - which sent the row into `nameOnly` and the locked card even though VRChat's user
+  record knows the author. `VrcUser` now reads `currentAvatarAuthorName`,
+  `InstanceActivityFeed.PersonLookup` carries it, and
+  `InstanceActivityItem.SetPersonAvatarImage` writes it into the row's `ActivityEntry` (only when
+  the profile names the same avatar the row is about). `ActivityFeedViewModel.ApplyKnownLoggedAvatar`
+  fills it for the Activity page, and its queued lookup now passes the filled author instead of
+  the log's empty one. With a name and an author, `ResolveActivityAvatarByNameAsync` finds the
+  record by both and still refuses another author's avatar.
+- **The instance feed no longer throws away a picture-less profile lookup.**
+  `ResolvePersonImageAsync` kept a `PersonLookup` only when VRChat gave the avatar's picture, so
+  exactly the name-only case (name and author known, picture not) was discarded. The lookup is
+  kept now; its id still only becomes authoritative with a picture, and its author is only taken
+  when the profile names the avatar this row is about.
+- **Tests: 1130.** New: `TheProfilesAvatarAuthorReachesThePopupForALogRowWithoutOne`
+  (`InstanceActivityTests`: a log row with no author gets the profile's author on its popup
+  entry).
 
 ### What 1.0.160 changed
 

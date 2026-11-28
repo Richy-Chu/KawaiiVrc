@@ -603,7 +603,9 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         SaveHistory();
         if (!entry.HasAvatar || !entry.HasAvatarImage)
         {
-            QueueLoggedAvatarLookup(entry, avatarName, avatarAuthor);
+            // ApplyKnownLoggedAvatar may have filled the author from the profile; the
+            // lookup needs it, or it searches a bare name a namesake can answer.
+            QueueLoggedAvatarLookup(entry, avatarName, entry.AvatarAuthor);
         }
     }
 
@@ -660,6 +662,15 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             // needs the name lookup to fill the circle, exactly as before.
             entry.AvatarIdIsAuthoritative = !string.IsNullOrWhiteSpace(ownAvatarUrl);
             entry.AvatarUrl = ownAvatarUrl ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(entry.AvatarAuthor) &&
+                !string.IsNullOrWhiteSpace(friend.CurrentAvatarAuthorName))
+            {
+                // The log only prints an author when it unpacked the avatar this
+                // session; the profile knows it, and a name-plus-author lookup can
+                // open the right record where a bare name cannot.
+                entry.AvatarAuthor = friend.CurrentAvatarAuthorName;
+            }
+
             if (!string.IsNullOrWhiteSpace(friend.CurrentAvatarName))
             {
                 entry.SetAvatarName(friend.CurrentAvatarName);

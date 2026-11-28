@@ -22,6 +22,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     private string _avatarImageUrl = string.Empty;
     private string _resolvedUserId = string.Empty;
     private string _personAvatarId = string.Empty;
+    private string _personAvatarAuthor = string.Empty;
     private string _personAvatarName = string.Empty;
     private int _avatarImagePriority;
     private bool _showsPersonPicture;
@@ -179,7 +180,11 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     /// over it whenever VRChat gives its picture. Its id and name go to the popup too, so
     /// View avatar opens that same avatar instead of searching the name.
     /// </summary>
-    public void SetPersonAvatarImage(string? url, string? avatarId = null, string? avatarName = null)
+    public void SetPersonAvatarImage(
+        string? url,
+        string? avatarId = null,
+        string? avatarName = null,
+        string? avatarAuthor = null)
     {
         if (!IsAvatarChange)
         {
@@ -188,7 +193,10 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
 
         var id = avatarId?.Trim() ?? string.Empty;
         var name = avatarName?.Trim() ?? string.Empty;
-        if (id.Length > 0)
+        var author = avatarAuthor?.Trim() ?? string.Empty;
+        // The id is authoritative only with the picture that goes with it, so a row
+        // never opens a record this profile did not actually draw.
+        if (id.Length > 0 && !string.IsNullOrWhiteSpace(url))
         {
             _personAvatarId = id;
             if (name.Length > 0)
@@ -204,6 +212,21 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
                 {
                     entry.SetAvatarName(name);
                 }
+            }
+        }
+
+        // The profile knows the avatar's author even when the log only printed its
+        // name. That name-plus-author pair is what lets View avatar open the right
+        // public record instead of the locked "no author" card. It is only the same
+        // avatar when the profile names the avatar this row is about.
+        if (author.Length > 0 &&
+            name.Length > 0 &&
+            string.Equals(name, AvatarName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            _personAvatarAuthor = author;
+            if (_avatarEntry is { } entry)
+            {
+                entry.AvatarAuthor = author;
             }
         }
 
@@ -323,7 +346,9 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         AvatarId = _personAvatarId.Length > 0 ? _personAvatarId : Activity.AvatarId,
         AvatarName = _personAvatarName.Length > 0 ? _personAvatarName : AvatarName,
         AvatarIdIsAuthoritative = _personAvatarId.Length > 0,
-        AvatarAuthor = string.IsNullOrWhiteSpace(AvatarAuthor) ? null : AvatarAuthor,
+        AvatarAuthor = _personAvatarAuthor.Length > 0
+            ? _personAvatarAuthor
+            : string.IsNullOrWhiteSpace(AvatarAuthor) ? null : AvatarAuthor,
         AvatarUrl = _showsPersonPicture ? string.Empty : _avatarImageUrl,
         Details = AvatarName.Length == 0 ? "changed avatar" : "changed avatar · " + AvatarName,
         Timestamp = Activity.At

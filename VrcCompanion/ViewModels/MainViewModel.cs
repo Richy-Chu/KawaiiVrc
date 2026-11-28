@@ -6637,7 +6637,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 // Its id and name let View avatar open that exact record instead of
                 // searching a name several avatars share.
                 avatarId,
-                avatarName);
+                avatarName,
+                // VRChat knows who made the avatar this player wears; the log's
+                // switch line only names the avatar. Without it a row can only be
+                // locked as "no author" even though the author is known.
+                user.CurrentAvatarAuthorName);
         }
         catch (Exception ex)
         {

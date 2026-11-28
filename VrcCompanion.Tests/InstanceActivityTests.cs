@@ -840,6 +840,30 @@ public class InstanceActivityTests
     }
 
     [Fact]
+    public void TheProfilesAvatarAuthorReachesThePopupForALogRowWithoutOne()
+    {
+        var feed = new InstanceActivityFeed();
+        feed.SetPersonLookup((_, _) => Task.FromResult<InstanceActivityFeed.PersonLookup?>(
+            new InstanceActivityFeed.PersonLookup(
+                SomeoneId,
+                null,
+                null,
+                null,
+                "Hays 2.0 (mixed)",
+                "Hays Maker")));
+
+        // The log printed the avatar's name and no author. VRChat's user record knows
+        // the author, and that is what lets the popup open the public avatar by
+        // name-and-author instead of locking it as "no author".
+        feed.Apply(new[] { AvatarRow("SONETTO", "Hays 2.0 (mixed)", string.Empty, 1) });
+
+        var entry = Assert.Single(feed.Activity).AvatarEntry!;
+        Assert.False(entry.HasAvatar);
+        Assert.Equal("Hays 2.0 (mixed)", entry.AvatarName);
+        Assert.Equal("Hays Maker", entry.AvatarAuthor);
+    }
+
+    [Fact]
     public void AskingAgainReplacesANameSearchGuessWithThePlayersOwnAvatar()
     {
         const string stranger = "https://files.vrchat.cloud/someone-elses-davina.png";

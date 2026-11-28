@@ -32,6 +32,12 @@ public sealed class VrcUser
     [JsonPropertyName("currentAvatarThumbnailImageUrl")]
     public string? CurrentAvatarThumbnailImageUrl { get; set; }
 
+    // VRChat's user record knows who made the avatar they wear, even when its log
+    // only printed the avatar's name. The name search needs it to refuse another
+    // author's avatar that shares the name.
+    [JsonPropertyName("currentAvatarAuthorName")]
+    public string? CurrentAvatarAuthorName { get; set; }
+
     [JsonPropertyName("profilePicOverride")]
     public string? ProfilePicOverride { get; set; }
 

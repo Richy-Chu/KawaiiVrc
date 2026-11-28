@@ -44,7 +44,8 @@ public sealed class InstanceActivityFeed : ViewModelBase
         string? ImageUrl,
         string? AvatarImageUrl = null,
         string? AvatarId = null,
-        string? AvatarName = null);
+        string? AvatarName = null,
+        string? AvatarAuthor = null);
 
     public InstanceActivityFeed()
     {
@@ -314,7 +315,8 @@ public sealed class InstanceActivityFeed : ViewModelBase
                     item.SetPersonAvatarImage(
                         ownAvatar.AvatarImageUrl,
                         ownAvatar.AvatarId,
-                        ownAvatar.AvatarName);
+                        ownAvatar.AvatarName,
+                        ownAvatar.AvatarAuthor);
                 }
 
                 if (_avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
@@ -412,7 +414,8 @@ public sealed class InstanceActivityFeed : ViewModelBase
                 item.SetPersonAvatarImage(
                     personAvatar.AvatarImageUrl,
                     personAvatar.AvatarId,
-                    personAvatar.AvatarName);
+                    personAvatar.AvatarName,
+                    personAvatar.AvatarAuthor);
             }
 
             var key = AvatarKey(item.AvatarName, item.AvatarAuthor);
@@ -457,10 +460,14 @@ public sealed class InstanceActivityFeed : ViewModelBase
             var url = result?.ImageUrl?.Trim();
             var avatar = result?.AvatarImageUrl?.Trim();
 
-            // The avatar the profile is wearing is only authoritative when VRChat gave
-            // its picture: that is the picture the row draws, and the popup must open
-            // the same record.
-            var ownAvatar = result is not null && !string.IsNullOrWhiteSpace(avatar)
+            // The avatar the profile is wearing is authoritative when VRChat gave its
+            // picture: that is the picture the row draws, and the popup must open the
+            // same record. The avatar's name and author are still worth keeping without
+            // one - a log row that named no author can then be looked up by
+            // name-and-author instead of falling into the locked "no author" card.
+            var ownAvatar = result is not null &&
+                            (!string.IsNullOrWhiteSpace(avatar) ||
+                             !string.IsNullOrWhiteSpace(result.AvatarAuthor))
                 ? result
                 : null;
 
@@ -497,7 +504,8 @@ public sealed class InstanceActivityFeed : ViewModelBase
                         item.SetPersonAvatarImage(
                             ownAvatar.AvatarImageUrl,
                             ownAvatar.AvatarId,
-                            ownAvatar.AvatarName);
+                            ownAvatar.AvatarName,
+                            ownAvatar.AvatarAuthor);
                     }
 
                     if (!string.IsNullOrWhiteSpace(url))
