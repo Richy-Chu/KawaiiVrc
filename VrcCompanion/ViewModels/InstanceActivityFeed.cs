@@ -202,6 +202,40 @@ public sealed class InstanceActivityFeed : ViewModelBase
     }
 
     /// <summary>
+    /// Forgets what the box learned about a player, so a row that looked them up before
+    /// their record named the avatar can ask again. The log sees a switch before /auth/user
+    /// names the avatar the account actually wears, and without this the row would keep
+    /// whatever a public search by name found.
+    /// </summary>
+    public void RefreshPerson(string? userId, string? displayName)
+    {
+        var keys = new[]
+        {
+            PersonKey(userId ?? string.Empty, displayName ?? string.Empty),
+            PersonKey(string.Empty, displayName ?? string.Empty)
+        };
+
+        var changed = false;
+        foreach (var key in keys)
+        {
+            changed |= _personAvatars.Remove(key);
+            changed |= _personImages.Remove(key);
+            changed |= _personIds.Remove(key);
+            _personImageLookups.Remove(key);
+            _personAvatarLookupsDone.Remove(key);
+        }
+
+        if (changed)
+        {
+            // The rows keep their pictures; the lookup below can replace a search guess
+            // with the person's own avatar, which outranks it.
+            Rebuild(resetPage: false);
+        }
+
+        ResolvePageAvatarImages();
+    }
+
+    /// <summary>
     /// The Activity page's person picture for a roster row, matched by user id and then
     /// by display name for rows VRChat's log gave no id.
     /// </summary>

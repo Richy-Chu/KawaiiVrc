@@ -195,6 +195,31 @@ public static class ImageUrlHelper
                 resolution);
 
     /// <summary>
+    /// True when an avatar's author does not contradict the author VRChat's log named for a
+    /// switch. A different author means a different avatar that only shares the name, so a
+    /// lookup must not present it as the avatar this person switched to.
+    /// </summary>
+    public static bool AuthorFits(string? avatarAuthor, string? loggedAuthor)
+    {
+        var logged = NormalizeAuthor(loggedAuthor);
+        var avatar = NormalizeAuthor(avatarAuthor);
+        if (logged.Length == 0 || avatar.Length == 0)
+        {
+            // Nothing to compare: the log named no author, or this record has none.
+            return true;
+        }
+
+        // VRChat and the community indexes word one creator differently ("Jamuu" and
+        // "_Jamuu"), so containment counts as the same author; a different name does not.
+        return string.Equals(avatar, logged, StringComparison.OrdinalIgnoreCase) ||
+               avatar.Contains(logged, StringComparison.OrdinalIgnoreCase) ||
+               logged.Contains(avatar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeAuthor(string? author)
+        => (author ?? string.Empty).Trim().TrimStart('@').Trim('_', ' ').Trim();
+
+    /// <summary>
     /// Picks the best world thumbnail URL: thumbnailImageUrl → imageUrl, converted to thumbnail form.
     /// </summary>
     public static string? PickWorldThumbnailUrl(string? thumbnailImageUrl, string? imageUrl, int resolution = 256)

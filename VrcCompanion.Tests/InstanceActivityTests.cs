@@ -840,6 +840,37 @@ public class InstanceActivityTests
     }
 
     [Fact]
+    public void AskingAgainReplacesANameSearchGuessWithThePlayersOwnAvatar()
+    {
+        const string stranger = "https://files.vrchat.cloud/someone-elses-davina.png";
+        const string own = "https://files.vrchat.cloud/chloe-davina.png";
+        var answer = new InstanceActivityFeed.PersonLookup(SomeoneId, null);
+        var feed = new InstanceActivityFeed();
+        feed.SetAvatarImageResolver((_, _) => Task.FromResult<string?>(stranger));
+        feed.SetPersonLookup((_, _) => Task.FromResult<InstanceActivityFeed.PersonLookup?>(answer));
+
+        // The log sees her switch before /auth/user names the avatar she wears, so the
+        // profile has no avatar yet and the name search fills the slot.
+        feed.Apply(new[] { AvatarRow("chloe", "DAVINA", "Jamuu", 1) });
+        var row = Assert.Single(feed.Activity);
+        Assert.Equal(stranger, row.AvatarImageUrl);
+
+        // /auth/user catches up; the row has to ask the profile again or it keeps the guess.
+        answer = new InstanceActivityFeed.PersonLookup(
+            SomeoneId,
+            null,
+            own,
+            "avtr_her_davina",
+            "Her DAVINA");
+        feed.RefreshPerson(SomeoneId, "chloe");
+
+        Assert.Equal(own, row.AvatarImageUrl);
+        Assert.Equal("avtr_her_davina", row.AvatarEntry!.AvatarId);
+        Assert.True(row.AvatarEntry!.AvatarIdIsAuthoritative);
+        Assert.Equal("Her DAVINA", row.AvatarEntry!.AvatarName);
+    }
+
+    [Fact]
     public void AnAvatarFoundByNameCannotReplaceThePlayersOwnAvatar()
     {
         const string own = "https://files.vrchat.cloud/own.png";

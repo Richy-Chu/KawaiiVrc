@@ -603,6 +603,69 @@ public class ActivityFeedSnapshotTests
     }
 
     [Fact]
+    public async Task ALoggedSwitchDoesNotBorrowAnAvatarByAnotherAuthor()
+    {
+        TestHooks.UseCommunityHandler(new AuthorCheckAvatarHandler());
+        try
+        {
+            using var api = new VrcApiClient(null, new AuthorCheckAvatarHandler());
+            var feed = new ActivityFeedViewModel(api);
+
+            // VRChat's log says the avatar is by Creator One; the only public record
+            // with that name is by Creator Two, which is a different avatar.
+            Assert.Null(await feed.ResolveLoggedAvatarImageAsync("Author Check", "Creator One"));
+
+            // The same name with the author the log wrote resolves as before.
+            Assert.False(string.IsNullOrWhiteSpace(
+                await feed.ResolveLoggedAvatarImageAsync("Author Check", "Creator Two")));
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public void TheAccountCatchingUpGivesTheSelfLogRowItsOwnAvatar()
+    {
+        using var api = new VrcApiClient();
+        var feed = new ActivityFeedViewModel(api);
+        var self = new VrcUser
+        {
+            Id = "usr_self",
+            DisplayName = "Me",
+            Username = "me",
+            CurrentAvatarName = "Old Look"
+        };
+        feed.ApplyCurrentUser(self);
+
+        // The log sees the switch first: a name, no id and no picture.
+        feed.ApplySelfLoggedAvatarChange(self, "New Look", string.Empty, string.Empty, null);
+        var row = Assert.Single(feed.Entries);
+        Assert.Equal(string.Empty, row.AvatarId);
+
+        // /auth/user then reports the avatar this account actually wears.
+        var caughtUp = new VrcUser
+        {
+            Id = "usr_self",
+            DisplayName = "Me",
+            Username = "me",
+            CurrentAvatar = "avtr_self_new",
+            CurrentAvatarName = "New Look",
+            CurrentAvatarThumbnailImageUrl =
+                "https://api.vrchat.cloud/api/1/image/file_self_new/1/256"
+        };
+        feed.ApplyCurrentUser(caughtUp);
+
+        // The same row, not a second one, and now it opens the record itself.
+        Assert.Single(feed.Entries);
+        Assert.Equal("avtr_self_new", row.AvatarId);
+        Assert.True(row.AvatarIdIsAuthoritative);
+        Assert.Contains("file_self_new", row.AvatarUrl);
+        Assert.Equal("New Look", row.EffectiveAvatarName);
+    }
+
+    [Fact]
     public void RealtimeFriendUpdateAddsAnAvatarChangeImmediately()
     {
         using var api = new VrcApiClient();
@@ -1060,5 +1123,30 @@ public class ActivityFeedSnapshotTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private sealed class AuthorCheckAvatarHandler : System.Net.Http.HttpMessageHandler
+    {
+        protected override System.Threading.Tasks.Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+            => System.Threading.Tasks.Task.FromResult(
+                new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new System.Net.Http.StringContent(
+                        """
+                        [
+                          {
+                            "id": "avtr_author_check",
+                            "name": "Author Check",
+                            "authorName": "Creator Two",
+                            "releaseStatus": "public",
+                            "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_author_check/1/256"
+                          }
+                        ]
+                        """,
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                });
     }
 }

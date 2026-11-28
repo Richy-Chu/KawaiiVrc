@@ -6564,7 +6564,22 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         try
         {
             VrcUser? user = null;
-            if (!string.IsNullOrWhiteSpace(userId))
+            if (CurrentUser is { } self &&
+                !string.IsNullOrWhiteSpace(self.Id) &&
+                (string.Equals(userId, self.Id, StringComparison.Ordinal) ||
+                 (string.IsNullOrWhiteSpace(userId) &&
+                  !string.IsNullOrWhiteSpace(displayName) &&
+                  string.Equals(
+                      displayName.Trim(),
+                      self.DisplayName,
+                      StringComparison.CurrentCultureIgnoreCase))))
+            {
+                // The signed-in account is already here: its own record costs no request
+                // and can never resolve to a namesake.
+                user = self;
+            }
+
+            if (user is null && !string.IsNullOrWhiteSpace(userId))
             {
                 user = await _api.GetUserAsync(userId);
             }
@@ -9114,6 +9129,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // repeating a rate-limited public-index request.
         Avatar? match = AvatarLookupCache.FindByImage(entry.AvatarUrl) ??
                        AvatarLookupCache.FindByName(name);
+        // A cached avatar by another author only shares the name, and the log named the
+        // author: it is not the avatar this row is about.
+        if (match is not null && !ImageUrlHelper.AuthorFits(match.AuthorName, entry.AvatarAuthor))
+        {
+            match = null;
+        }
         // Query the public avatar index first. VRChat's marketplace search can
         // return a private same-name duplicate; that record must never override
         // the actual public avatar the person is wearing.
@@ -9240,8 +9261,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         var authorMatch = candidates.FirstOrDefault(avatar =>
             !string.IsNullOrWhiteSpace(author) &&
             !string.IsNullOrWhiteSpace(avatar.AuthorName) &&
-            string.Equals(avatar.AuthorName, author, StringComparison.OrdinalIgnoreCase));
-        return authorMatch ?? candidates[0];
+            ImageUrlHelper.AuthorFits(avatar.AuthorName, author));
+        if (authorMatch is not null)
+        {
+            return authorMatch;
+        }
+
+        if (string.IsNullOrWhiteSpace(author))
+        {
+            return candidates[0];
+        }
+
+        // The log named an author, and none of these avatars is by them. Another
+        // author's avatar that shares the name is a different avatar, so this row must
+        // not borrow it - that is what showed someone else's avatar for a switch.
+        return candidates.FirstOrDefault(avatar => string.IsNullOrWhiteSpace(avatar.AuthorName));
     }
 
     private static bool ActivityAvatarImageMatches(VrcUser user, string? imageUrl)
@@ -9761,11 +9795,25 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             _contextLogSignature = string.Empty;
         }
+
+        var selfAvatarChanged = !string.IsNullOrWhiteSpace(user.Id) &&
+                                !string.Equals(
+                                    CurrentUser?.CurrentAvatar,
+                                    user.CurrentAvatar,
+                                    StringComparison.Ordinal);
         // Restore this account's saved invites before any fresh notification
         // response can replace the empty startup collection.
         LoadNotificationAccount(user.Id);
 
         CurrentUser = user;
+        if (selfAvatarChanged)
+        {
+            // A row that asked about this account before /auth/user named the new avatar
+            // has to ask again, or it keeps a public name search's guess instead.
+            ContextViewModel?.ActivityFeed.RefreshPerson(user.Id, user.DisplayName);
+            InstanceViewModel?.ActivityFeed.RefreshPerson(user.Id, user.DisplayName);
+        }
+
         WarmLocalCaches(user.Id);
         if (!string.IsNullOrWhiteSpace(user.Id) &&
             !_lastLoggedAvatars.ContainsKey(user.Id))

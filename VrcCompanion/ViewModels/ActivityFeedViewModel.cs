@@ -692,6 +692,56 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Gives the signed-in account's newest log-only switch the avatar the account endpoint
+    /// reported. VRChat's log knows the name; only the account record knows the id and the
+    /// picture, and a public search by name can find a different avatar that shares it.
+    /// </summary>
+    private bool StampSelfSwitchAvatar(VrcUser self)
+    {
+        var avatarName = self.CurrentAvatarName;
+        if (string.IsNullOrWhiteSpace(self.Id) ||
+            string.IsNullOrWhiteSpace(self.CurrentAvatar) ||
+            string.IsNullOrWhiteSpace(avatarName))
+        {
+            return false;
+        }
+
+        var since = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(2);
+        var row = _allEntries
+            .Where(entry => entry.Type == ActivityType.AvatarChanged &&
+                            !entry.AvatarIdIsAuthoritative &&
+                            entry.Timestamp >= since &&
+                            string.Equals(entry.UserId, self.Id, StringComparison.Ordinal) &&
+                            string.Equals(
+                                entry.EffectiveAvatarName,
+                                avatarName,
+                                StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(entry => entry.Timestamp)
+            .FirstOrDefault();
+        if (row is null)
+        {
+            return false;
+        }
+
+        row.AvatarId = self.CurrentAvatar;
+        row.SetAvatarName(avatarName);
+        // The account endpoint is the authority on what this account is wearing.
+        row.AvatarIdIsAuthoritative = true;
+        var image = ImageUrlHelper.PickAvatarThumbnailUrl(
+            null,
+            null,
+            self.CurrentAvatarThumbnailImageUrl,
+            self.CurrentAvatarImageUrl,
+            256);
+        if (!string.IsNullOrWhiteSpace(image))
+        {
+            row.AvatarUrl = image;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// The picture for an avatar VRChat's log named. The instance activity box uses
     /// this for its avatar rows, so a switch resolves exactly the way this page's own
     /// logged-switch rows resolve it instead of growing a second lookup.
@@ -704,7 +754,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         }
 
         var remembered = AvatarLookupCache.FindByName(avatarName);
-        if (remembered is not null)
+        if (remembered is not null && ImageUrlHelper.AuthorFits(remembered.AuthorName, avatarAuthor))
         {
             return AvatarImage(remembered);
         }
@@ -885,8 +935,21 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         var authorMatch = candidates.FirstOrDefault(avatar =>
             !string.IsNullOrWhiteSpace(author) &&
             !string.IsNullOrWhiteSpace(avatar.AuthorName) &&
-            string.Equals(avatar.AuthorName, author, StringComparison.OrdinalIgnoreCase));
-        return authorMatch ?? candidates[0];
+            ImageUrlHelper.AuthorFits(avatar.AuthorName, author));
+        if (authorMatch is not null)
+        {
+            return authorMatch;
+        }
+
+        if (string.IsNullOrWhiteSpace(author))
+        {
+            return candidates[0];
+        }
+
+        // The log named an author, and none of these avatars is by them. Another
+        // author's avatar that shares the name is a different avatar, so the row must
+        // not borrow it - that is what showed someone else's avatar for a switch.
+        return candidates.FirstOrDefault(avatar => string.IsNullOrWhiteSpace(avatar.AuthorName));
     }
 
     /// <summary>
@@ -1016,7 +1079,10 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
         // A self switch first seen in VRChat's log has the new name but no id.
         // When /auth/user catches up with the same name, it is the same switch,
-        // not a second one; let the existing log row keep the event.
+        // not a second one; let the existing log row keep the event - and give that
+        // row the record, so View avatar opens the avatar this account wears instead
+        // of a public search result that shares the name.
+        var stampedSelfSwitch = false;
         if (previous is not null &&
             string.IsNullOrWhiteSpace(previous.CurrentAvatar) &&
             !string.IsNullOrWhiteSpace(user.CurrentAvatar) &&
@@ -1025,6 +1091,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 user.CurrentAvatarName,
                 StringComparison.OrdinalIgnoreCase))
         {
+            stampedSelfSwitch = StampSelfSwitchAvatar(user);
             entries.RemoveAll(entry =>
                 entry.Type == ActivityType.AvatarChanged &&
                 string.Equals(entry.UserId, user.Id, StringComparison.Ordinal));
@@ -1033,6 +1100,14 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         SaveBioBaselines();
         if (entries.Count == 0)
         {
+            if (stampedSelfSwitch)
+            {
+                // The log row itself changed, so the list has to redraw even though the
+                // account endpoint added no row of its own.
+                ApplyFilterAndSearch();
+                SaveHistory();
+            }
+
             return;
         }
 
