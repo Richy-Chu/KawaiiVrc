@@ -635,16 +635,36 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
     private void ApplyKnownLoggedAvatar(ActivityEntry entry, VrcUser friend, string avatarName)
     {
-        if (string.Equals(friend.CurrentAvatarName, avatarName, StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(friend.CurrentAvatar))
+        // The friend's own record is the authority on the avatar they wear, and its id
+        // opens that exact record. A name search can hand back a different avatar that
+        // shares the name, so it is not asked when the profile carries the record.
+        // VRChat often omits the avatar name from a user payload, so an unnamed profile
+        // avatar still counts; a profile that names a different avatar is about another
+        // switch, and the search below stays the fallback for it.
+        var ownAvatarUrl = ImageUrlHelper.PickAvatarThumbnailUrl(
+            null,
+            null,
+            friend.CurrentAvatarThumbnailImageUrl,
+            friend.CurrentAvatarImageUrl,
+            256);
+        var nameMatches = string.Equals(
+            friend.CurrentAvatarName,
+            avatarName,
+            StringComparison.OrdinalIgnoreCase);
+        var nameUnknown = string.IsNullOrWhiteSpace(friend.CurrentAvatarName);
+        if (!string.IsNullOrWhiteSpace(friend.CurrentAvatar) &&
+            (nameMatches || (nameUnknown && !string.IsNullOrWhiteSpace(ownAvatarUrl))))
         {
             entry.AvatarId = friend.CurrentAvatar;
-            entry.AvatarUrl = ImageUrlHelper.PickAvatarThumbnailUrl(
-                friend.CurrentAvatarThumbnailImageUrl,
-                friend.CurrentAvatarImageUrl,
-                null,
-                null,
-                256) ?? string.Empty;
+            // Only a record with its picture is authoritative: without one the row still
+            // needs the name lookup to fill the circle, exactly as before.
+            entry.AvatarIdIsAuthoritative = !string.IsNullOrWhiteSpace(ownAvatarUrl);
+            entry.AvatarUrl = ownAvatarUrl ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(friend.CurrentAvatarName))
+            {
+                entry.SetAvatarName(friend.CurrentAvatarName);
+            }
+
             return;
         }
 

@@ -549,6 +549,60 @@ public class ActivityFeedSnapshotTests
     }
 
     [Fact]
+    public void ALoggedSwitchUsesTheFriendsOwnAvatarInsteadOfSearchingItsName()
+    {
+        using var api = new VrcApiClient();
+        var feed = new ActivityFeedViewModel(api);
+
+        // VRChat's user payload usually carries the avatar id and picture but not its
+        // name, which is what made this row fall back to a search a namesake could win.
+        var friend = new VrcUser
+        {
+            Id = "usr_one",
+            DisplayName = "One",
+            Username = "one",
+            CurrentAvatar = "avtr_her_davina",
+            CurrentAvatarThumbnailImageUrl =
+                "https://api.vrchat.cloud/api/1/image/file_her_davina/1/256",
+            Location = "wrld_test:12345~region(us)"
+        };
+
+        feed.ApplyLoggedAvatarChange(friend, "DAVINA", "Jamuu");
+
+        var entry = Assert.Single(feed.Entries);
+        Assert.Equal("avtr_her_davina", entry.AvatarId);
+        Assert.True(entry.AvatarIdIsAuthoritative);
+        Assert.Contains("file_her_davina", entry.AvatarUrl);
+        Assert.Equal("DAVINA", entry.EffectiveAvatarName);
+    }
+
+    [Fact]
+    public void ARecordNamingADifferentAvatarDoesNotClaimTheSwitch()
+    {
+        using var api = new VrcApiClient();
+        var feed = new ActivityFeedViewModel(api);
+        var friend = new VrcUser
+        {
+            Id = "usr_one",
+            DisplayName = "One",
+            Username = "one",
+            CurrentAvatar = "avtr_old",
+            CurrentAvatarName = "Old Look",
+            CurrentAvatarThumbnailImageUrl = "https://example.test/old.png",
+            Location = "wrld_test:12345~region(us)"
+        };
+
+        feed.ApplyLoggedAvatarChange(friend, "New Look", "Maker");
+
+        // The profile is about another switch, so this row keeps its own name and the
+        // existing lookup path instead of pretending to be the avatar they wear now.
+        var entry = Assert.Single(feed.Entries);
+        Assert.Equal(string.Empty, entry.AvatarId);
+        Assert.False(entry.AvatarIdIsAuthoritative);
+        Assert.Equal("New Look", entry.EffectiveAvatarName);
+    }
+
+    [Fact]
     public void RealtimeFriendUpdateAddsAnAvatarChangeImmediately()
     {
         using var api = new VrcApiClient();
