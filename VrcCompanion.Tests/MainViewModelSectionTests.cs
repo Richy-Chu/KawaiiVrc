@@ -288,6 +288,54 @@ public class MainViewModelSectionTests
     }
 
     [Fact]
+    public void ARowOpensThePublicAvatarByItsIdWhenVrchatRefusesTheRecord()
+    {
+        RunOnSta(() =>
+        {
+            var handler = new RefusedAvatarIdHandler();
+            TestHooks.UseCommunityHandler(handler);
+            try
+            {
+                using var api = new VrcApiClient(null, handler);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                // The profile named the avatar and its picture, but VRChat answers 404
+                // for that record. A public index still lists the same id, which is the
+                // same avatar - unlike the namesake with the same name and picture.
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "chloe",
+                    AvatarId = "avtr_refused_frost",
+                    AvatarIdIsAuthoritative = true,
+                    AvatarName = "Frost",
+                    AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_row_frost/1/256",
+                    Details = "changed avatar · Frost"
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() => avatars.SelectedAvatar?.Id == "avtr_refused_frost");
+                Assert.Equal("Frost", avatars.SelectedAvatar!.Name);
+                Assert.Equal("public", avatars.SelectedAvatar.ReleaseStatus);
+                Assert.True(avatars.SelectedAvatar.CanUse);
+                Assert.False(avatars.SelectedAvatar.IsUnavailable);
+                // The record with this exact id, not the namesake that shares its name.
+                Assert.Equal("Demon_Edi", avatars.SelectedAvatar.AuthorName);
+                Assert.Equal("avtr_refused_frost", entry.AvatarId);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
     public void WearingAnAvatarRecordsTheSignedInUserImmediately()
     {
         RunOnSta(() =>
@@ -1001,6 +1049,64 @@ public class MainViewModelSectionTests
 
             // The popup may load favourites in the background.
             return Json("[]");
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
+    private sealed class RefusedAvatarIdHandler : HttpMessageHandler
+    {
+        private const string IndexRows = """
+            [
+              {
+                "id": "avtr_namesake_frost",
+                "name": "Frost",
+                "authorName": "Someone Else",
+                "releaseStatus": "public",
+                "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_namesake/1/256"
+              },
+              {
+                "id": "avtr_refused_frost",
+                "name": "Frost",
+                "authorName": "Demon_Edi",
+                "releaseStatus": "public",
+                "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_frost/1/256"
+              }
+            ]
+            """;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri;
+            if (uri is null)
+            {
+                return Json("[]");
+            }
+
+            if (uri.Host.Contains("vrchat", StringComparison.OrdinalIgnoreCase))
+            {
+                if (uri.AbsolutePath.Contains("/avatars/", StringComparison.Ordinal))
+                {
+                    // VRChat will not expose this public avatar's record by id.
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+                }
+
+                if (uri.Query.Contains("search=", StringComparison.Ordinal))
+                {
+                    return Json(IndexRows);
+                }
+
+                // The popup may load favourites in the background.
+                return Json("[]");
+            }
+
+            return Json(IndexRows);
         }
 
         private static Task<HttpResponseMessage> Json(string json)

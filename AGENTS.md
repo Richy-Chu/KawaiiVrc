@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1124 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1126 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.157**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.158**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,33 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.158 changed
+
+- **A refused avatar id is confirmed in the public indexes before its card is locked.**
+  `FriendDetailViewModel.ResolveAvatarAsync` called `MarkUnavailable()` the moment VRChat
+  answered 403/404 for the id, so a public avatar whose record VRChat would not expose became
+  the locked "Avatar unavailable" card - the one a reader saw on a friend's profile while the
+  avatar was public in Avatar Search. `VrcApiClient.FindPublicAvatarByIdAsync` now asks the
+  avtr.icu id map and the federated indexes for the id itself (and, as a last chance, a name
+  search filtered to the same id), and only a record carrying that exact id counts, so a
+  namesake or a picture match can never unlock a card. `ConfirmPublicAvatarAsync` applies a hit
+  to the card and the store; the id is only locked when no public index knows it. The same
+  confirmation runs for a stored "private" label that was never confirmed
+  (`IsPrivacyUnverified`) and for the plain id path before `MarkUnavailable`.
+- **The Activity popup and logged rows ask by id before any name search.**
+  `MainViewModel.ResolveActivityAvatarAsync` and
+  `ActivityFeedViewModel.ResolveLoggedAvatarAsync` already had the row's id, but a refused
+  record sent them into the name-index search, which can answer with a different avatar that
+  shares the name. Both now resolve that exact id in the public indexes first.
+- **The instance Avatar filter pictures a profile avatar by its id.**
+  `MainViewModel.FindActivityPersonAsync` used the profile's avatar picture and, when VRChat
+  omitted it, fell back to the name search; it now resolves the named id in the public indexes
+  and hands that picture, id and name to `InstanceActivityFeed.PersonLookup`.
+- **Tests: 1126.** New: `ARowOpensThePublicAvatarByItsIdWhenVrchatRefusesTheRecord`
+  (`MainViewModelSectionTests`, a 404 record plus an index that lists the id, with a namesake
+  in the same result set) and `RefusedAvatarIdStillOpensAsPublicWhenThePublicIndexListsIt`
+  (`FriendAvatarProfileTests`, the profile card is public instead of locked).
 
 ### What 1.0.157 changed
 

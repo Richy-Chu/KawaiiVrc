@@ -304,6 +304,61 @@ public class FriendAvatarProfileTests
     }
 
     [Fact]
+    public async Task RefusedAvatarIdStillOpensAsPublicWhenThePublicIndexListsIt()
+    {
+        var directory = NewDirectory();
+        TestHooks.UseCommunityHandler(new FrostIndexHandler());
+        try
+        {
+            using var api = new VrcApiClient(null, new NoAvatarHandler());
+            TestHooks.SetCurrentUser(api, new VrcUser { Id = "acct_me", DisplayName = "Me" });
+            var profile = new FriendDetailViewModel(
+                new FriendItem(new VrcUser
+                {
+                    Id = UserId,
+                    DisplayName = "Avatar Person",
+                    CurrentAvatar = "avtr_frost",
+                    CurrentAvatarName = "Frost",
+                    CurrentAvatarImageUrl = "https://api.vrchat.cloud/api/1/image/file_frost/1/256"
+                }),
+                api,
+                ImageLoader.Shared,
+                new FriendNotesStore(Path.Combine(directory, "notes.json")),
+                avatarStore: new FriendAvatarStore(Path.Combine(directory, "avatars.json")));
+            // VRChat answers 404 for the avatar record the profile names by id. The public
+            // index lists that exact id, so the card is public - not the locked
+            // "Avatar unavailable" card, and not the namesake that shares name and picture.
+            profile.Profile = new VrcProfile
+            {
+                Id = UserId,
+                DisplayName = "Avatar Person",
+                CurrentAvatar = "avtr_frost",
+                CurrentAvatarName = "Frost",
+                CurrentAvatarImageUrl = "https://api.vrchat.cloud/api/1/image/file_frost/1/256"
+            };
+
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
+                string.Equals(avatar.AvatarId, "avtr_frost", StringComparison.Ordinal) &&
+                !avatar.IsUnavailable &&
+                avatar.IsPublic));
+
+            var avatar = profile.Avatars.First(item =>
+                string.Equals(item.AvatarId, "avtr_frost", StringComparison.Ordinal));
+            Assert.False(avatar.IsUnavailable);
+            Assert.Equal("Public", avatar.PrivacyLabel);
+            Assert.Equal("Frost", avatar.DisplayName);
+            Assert.NotNull(avatar.Details);
+            Assert.Equal("public", avatar.Details!.ReleaseStatus);
+            Assert.Contains("file_frost", avatar.ThumbnailUrl);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+            await DeleteDirectoryAsync(directory);
+        }
+    }
+
+    [Fact]
     public void NonFriendProfileUsesTheSameCurrentAvatarSection()
     {
         WithStore((store, notes) =>
@@ -1563,6 +1618,37 @@ public class FriendAvatarProfileTests
             => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
+    private sealed class FrostIndexHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    [
+                      {
+                        "id": "avtr_namesake_frost",
+                        "name": "Frost",
+                        "authorName": "Someone Else",
+                        "releaseStatus": "public",
+                        "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_namesake/1/256"
+                      },
+                      {
+                        "id": "avtr_frost",
+                        "name": "Frost",
+                        "authorName": "Demon_Edi",
+                        "releaseStatus": "public",
+                        "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_frost/1/256"
+                      }
+                    ]
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
             });
     }
 

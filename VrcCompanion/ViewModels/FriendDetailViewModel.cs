@@ -1502,6 +1502,48 @@ public sealed class FriendDetailViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Resolves an avatar id through the public avatar indexes and applies it to the card.
+    /// VRChat refusing a record by id is not proof that the avatar is private, so the card
+    /// is only locked after an index that carries this exact id has also been checked - and
+    /// a hit here is that same avatar, not a namesake or a same-looking picture.
+    /// </summary>
+    private async Task<Avatar?> ConfirmPublicAvatarAsync(
+        FriendAvatar item,
+        string avatarId,
+        CancellationToken cancellationToken)
+    {
+        Avatar? indexed;
+        try
+        {
+            indexed = await _api.FindPublicAvatarByIdAsync(avatarId, item.Name, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"public avatar id {avatarId}: {ex.Message}");
+            return null;
+        }
+
+        if (indexed is null || string.IsNullOrWhiteSpace(indexed.Id))
+        {
+            return null;
+        }
+
+        item.AvatarId = indexed.Id;
+        item.ApplyDetails(indexed);
+        _avatarStore.RememberImageResolution(
+            _api.CurrentUser?.Id,
+            string.IsNullOrWhiteSpace(item.ImageUrl) ? item.ThumbnailUrl : item.ImageUrl,
+            indexed.Id,
+            indexed.ReleaseStatus);
+        _avatarStore.RememberDetails(_api.CurrentUser?.Id, _userId, indexed, item.IsCurrent);
+        return indexed;
+    }
+
     private async Task<Avatar?> ResolveAvatarAsync(
         FriendAvatar item,
         CancellationToken cancellationToken)
@@ -1556,6 +1598,15 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
             if (recordRejected)
             {
+                // VRChat refused the record by id, which happens for a deleted avatar but
+                // also for a public one it will not expose. Only lock the card when no
+                // public index carries this same id.
+                var confirmed = await ConfirmPublicAvatarAsync(item, item.AvatarId, cancellationToken);
+                if (confirmed is not null)
+                {
+                    return confirmed;
+                }
+
                 item.MarkUnavailable();
             }
         }
@@ -1564,6 +1615,17 @@ public sealed class FriendDetailViewModel : ViewModelBase
         {
             if (item.IsPrivate)
             {
+                // A stored "private" label is only a guess until the record confirms it.
+                // A public index that lists this exact id proves the avatar is public.
+                if (item.IsPrivacyUnverified && !string.IsNullOrWhiteSpace(item.AvatarId))
+                {
+                    var confirmed = await ConfirmPublicAvatarAsync(item, item.AvatarId, cancellationToken);
+                    if (confirmed is not null)
+                    {
+                        return confirmed;
+                    }
+                }
+
                 // A public avatar-search hit is stronger evidence than a
                 // refused profile lookup. Use it before leaving the card locked.
                 var searchAvatar = await ResolveRememberedAvatarAsync(item, cancellationToken);
@@ -1803,6 +1865,15 @@ public sealed class FriendDetailViewModel : ViewModelBase
 
             if (avatar is null)
             {
+                // Before locking a card whose id VRChat would not answer for, ask the
+                // public indexes for that exact id. A public avatar that lost nothing but
+                // VRChat's endpoint must not stay locked.
+                var confirmed = await ConfirmPublicAvatarAsync(item, item.AvatarId, cancellationToken);
+                if (confirmed is not null)
+                {
+                    return confirmed;
+                }
+
                 item.MarkUnavailable();
                 _avatarStore.MarkUnavailable(_api.CurrentUser?.Id, _userId, item.AvatarId);
                 _avatarStore.RememberImageResolution(

@@ -860,9 +860,10 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     {
         try
         {
+            Avatar? direct = null;
             if (entry.HasAvatar)
             {
-                var direct = await _api.GetAvatarAsync(entry.AvatarId);
+                direct = await _api.GetAvatarAsync(entry.AvatarId);
                 if (direct is not null)
                 {
                     // A private same-name duplicate is not proof that this is the
@@ -882,6 +883,49 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                             return;
                         }
                     }
+                }
+            }
+
+            if (entry.HasAvatar && direct is null)
+            {
+                // VRChat would not answer for this id, which is not proof that the avatar
+                // is private. A public index listing this exact id is the same avatar, so
+                // it fills the row before any name search can return a namesake instead.
+                Avatar? publicById = null;
+                try
+                {
+                    publicById = await _api.FindPublicAvatarByIdAsync(entry.AvatarId, avatarName);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"log avatar public id {entry.AvatarId}: {ex.Message}");
+                }
+
+                if (publicById is not null)
+                {
+                    AvatarLookupCache.Remember(publicById);
+                    entry.AvatarId = publicById.Id;
+                    var publicImage = !string.IsNullOrWhiteSpace(publicById.ThumbnailImageUrl)
+                        ? publicById.ThumbnailImageUrl
+                        : publicById.ImageUrl;
+                    if (!string.IsNullOrWhiteSpace(publicImage))
+                    {
+                        entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(publicImage, 256) ?? publicImage;
+                    }
+
+                    entry.SetAvatarName(
+                        string.IsNullOrWhiteSpace(publicById.Name) ? avatarName : publicById.Name);
+                    if (_accountId is not null && !string.IsNullOrWhiteSpace(entry.UserId))
+                    {
+                        _friendAvatars.RememberDetails(
+                            _accountId,
+                            entry.UserId,
+                            publicById,
+                            isCurrent: false);
+                    }
+
+                    SaveHistory();
+                    return;
                 }
             }
 

@@ -6591,23 +6591,53 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     string.Equals(candidate.DisplayName, displayName.Trim(), StringComparison.OrdinalIgnoreCase));
             }
 
-            return user is null
-                ? null
-                : new InstanceActivityFeed.PersonLookup(
-                    user.Id,
-                    ImageUrlHelper.PersonThumbnailUrl(user),
-                    // The avatar on their profile is what Activity draws for a switch,
-                    // and unlike a name search it cannot be another player's avatar.
-                    ImageUrlHelper.PickAvatarThumbnailUrl(
-                        null,
-                        null,
-                        user.CurrentAvatarThumbnailImageUrl,
-                        user.CurrentAvatarImageUrl,
-                        256),
-                    // Its id and name let View avatar open that exact record instead of
-                    // searching a name several avatars share.
-                    user.CurrentAvatar,
-                    user.CurrentAvatarName);
+            if (user is null)
+            {
+                return null;
+            }
+
+            var avatarId = user.CurrentAvatar;
+            var avatarName = user.CurrentAvatarName;
+            // The avatar on their profile is what Activity draws for a switch,
+            // and unlike a name search it cannot be another player's avatar.
+            var avatarImage = ImageUrlHelper.PickAvatarThumbnailUrl(
+                null,
+                null,
+                user.CurrentAvatarThumbnailImageUrl,
+                user.CurrentAvatarImageUrl,
+                256);
+            if (!string.IsNullOrWhiteSpace(avatarId) && string.IsNullOrWhiteSpace(avatarImage))
+            {
+                // The profile names the avatar but carries no picture for it. Ask for
+                // that exact id in the public indexes, so the row draws the avatar the
+                // player wears instead of a name search that may find a namesake.
+                try
+                {
+                    var indexed = await _api.FindPublicAvatarByIdAsync(avatarId, avatarName);
+                    if (indexed is not null)
+                    {
+                        avatarId = indexed.Id;
+                        avatarName = string.IsNullOrWhiteSpace(indexed.Name) ? avatarName : indexed.Name;
+                        var image = !string.IsNullOrWhiteSpace(indexed.ThumbnailImageUrl)
+                            ? indexed.ThumbnailImageUrl
+                            : indexed.ImageUrl;
+                        avatarImage = ImageUrlHelper.ToThumbnailUrl(image, 256) ?? image;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"activity person avatar {avatarId}: {ex.Message}");
+                }
+            }
+
+            return new InstanceActivityFeed.PersonLookup(
+                user.Id,
+                ImageUrlHelper.PersonThumbnailUrl(user),
+                avatarImage,
+                // Its id and name let View avatar open that exact record instead of
+                // searching a name several avatars share.
+                avatarId,
+                avatarName);
         }
         catch (Exception ex)
         {
@@ -9057,6 +9087,27 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             catch (Exception ex)
             {
                 Debug.WriteLine($"activity avatar record: {ex.Message}");
+            }
+        }
+
+        if (entry.HasAvatar && knownPrivate is null)
+        {
+            // VRChat would not answer for this id, which does not prove the avatar is
+            // private. A public index that carries this exact id still identifies the
+            // avatar, and unlike a name search it cannot hand back a namesake, so it is
+            // asked before the name fallbacks and before anything is locked.
+            try
+            {
+                var publicById = await _api.FindPublicAvatarByIdAsync(entry.AvatarId, name);
+                if (publicById is not null)
+                {
+                    AvatarLookupCache.Remember(publicById);
+                    return publicById;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"activity avatar public id: {ex.Message}");
             }
         }
 
