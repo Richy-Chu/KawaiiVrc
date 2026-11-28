@@ -21,6 +21,8 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     private ActivityEntry? _avatarEntry;
     private string _avatarImageUrl = string.Empty;
     private string _resolvedUserId = string.Empty;
+    private string _personAvatarId = string.Empty;
+    private string _personAvatarName = string.Empty;
     private int _avatarImagePriority;
     private bool _showsPersonPicture;
 
@@ -174,9 +176,39 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
     /// The avatar on the player's own VRChat profile, which is exactly the picture the
     /// Activity page draws on an "Avatar changed" row. A name search can return a
     /// different avatar that happens to share the name, so the player's own record wins
-    /// over it whenever VRChat gives its picture.
+    /// over it whenever VRChat gives its picture. Its id and name go to the popup too, so
+    /// View avatar opens that same avatar instead of searching the name.
     /// </summary>
-    public void SetPersonAvatarImage(string? url) => ApplyAvatarImage(url, priority: 2);
+    public void SetPersonAvatarImage(string? url, string? avatarId = null, string? avatarName = null)
+    {
+        if (!IsAvatarChange)
+        {
+            return;
+        }
+
+        var id = avatarId?.Trim() ?? string.Empty;
+        var name = avatarName?.Trim() ?? string.Empty;
+        if (id.Length > 0)
+        {
+            _personAvatarId = id;
+            if (name.Length > 0)
+            {
+                _personAvatarName = name;
+            }
+
+            if (_avatarEntry is { } entry)
+            {
+                entry.AvatarId = id;
+                entry.AvatarIdIsAuthoritative = true;
+                if (name.Length > 0)
+                {
+                    entry.SetAvatarName(name);
+                }
+            }
+        }
+
+        ApplyAvatarImage(url, priority: 2);
+    }
 
     private void ApplyAvatarImage(string? url, int priority)
     {
@@ -286,8 +318,11 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         UserId = UserId,
         UserName = DisplayName,
         DisplayName = DisplayName,
-        AvatarId = Activity.AvatarId,
-        AvatarName = AvatarName,
+        // The player's own avatar outranks the log's name-only guess: its id opens the
+        // exact record the row picture came from.
+        AvatarId = _personAvatarId.Length > 0 ? _personAvatarId : Activity.AvatarId,
+        AvatarName = _personAvatarName.Length > 0 ? _personAvatarName : AvatarName,
+        AvatarIdIsAuthoritative = _personAvatarId.Length > 0,
         AvatarAuthor = string.IsNullOrWhiteSpace(AvatarAuthor) ? null : AvatarAuthor,
         AvatarUrl = _showsPersonPicture ? string.Empty : _avatarImageUrl,
         Details = AvatarName.Length == 0 ? "changed avatar" : "changed avatar · " + AvatarName,

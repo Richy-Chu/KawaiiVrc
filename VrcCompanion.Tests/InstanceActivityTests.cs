@@ -817,6 +817,29 @@ public class InstanceActivityTests
     }
 
     [Fact]
+    public void ViewAvatarOpensThePlayersOwnAvatarInsteadOfSearchingTheName()
+    {
+        const string own = "https://files.vrchat.cloud/chloe-davina.png";
+        var feed = new InstanceActivityFeed();
+        feed.SetPersonLookup((_, _) => Task.FromResult<InstanceActivityFeed.PersonLookup?>(
+            new InstanceActivityFeed.PersonLookup(
+                SomeoneId,
+                null,
+                own,
+                "avtr_her_davina",
+                "Her DAVINA")));
+
+        feed.Apply(new[] { AvatarRow("chloe", "DAVINA", "Jamuu", 1) });
+
+        // The popup must open the record the row picture came from, so it gets the
+        // profile's own avatar id and name rather than the log's name alone.
+        var entry = Assert.Single(feed.Activity).AvatarEntry!;
+        Assert.Equal("avtr_her_davina", entry.AvatarId);
+        Assert.True(entry.AvatarIdIsAuthoritative);
+        Assert.Equal("Her DAVINA", entry.AvatarName);
+    }
+
+    [Fact]
     public void AnAvatarFoundByNameCannotReplaceThePlayersOwnAvatar()
     {
         const string own = "https://files.vrchat.cloud/own.png";

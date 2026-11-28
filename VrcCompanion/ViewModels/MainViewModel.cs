@@ -6588,7 +6588,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                         null,
                         user.CurrentAvatarThumbnailImageUrl,
                         user.CurrentAvatarImageUrl,
-                        256));
+                        256),
+                    // Its id and name let View avatar open that exact record instead of
+                    // searching a name several avatars share.
+                    user.CurrentAvatar,
+                    user.CurrentAvatarName);
         }
         catch (Exception ex)
         {
@@ -8993,6 +8997,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         var name = entry.EffectiveAvatarName;
+        // An id taken from the player's own record is the avatar they wear, the same one
+        // the row picture came from. A name search could return a different avatar that
+        // shares the name, so it must not overrule this id.
+        var authoritative = entry.HasAvatar && entry.AvatarIdIsAuthoritative;
         Avatar? knownPrivate = null;
         if (entry.HasAvatar)
         {
@@ -9010,7 +9018,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                                           avatar.Name.Trim(),
                                           name.Trim(),
                                           StringComparison.OrdinalIgnoreCase);
-                    if (!avatar.IsPrivate && !avatar.IsUnavailable && nameMatches)
+                    if (!avatar.IsPrivate && !avatar.IsUnavailable &&
+                        (authoritative || nameMatches))
                     {
                         AvatarLookupCache.Remember(avatar);
                         return avatar;
@@ -9030,7 +9039,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
         }
 
-        if (entry.HasAvatarName)
+        if (entry.HasAvatarName && !authoritative)
         {
             // A log-only row knows the avatar name but not its id, and an older
             // name lookup may have cached a private same-name record. Search

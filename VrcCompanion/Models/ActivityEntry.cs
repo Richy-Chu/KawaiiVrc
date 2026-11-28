@@ -107,6 +107,16 @@ public sealed class ActivityEntry : INotifyPropertyChanged
     [JsonPropertyName("avatarAuthor")]
     public string? AvatarAuthor { get; set; }
 
+    /// <summary>
+    /// True when <see cref="AvatarId"/> came from the player's own VRChat record - the
+    /// avatar their profile is wearing - rather than a name search. The popup then opens
+    /// that exact record, even when its name differs from the log line, because a search
+    /// can hand back a different avatar that shares the name. Not persisted: the row
+    /// resolves it again from the live record.
+    /// </summary>
+    [JsonIgnore]
+    public bool AvatarIdIsAuthoritative { get; set; }
+
     /// <summary>The avatar the friend changed to, when this is an avatar change.</summary>
     [JsonPropertyName("avatarId")]
     public string AvatarId

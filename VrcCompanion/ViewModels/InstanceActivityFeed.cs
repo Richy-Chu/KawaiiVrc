@@ -27,7 +27,7 @@ public sealed class InstanceActivityFeed : ViewModelBase
     private Func<string, string?, Task<string?>>? _avatarImageResolver;
     private Func<string, string, string?>? _personImageResolver;
     private readonly Dictionary<string, string> _personImages = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _personAvatars = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PersonLookup> _personAvatars = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _personIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _personImageLookups = new(StringComparer.Ordinal);
     private readonly HashSet<string> _personAvatarLookupsDone = new(StringComparer.Ordinal);
@@ -36,9 +36,15 @@ public sealed class InstanceActivityFeed : ViewModelBase
     /// <summary>
     /// What VRChat's user record gives an avatar row: the player's id, so the row can open
     /// their profile, their picture, which fills an otherwise empty slot, and the avatar
-    /// they are wearing, which is the picture the Activity page draws for a switch.
+    /// they are wearing - its picture, id and name - which is what the Activity page draws
+    /// for a switch and what View avatar opens.
     /// </summary>
-    public sealed record PersonLookup(string? UserId, string? ImageUrl, string? AvatarImageUrl = null);
+    public sealed record PersonLookup(
+        string? UserId,
+        string? ImageUrl,
+        string? AvatarImageUrl = null,
+        string? AvatarId = null,
+        string? AvatarName = null);
 
     public InstanceActivityFeed()
     {
@@ -271,7 +277,10 @@ public sealed class InstanceActivityFeed : ViewModelBase
 
                 if (_personAvatars.TryGetValue(personKey, out var ownAvatar))
                 {
-                    item.SetPersonAvatarImage(ownAvatar);
+                    item.SetPersonAvatarImage(
+                        ownAvatar.AvatarImageUrl,
+                        ownAvatar.AvatarId,
+                        ownAvatar.AvatarName);
                 }
 
                 if (_avatarImages.TryGetValue(AvatarKey(item.AvatarName, item.AvatarAuthor), out var image))
@@ -366,7 +375,10 @@ public sealed class InstanceActivityFeed : ViewModelBase
             // applied first so the search below cannot outrank it.
             if (_personAvatars.TryGetValue(personKey, out var personAvatar))
             {
-                item.SetPersonAvatarImage(personAvatar);
+                item.SetPersonAvatarImage(
+                    personAvatar.AvatarImageUrl,
+                    personAvatar.AvatarId,
+                    personAvatar.AvatarName);
             }
 
             var key = AvatarKey(item.AvatarName, item.AvatarAuthor);
@@ -411,6 +423,13 @@ public sealed class InstanceActivityFeed : ViewModelBase
             var url = result?.ImageUrl?.Trim();
             var avatar = result?.AvatarImageUrl?.Trim();
 
+            // The avatar the profile is wearing is only authoritative when VRChat gave
+            // its picture: that is the picture the row draws, and the popup must open
+            // the same record.
+            var ownAvatar = result is not null && !string.IsNullOrWhiteSpace(avatar)
+                ? result
+                : null;
+
             if (!string.IsNullOrWhiteSpace(resolvedId))
             {
                 _personIds[key] = resolvedId;
@@ -421,9 +440,9 @@ public sealed class InstanceActivityFeed : ViewModelBase
                 _personImages[key] = url;
             }
 
-            if (!string.IsNullOrWhiteSpace(avatar))
+            if (ownAvatar is not null)
             {
-                _personAvatars[key] = avatar;
+                _personAvatars[key] = ownAvatar;
             }
 
             foreach (var item in Activity)
@@ -439,9 +458,12 @@ public sealed class InstanceActivityFeed : ViewModelBase
                         item.SetUserId(resolvedId);
                     }
 
-                    if (!string.IsNullOrWhiteSpace(avatar))
+                    if (ownAvatar is not null)
                     {
-                        item.SetPersonAvatarImage(avatar);
+                        item.SetPersonAvatarImage(
+                            ownAvatar.AvatarImageUrl,
+                            ownAvatar.AvatarId,
+                            ownAvatar.AvatarName);
                     }
 
                     if (!string.IsNullOrWhiteSpace(url))

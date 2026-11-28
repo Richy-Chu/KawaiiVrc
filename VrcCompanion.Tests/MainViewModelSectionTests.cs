@@ -192,6 +192,51 @@ public class MainViewModelSectionTests
     }
 
     [Fact]
+    public void AvatarRowOpensThePlayersOwnAvatarInsteadOfASameNamedOne()
+    {
+        RunOnSta(() =>
+        {
+            TestHooks.UseCommunityHandler(new ActivityAvatarCommunityHandler());
+            try
+            {
+                var handler = new PlayerOwnAvatarHandler();
+                using var api = new VrcApiClient(null, handler);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                // The row picture came from her profile, so the row carries that avatar's
+                // id and marks it authoritative. A name search would answer with
+                // avtr_other_davina, which is exactly what must not open here.
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "chloe",
+                    AvatarId = "avtr_her_davina",
+                    AvatarIdIsAuthoritative = true,
+                    AvatarName = "DAVINA",
+                    AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_her_davina/1/256",
+                    Details = "changed avatar · DAVINA"
+                };
+
+                Assert.True(shell.OpenActivityAvatarCommand.CanExecute(entry));
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() => avatars.SelectedAvatar?.Id == "avtr_her_davina");
+                Assert.Equal("Her DAVINA", avatars.SelectedAvatar!.Name);
+                Assert.Equal(1, handler.OwnAvatarGets);
+                Assert.Equal(0, handler.SearchRequests);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
     public void WearingAnAvatarRecordsTheSignedInUserImmediately()
     {
         RunOnSta(() =>
@@ -796,6 +841,61 @@ public class MainViewModelSectionTests
                   "thumbnailImageUrl": "https://example.test/new-look.png"
                 }
                 """);
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
+    private sealed class PlayerOwnAvatarHandler : HttpMessageHandler
+    {
+        private int _ownAvatarGets;
+        private int _searchRequests;
+
+        public int OwnAvatarGets => Volatile.Read(ref _ownAvatarGets);
+
+        public int SearchRequests => Volatile.Read(ref _searchRequests);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.Contains("/avatars/avtr_her_davina", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _ownAvatarGets);
+                return Json("""
+                    {
+                      "id": "avtr_her_davina",
+                      "name": "Her DAVINA",
+                      "authorName": "Jamuu",
+                      "releaseStatus": "public",
+                      "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_her_davina/1/256"
+                    }
+                    """);
+            }
+
+            if (path.EndsWith("/avatars", StringComparison.Ordinal) &&
+                request.RequestUri?.Query.Contains("search=", StringComparison.Ordinal) == true)
+            {
+                Interlocked.Increment(ref _searchRequests);
+                return Json("""
+                    [
+                      {
+                        "id": "avtr_other_davina",
+                        "name": "DAVINA",
+                        "authorName": "Someone Else",
+                        "releaseStatus": "public"
+                      }
+                    ]
+                    """);
+            }
+
+            // The popup may load favourites in the background.
+            return Json("[]");
         }
 
         private static Task<HttpResponseMessage> Json(string json)
