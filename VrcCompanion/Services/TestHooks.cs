@@ -154,6 +154,13 @@ internal static class TestHooks
     /// Attaches a history view model to the shell without restoring a session.
     /// The shell keeps its setter private, so this goes through it by reflection.
     /// </summary>
+    /// <summary>The shell's own session history, so a test can seed the instance REJOIN falls back to.</summary>
+    public static InstanceHistoryStore InstanceHistory(MainViewModel shell)
+        => typeof(MainViewModel)
+            .GetField("_instanceHistoryStore", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?.GetValue(shell) as InstanceHistoryStore
+            ?? throw new InvalidOperationException("MainViewModel._instanceHistoryStore not found.");
+
     public static void AttachInstanceHistoryViewModel(
         MainViewModel shell,
         InstanceHistoryViewModel history)

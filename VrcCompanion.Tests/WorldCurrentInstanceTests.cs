@@ -156,6 +156,20 @@ public class WorldCurrentInstanceTests
                 Assert.True(shell.Worlds[0].IsCurrentWorld);
                 Assert.False(shell.Worlds.Single(world => world.Id == WorldId).IsCurrentWorld);
 
+                // Closing VRChat takes the badge with it: the account is in no world then.
+                TestHooks.UseLogPlayer(
+                    shell,
+                    new VrChatLogPlayerService(() => logPath, () => false));
+                await shell.RefreshWorldsLiveAsync();
+                Assert.DoesNotContain(shell.Worlds, world => world.IsCurrentWorld);
+
+                // Back in the game, the log marks it again.
+                TestHooks.UseLogPlayer(
+                    shell,
+                    new VrChatLogPlayerService(() => logPath, () => true));
+                await shell.RefreshWorldsLiveAsync();
+                Assert.True(shell.Worlds.Single(world => world.Id == OtherWorldId).IsCurrentWorld);
+
                 // Leaving clears the badge and leaves the cards where they are.
                 System.IO.File.AppendAllText(
                     logPath,
@@ -372,37 +386,161 @@ public class WorldCurrentInstanceTests
     [Fact]
     public async Task SearchResultsMarkTheWorldYouAreIn()
     {
+        var logPath = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "vrccompanion-search-marker-" + Guid.NewGuid().ToString("N") + ".log");
+        try
+        {
+            System.IO.File.WriteAllText(
+                logPath,
+                $"2026.11.14 12:00:00 Log - [Behaviour] Joining {WorldId}:{InstanceId}\n");
+
+            using var handler = new LiveHandler();
+            using var api = new VrcApiClient(null, handler);
+            using var shell = new MainViewModel(api);
+            TestHooks.SetCurrentUser(shell, new VrcUser
+            {
+                Id = "usr_00000000-0000-0000-0000-000000000001",
+                DisplayName = "Me",
+                Location = "offline"
+            });
+            TestHooks.SetLoggedIn(shell);
+            // The world comes from the running client's log, the way the app reads it.
+            TestHooks.UseLogPlayer(
+                shell,
+                new VrChatLogPlayerService(() => logPath, () => true));
+
+            // Launch condition: no Instance page was ever opened, so nothing has loaded the
+            // live instance. The world still has to be marked and come first.
+            Assert.Null(shell.InstanceViewModel?.Instance);
+
+            await shell.SearchWorldsAsync(string.Empty);
+
+            Assert.Equal(WorldId, shell.Worlds[0].Id);
+            Assert.True(shell.Worlds[0].IsCurrentWorld);
+            Assert.All(
+                shell.Worlds.Skip(1),
+                world => Assert.False(world.IsCurrentWorld));
+        }
+        finally
+        {
+            System.IO.File.Delete(logPath);
+        }
+    }
+
+    [Fact]
+    public void RejoinTargetsTheLastLoggedInstanceAfterTheGameClosed()
+    {
+        var logPath = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "vrccompanion-rejoin-closed-" + Guid.NewGuid().ToString("N") + ".log");
+        try
+        {
+            // The reader moved on and then quit: the log's last join is where the run ended.
+            System.IO.File.WriteAllText(logPath, string.Join('\n', new[]
+            {
+                $"2026.11.28 07:12:00 Log - [Behaviour] Joining {OtherWorldId}:99999~region(eu)",
+                $"2026.11.28 07:22:00 Log - [Behaviour] Joining {WorldId}:{InstanceId}",
+                string.Empty
+            }));
+
+            WpfTestHost.RunAsync(async () =>
+            {
+                using var handler = new LiveHandler();
+                using var api = new VrcApiClient(null, handler);
+                using var shell = new MainViewModel(api);
+                TestHooks.SetCurrentUser(shell, new VrcUser
+                {
+                    Id = "usr_00000000-0000-0000-0000-000000000001",
+                    DisplayName = "Me",
+                    // What the app still held from before: the older world.
+                    Location = $"{OtherWorldId}:99999~region(eu)"
+                });
+                TestHooks.SetLoggedIn(shell);
+                // VRChat is closed, so only its log can say where the last run ended.
+                TestHooks.UseLogPlayer(
+                    shell,
+                    new VrChatLogPlayerService(() => logPath, () => false));
+                TestHooks.UseGameRunningProbe(() => false);
+                TestHooks.UseHandlerPathProvider(() => @"C:\fake\VRChat.exe");
+                var launched = new List<string>();
+                TestHooks.UseUriLauncher(uri => launched.Add(uri));
+                TestHooks.UseHandlerLauncher((path, arguments) => launched.Add(arguments));
+
+                await shell.RejoinWorldAsync();
+
+                var target = Assert.Single(launched);
+                Assert.Contains(WorldId, target);
+                Assert.Contains("12345", target);
+                Assert.DoesNotContain(OtherWorldId, target);
+            });
+        }
+        finally
+        {
+            System.IO.File.Delete(logPath);
+        }
+    }
+
+    [Fact]
+    public async Task RejoinFallsBackToTheNewestSessionWhenTheGameClosedInTheMenu()
+    {
         using var handler = new LiveHandler();
         using var api = new VrcApiClient(null, handler);
         using var shell = new MainViewModel(api);
+        var accountId = "usr_00000000-0000-0000-0000-0000000000a1";
         TestHooks.SetCurrentUser(shell, new VrcUser
         {
-            Id = "usr_00000000-0000-0000-0000-000000000001",
+            Id = accountId,
             DisplayName = "Me",
-            Location = $"{WorldId}:{InstanceId}"
+            Location = "offline"
         });
         TestHooks.SetLoggedIn(shell);
         TestHooks.UseLogPlayer(
             shell,
             new VrChatLogPlayerService(() => string.Empty, () => false));
+        TestHooks.UseGameRunningProbe(() => false);
+        TestHooks.UseHandlerPathProvider(() => @"C:\fake\VRChat.exe");
+        var launched = new List<string>();
+        TestHooks.UseUriLauncher(uri => launched.Add(uri));
+        TestHooks.UseHandlerLauncher((path, arguments) => launched.Add(arguments));
 
-        // Launch condition: no Instance page was ever opened, so nothing has loaded the
-        // live instance. The world still has to be marked and come first.
-        Assert.Null(shell.InstanceViewModel?.Instance);
+        // The last run ended in the Play Parlor, and the log that said so is gone with the
+        // client: only the session history knows the instance now.
+        var store = TestHooks.InstanceHistory(shell);
+        var joined = DateTimeOffset.Now.AddMinutes(-30);
+        var session = InstanceHistoryStore.NewFromLog(accountId, $"{OtherWorldId}:99999~region(eu)", joined)!;
+        session.GetOrAddPlayer(accountId, "Me").StartVisit(joined);
+        session.Close(joined.AddMinutes(20));
+        store.Add(session);
+        store.Save();
+        try
+        {
+            await shell.RejoinWorldAsync();
 
-        await shell.SearchWorldsAsync(string.Empty);
-
-        Assert.Equal(WorldId, shell.Worlds[0].Id);
-        Assert.True(shell.Worlds[0].IsCurrentWorld);
-        Assert.All(
-            shell.Worlds.Skip(1),
-            world => Assert.False(world.IsCurrentWorld));
+            var target = Assert.Single(launched);
+            Assert.Contains(OtherWorldId, target);
+            Assert.Contains("99999", target);
+        }
+        finally
+        {
+            store.Delete(session.Id);
+            store.Save();
+        }
     }
 
     [Fact]
     public void TheWorldCardShowsYouAreHere()
     {
-        WpfTestHost.Run(() =>
+        var logPath = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "vrccompanion-world-badge-" + Guid.NewGuid().ToString("N") + ".log");
+        try
+        {
+            System.IO.File.WriteAllText(
+                logPath,
+                $"2026.11.14 12:00:00 Log - [Behaviour] Joining {WorldId}:{InstanceId}\n");
+
+            WpfTestHost.Run(() =>
         {
             using var handler = new LiveHandler();
             using var api = new VrcApiClient(null, handler);
@@ -411,12 +549,12 @@ public class WorldCurrentInstanceTests
             {
                 Id = "usr_00000000-0000-0000-0000-000000000001",
                 DisplayName = "Me",
-                Location = $"{WorldId}:{InstanceId}"
+                Location = "offline"
             });
             TestHooks.SetLoggedIn(shell);
             TestHooks.UseLogPlayer(
                 shell,
-                new VrChatLogPlayerService(() => string.Empty, () => false));
+                new VrChatLogPlayerService(() => logPath, () => true));
 
             var window = new MainWindow(shell, initializeOnLoad: false)
             {
@@ -450,7 +588,12 @@ public class WorldCurrentInstanceTests
             {
                 window.Close();
             }
-        });
+            });
+        }
+        finally
+        {
+            System.IO.File.Delete(logPath);
+        }
     }
 
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)

@@ -143,6 +143,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private InstanceHistoryRecorder? _instanceHistoryRecorder;
     private DispatcherTimer? _instanceHistoryTimer;
     private bool _instanceHistoryPolling;
+
+    // Which account the app last watched VRChat run for, and the room that run taught it. Both
+    // are leftovers once the client exits: the session stays in history (REJOIN reads it there),
+    // but nothing else may keep saying the reader is standing in it.
+    private string? _liveRunAccountId;
+    private string? _observedLocation;
+    private bool _closedRunForgotten;
     private DispatcherTimer? _activityPollTimer;
 
     // Signature of the last friend poll so an unchanged snapshot can skip the
@@ -4429,6 +4436,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
         }
 
+        if (!running)
+        {
+            // VRChat is not running, so the account is in no world. A loaded instance or a
+            // location the app read from the log are leftovers from the run that ended, and
+            // keeping either is what left the badge (and a stale "you are here") behind.
+            await ForgetClosedRunAsync();
+            worldId = null;
+        }
+
         _currentWorldId = string.IsNullOrWhiteSpace(worldId) ? null : worldId;
         _currentWorldResolved = true;
         return _currentWorldId;
@@ -4468,11 +4484,20 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     private string? KnownCurrentWorldId()
-        => _currentWorldResolved
+    {
+        // "You are here" is about the running client. With VRChat closed the account is in no
+        // world, and the last instance or location the app saw must not keep a badge alive.
+        if (!_logPlayerService.IsGameRunning)
+        {
+            return null;
+        }
+
+        return _currentWorldResolved
             ? _currentWorldId
             : InstanceViewModel?.Instance?.WorldId
               ?? LaunchService.GetWorldIdFromLocation(CurrentUser?.Location)
               ?? _currentWorldId;
+    }
 
     /// <summary>Keeps the YOU'RE HERE badge on world results in step with the live instance.</summary>
     private void RefreshWorldResultMarkers()
@@ -6202,9 +6227,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private void OpenVrChat() => LaunchClientInMode(DefaultLaunchMode);
 
     /// <summary>
-    /// Rejoins the newest real instance recorded for this account. The history
-    /// entry is the same one the instance-history UI uses, so private instances
-    /// still go through the normal short-name and self-invite fallback path.
+    /// Rejoins the instance the reader was in last. While VRChat runs that is the room in its
+    /// own log; once the client has closed it is the last world the log wrote down, or the
+    /// newest session this account really had. The history entry is the same one the
+    /// instance-history UI uses, so private instances still go through the normal short-name
+    /// and self-invite fallback path.
     /// </summary>
     internal async Task RejoinWorldAsync()
     {
@@ -6213,37 +6240,28 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // The instance the account is in right now wins over history: the pinned "You are
-        // here" row and a just-switched world must be what REJOIN WORLD targets, not an older
-        // entry the history has not caught up with.
-        var liveLocation = await ResolveLiveLocationAsync();
+        // The newest session names the world REJOIN shows and answers when the log has nothing
+        // (a quit from the menu writes a leave, so the last world is only the history's to know).
         InstanceHistoryEntry? latest = null;
-        if (liveLocation is null)
+        var historyFailed = false;
+        try
         {
-            try
-            {
-                latest = _instanceHistoryStore
-                    .ForAccount(CurrentUser.Id)
-                    .Where(entry => LaunchService.IsLocation(entry.Location))
-                    .OrderByDescending(entry => entry.LastSeenAt)
-                    .ThenByDescending(entry => entry.JoinedAt)
-                    .FirstOrDefault();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"rejoin history: {ex}");
-                ShowError("Could not read your recent world history.");
-                return;
-            }
-
-            if (latest is null)
-            {
-                ShowError("There is no recent VRChat world to rejoin yet.");
-                return;
-            }
+            latest = NewestRejoinSession();
+        }
+        catch (Exception ex)
+        {
+            historyFailed = true;
+            Debug.WriteLine($"rejoin history: {ex}");
         }
 
-        var location = liveLocation ?? latest!.Location;
+        var location = await ResolveRejoinLocationAsync(latest);
+        if (location is null)
+        {
+            ShowError(historyFailed
+                ? "Could not read your recent world history."
+                : "There is no recent VRChat world to rejoin yet.");
+            return;
+        }
 
         // Probing goes through the seam so a test can never close a real VRChat.
         if (LaunchService.GameRunningProbe())
@@ -6270,30 +6288,32 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Where the account is right now, read fresh from the log while VRChat runs so a world
-    /// switch is caught immediately. Null while in-game but not in a world, or when neither
-    /// the log nor the account knows a location.
+    /// Where REJOIN should send the reader. The game log is written per VRChat run, so its last
+    /// join is the instance the last run ended in - including after the game has closed, which
+    /// is where the loaded instance and the account's location used to be the only answers and
+    /// pointed at a world from much earlier. The companion's own newest session answers when
+    /// the log has no room (the reader left the world before quitting).
     /// </summary>
-    private async Task<string?> ResolveLiveLocationAsync()
+    private async Task<string?> ResolveRejoinLocationAsync(InstanceHistoryEntry? latest)
     {
-        var running = false;
+        VrChatLogSnapshot? snapshot = null;
         try
         {
-            running = await Task.Run(() => _logPlayerService.IsGameRunning);
-            if (running)
-            {
-                var snapshot = await Task.Run(() => _logPlayerService.Poll());
-                return LaunchService.IsLocation(snapshot?.Location) ? snapshot!.Location : null;
-            }
+            snapshot = await Task.Run(() => _logPlayerService.Poll());
         }
         catch (Exception ex)
         {
             Debug.WriteLine("rejoin live location: " + ex.Message);
         }
 
-        if (running)
+        if (LaunchService.IsLocation(snapshot?.Location))
         {
-            return null;
+            return snapshot!.Location;
+        }
+
+        if (latest is not null && LaunchService.IsLocation(latest.Location))
+        {
+            return latest.Location;
         }
 
         if (InstanceViewModel?.Instance?.Location is { } instance &&
@@ -6305,6 +6325,22 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         return CurrentUser is not null && LaunchService.IsLocation(CurrentUser.Location)
             ? CurrentUser.Location
             : null;
+    }
+
+    /// <summary>The newest real session this account had, for REJOIN's name and closed-game fallback.</summary>
+    private InstanceHistoryEntry? NewestRejoinSession()
+    {
+        if (CurrentUser is null)
+        {
+            return null;
+        }
+
+        return _instanceHistoryStore
+            .ForAccount(CurrentUser.Id)
+            .Where(entry => LaunchService.IsLocation(entry.Location))
+            .OrderByDescending(entry => entry.LastSeenAt)
+            .ThenByDescending(entry => entry.JoinedAt)
+            .FirstOrDefault();
     }
 
     private async Task<string> WorldNameForRejoinAsync(string location, InstanceHistoryEntry? latest)
@@ -6827,18 +6863,28 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             var recorder = _instanceHistoryRecorder;
             var historyReady = _historyReady;
-            var (snapshot, changed) = await Task.Run(() =>
+            var (snapshot, changed, gameRunning) = await Task.Run(() =>
             {
-                var gameRunning = _logPlayerService.IsGameRunning;
-                var polled = gameRunning ? _logPlayerService.Poll() : null;
+                var running = _logPlayerService.IsGameRunning;
+                var polled = running ? _logPlayerService.Poll() : null;
                 var recorded = historyReady && recorder is not null &&
-                    recorder.Observe(polled, gameRunning, DateTimeOffset.Now);
-                return (polled, recorded);
+                    recorder.Observe(polled, running, DateTimeOffset.Now);
+                return (polled, recorded, running);
             }).ConfigureAwait(true);
 
             if (!IsLoggedIn)
             {
                 return;
+            }
+
+            if (gameRunning)
+            {
+                _closedRunForgotten = false;
+            }
+            else
+            {
+                // The client is gone: drop the room it left instead of showing it as current.
+                await ForgetClosedRunAsync();
             }
 
             using var poll = Services.UiJobTrace.Shared.Begin("instance-history");
@@ -9631,6 +9677,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // The log and the pipeline only speak for the run they are watching, so remember which
+        // account that was: when the client exits, this is what may be forgotten.
+        _liveRunAccountId = CurrentUser.Id;
+        _observedLocation = LaunchService.IsLocation(location) ? location : null;
+
         if (string.Equals(CurrentUser.Location, location, StringComparison.Ordinal))
         {
             return;
@@ -9653,6 +9704,44 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(HasInviteComposerLocationHint));
         SendInviteChoiceCommand.RaiseCanExecuteChanged();
         QueueContextLiveRefresh();
+    }
+
+    /// <summary>
+    /// VRChat closed while this app kept running. Everything that says "you are here" came from
+    /// the run that ended, so it is dropped: the session stays in the session history (REJOIN
+    /// reads it from there), but the badge, the Instance page and the account's own presence
+    /// must stop claiming the reader is still standing in it.
+    /// </summary>
+    private async Task ForgetClosedRunAsync()
+    {
+        var user = CurrentUser;
+        if (user is null || _closedRunForgotten ||
+            !string.Equals(_liveRunAccountId, user.Id, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _closedRunForgotten = true;
+        if (_observedLocation is { } observed &&
+            LaunchService.IsLocation(observed) &&
+            string.Equals(user.Location, observed, StringComparison.Ordinal))
+        {
+            ApplyObservedCurrentLocation("offline", user.Id);
+        }
+
+        _observedLocation = null;
+        _currentWorldResolved = false;
+        _currentWorldId = null;
+
+        if (InstanceViewModel is null)
+        {
+            return;
+        }
+
+        // The loaded instance is the other half of "you are here", and only a re-read clears
+        // it once no source knows a location any more.
+        await InstanceViewModel.LoadAsync(user, Friends);
+        RefreshWorldResultMarkers();
     }
 
     private void ApplyRealtimeFriendUpdate(string? userId, VrcUser? updated)
