@@ -352,6 +352,11 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         _allEntries = _accountId is null
             ? new List<ActivityEntry>()
             : _store.Load(_accountId).ToList();
+        if (ForgetUnconfirmedRowPictures(_allEntries))
+        {
+            SaveHistory();
+        }
+
         MarkSelfEntries(_allEntries);
         ApplyFilterAndSearch();
         HasLoaded = _allEntries.Count > 0;
@@ -361,6 +366,46 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         {
             QueueAvatarHydration();
         }
+    }
+
+    /// <summary>
+    /// The picture a 1.0.167-1.0.168 row took from a friend record that never named the avatar
+    /// the log wrote. Right after a switch that record still describes the avatar the player
+    /// wore before it, so the row drew the previous avatar. Those rows are only read here: the
+    /// picture is dropped and the row's kept id is read again, where the avatar's own record
+    /// (and its name) either confirms a picture or refuses one.
+    /// </summary>
+    internal const string UnnamedRecordSource =
+        "The player's current VRChat record (VRChat did not report this avatar's name)";
+
+    /// <summary>
+    /// Drops pictures on loaded switch rows that no record ever confirmed. Returns true when
+    /// something changed, so the cleaned history is saved.
+    /// </summary>
+    private static bool ForgetUnconfirmedRowPictures(IEnumerable<ActivityEntry> entries)
+    {
+        var changed = false;
+        foreach (var entry in entries)
+        {
+            if (entry.Type != ActivityType.AvatarChanged ||
+                !entry.AvatarIdIsCurrentAvatar ||
+                string.IsNullOrWhiteSpace(entry.AvatarUrl))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.AvatarPictureSource) &&
+                !string.Equals(entry.AvatarPictureSource, UnnamedRecordSource, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            entry.AvatarUrl = string.Empty;
+            entry.AvatarPictureSource = string.Empty;
+            changed = true;
+        }
+
+        return changed;
     }
 
     /// <summary>Clears the feed so a different account builds its own.</summary>
@@ -672,6 +717,11 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         // A row that already draws a picture is not overwritten by a different one. When the
         // profile omits the avatar's name, its current avatar may be a later switch, and the
         // picture on screen is the one this row is about.
+        // The payload's avatar is this row's avatar only when it names the one the log wrote.
+        // VRChat's friend payload almost never carries that name, and right after a switch it
+        // still describes the avatar the player wore before it - so its picture is exactly the
+        // borrowed one. The id is kept: reading it answers with the avatar's own record and
+        // name, which is what confirms a picture, and a private avatar stays private.
         var pictureConflicts = ImageUrlHelper.PicturesDiffer(entry.AvatarUrl, ownAvatarUrl);
         if (!pictureConflicts &&
             !string.IsNullOrWhiteSpace(friend.CurrentAvatar) &&
@@ -685,19 +735,23 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             // This id is the avatar VRChat's own user record says they wear right now, the
             // only one that may be reported as private when VRChat refuses the record.
             entry.AvatarIdIsCurrentAvatar = true;
-            entry.AvatarUrl = ownAvatarUrl ?? string.Empty;
-            entry.AvatarPictureSource = string.IsNullOrWhiteSpace(entry.AvatarUrl)
-                ? string.Empty
-                : nameMatches
-                    ? "The player's own VRChat record - this avatar's name"
-                    : "The player's current VRChat record (VRChat did not report this avatar's name)";
+            if (nameMatches)
+            {
+                entry.AvatarUrl = ownAvatarUrl ?? string.Empty;
+                entry.AvatarPictureSource = string.IsNullOrWhiteSpace(entry.AvatarUrl)
+                    ? string.Empty
+                    : "The player's own VRChat record - this avatar's name";
+            }
+
             AvatarPictureDiagnostics.Record(
                 "person-record",
                 friend.Id,
                 avatarName,
                 entry.AvatarAuthor,
-                entry.AvatarUrl,
-                "the friend's own current record");
+                nameMatches ? entry.AvatarUrl : null,
+                nameMatches
+                    ? "the friend's own current record names this avatar"
+                    : "the record did not name this avatar: id kept, picture not taken");
             if (string.IsNullOrWhiteSpace(entry.AvatarAuthor) &&
                 !string.IsNullOrWhiteSpace(friend.CurrentAvatarAuthorName))
             {
@@ -712,7 +766,14 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 entry.SetAvatarName(friend.CurrentAvatarName);
             }
 
-            return;
+            if (nameMatches)
+            {
+                return;
+            }
+
+            // An unnamed record still leaves the row without a picture. This player's own
+            // history may know an avatar by this name, which is a picture this row can claim;
+            // the id stays the record's.
         }
 
         if (_accountId is null)
@@ -761,10 +822,14 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             return;
         }
 
-        entry.AvatarId = known.AvatarId;
-        // This is an avatar this player was actually seen wearing under this name, so its
-        // id identifies the switch even though VRChat's log carries no id.
-        entry.AvatarIdIsAuthoritative = true;
+        if (!entry.HasAvatar)
+        {
+            entry.AvatarId = known.AvatarId;
+            // This is an avatar this player was actually seen wearing under this name, so its
+            // id identifies the switch even though VRChat's log carries no id.
+            entry.AvatarIdIsAuthoritative = true;
+        }
+
         entry.AvatarUrl = !string.IsNullOrWhiteSpace(known.ThumbnailUrl)
             ? known.ThumbnailUrl
             : known.ImageUrl;

@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1148 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1150 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.168**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.169**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,31 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.169 changed
+
+- **A switch row no longer takes its picture from a friend record that does not name it.**
+  `ApplyKnownLoggedAvatar` used to assign `entry.AvatarUrl` from `friend.CurrentAvatarThumbnailImageUrl`
+  whenever the payload had no `currentAvatarName`, which is almost always. Right after a switch that
+  payload still describes the avatar the player wore **before** it, so a row that says "Misu" drew the
+  previous avatar's picture (and saved it to `activity.json`, so it stayed for hours). The picture is
+  now taken only when the payload names the avatar the log wrote (`nameMatches`); the id, its
+  authoritative flags and the author are still taken, so the row opens the exact avatar and a private
+  avatar stays private.
+- **The kept id is what confirms the picture.** `ResolveLoggedAvatarAsync` reads the row's id and takes
+  the picture only from a record whose name equals the log's (or that has none), so a stale id that
+  opens the previous avatar is refused instead of drawn. When the payload names nothing, the row falls
+  through to this account's confirmed history under the same name and creator, which can still supply a
+  picture without touching the id.
+- **Saved rows are cleaned on load.** `ForgetUnconfirmedRowPictures` drops the picture of a loaded switch
+  row that is authoritative, has a picture and no confirmed `AvatarPictureSource` (or the 1.0.167-1.0.168
+  "VRChat did not report this avatar's name" note), saves the cleanup, and leaves the id, so hydration
+  re-reads it on the three most recent rows. Existing borrowed pictures disappear on the next start.
+- **Tests: 1150.** `ALoggedSwitchKeepsItsRecordsIdButNeverItsUnnamedPicture` (replaces
+  `ALoggedSwitchUsesTheFriendsOwnAvatarInsteadOfSearchingItsName`, a picture is no longer taken from
+  an unnamed record), `ALoggedSwitchesPictureComesFromTheRecordThatNamesIt` (the id's own record supplies
+  it), `AReloadedRowDropsAPictureNoRecordEverConfirmed` (a saved guess is dropped, a confirmed picture
+  stays).
 
 ### What 1.0.168 changed
 

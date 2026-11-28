@@ -549,13 +549,14 @@ public class ActivityFeedSnapshotTests
     }
 
     [Fact]
-    public void ALoggedSwitchUsesTheFriendsOwnAvatarInsteadOfSearchingItsName()
+    public void ALoggedSwitchKeepsItsRecordsIdButNeverItsUnnamedPicture()
     {
         using var api = new VrcApiClient();
         var feed = new ActivityFeedViewModel(api);
 
-        // VRChat's user payload usually carries the avatar id and picture but not its
-        // name, which is what made this row fall back to a search a namesake could win.
+        // VRChat's user payload carries the avatar id and a picture but not the avatar's
+        // name. Right after a switch that payload still describes the avatar the player
+        // wore before, so its picture belongs to the previous avatar and not this row.
         var friend = new VrcUser
         {
             Id = "usr_one",
@@ -563,7 +564,7 @@ public class ActivityFeedSnapshotTests
             Username = "one",
             CurrentAvatar = "avtr_her_davina",
             CurrentAvatarThumbnailImageUrl =
-                "https://api.vrchat.cloud/api/1/image/file_her_davina/1/256",
+                "https://api.vrchat.cloud/api/1/image/file_previous_avatar/1/256",
             Location = "wrld_test:12345~region(us)"
         };
 
@@ -572,8 +573,47 @@ public class ActivityFeedSnapshotTests
         var entry = Assert.Single(feed.Entries);
         Assert.Equal("avtr_her_davina", entry.AvatarId);
         Assert.True(entry.AvatarIdIsAuthoritative);
-        Assert.Contains("file_her_davina", entry.AvatarUrl);
+        Assert.Equal(string.Empty, entry.AvatarUrl);
+        Assert.Equal(string.Empty, entry.AvatarPictureSource);
         Assert.Equal("DAVINA", entry.EffectiveAvatarName);
+    }
+
+    [Fact]
+    public async Task ALoggedSwitchesPictureComesFromTheRecordThatNamesIt()
+    {
+        TestHooks.UseCommunityHandler(new MisuRecordHandler());
+        try
+        {
+            using var api = new VrcApiClient(null, new MisuRecordHandler());
+            var feed = new ActivityFeedViewModel(api);
+            feed.SetAccount("acct_misu");
+            var friend = new VrcUser
+            {
+                Id = "usr_misu",
+                DisplayName = "Misu Fan",
+                Username = "misu_fan",
+                CurrentAvatar = "avtr_misu",
+                CurrentAvatarThumbnailImageUrl =
+                    "https://api.vrchat.cloud/api/1/image/file_previous_avatar/1/256",
+                Location = "wrld_test:1"
+            };
+
+            feed.ApplyLoggedAvatarChange(friend, "Misu", "Misu Maker");
+
+            var entry = Assert.Single(feed.Entries);
+            Assert.Equal("avtr_misu", entry.AvatarId);
+            Assert.DoesNotContain("file_previous_avatar", entry.AvatarUrl);
+
+            // Reading the kept id answers with "Misu" itself, so only now does the row get
+            // a picture - the one that record belongs to.
+            Settle.Until(() => entry.AvatarUrl.Length > 0);
+            Assert.Contains("file_misu_record", entry.AvatarUrl);
+            Assert.Equal("VRChat's record for this row's saved id", entry.AvatarPictureSource);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
     }
 
     [Fact]
@@ -646,6 +686,78 @@ public class ActivityFeedSnapshotTests
         finally
         {
             TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
+    public void AReloadedRowDropsAPictureNoRecordEverConfirmed()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "VrcCompanionTests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = new ActivityStore(Path.Combine(directory, "activity.json"));
+            // One row saved by 1.0.167 with the picture of a friend record that never named
+            // the avatar, one confirmed by the record that did.
+            store.Save(
+                "acct_old",
+                new[]
+                {
+                    new ActivityEntry
+                    {
+                        Id = "avatar-usr_old-log-previous",
+                        Type = ActivityType.AvatarChanged,
+                        UserId = "usr_old",
+                        DisplayName = "Old",
+                        AvatarName = "Misu",
+                        AvatarId = "avtr_previous",
+                        AvatarIdIsAuthoritative = true,
+                        AvatarIdIsCurrentAvatar = true,
+                        AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_previous/1/256",
+                        Details = "changed avatar · Misu",
+                        Timestamp = DateTimeOffset.UtcNow.AddMinutes(-5),
+                        Location = "wrld_test:1"
+                    },
+                    new ActivityEntry
+                    {
+                        Id = "avatar-usr_old-log-confirmed",
+                        Type = ActivityType.AvatarChanged,
+                        UserId = "usr_old",
+                        DisplayName = "Old",
+                        AvatarName = "Misu",
+                        AvatarId = "avtr_confirmed",
+                        AvatarIdIsAuthoritative = true,
+                        AvatarIdIsCurrentAvatar = true,
+                        AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_confirmed/1/256",
+                        AvatarPictureSource = "VRChat's record for this row's saved id",
+                        Details = "changed avatar · Misu",
+                        Timestamp = DateTimeOffset.UtcNow.AddMinutes(-4),
+                        Location = "wrld_test:1"
+                    }
+                });
+
+            using var api = new VrcApiClient();
+            var feed = new ActivityFeedViewModel(
+                api,
+                store,
+                new FriendAvatarStore(Path.Combine(directory, "avatars.json")));
+
+            feed.SetAccount("acct_old");
+
+            var borrowed = feed.Entries.First(entry => entry.AvatarId == "avtr_previous");
+            Assert.Equal(string.Empty, borrowed.AvatarUrl);
+            // The id is kept, so the row still opens the avatar and its own record.
+            Assert.Equal("avtr_previous", borrowed.AvatarId);
+            Assert.True(borrowed.CanOpenAvatar);
+            var confirmed = feed.Entries.First(entry => entry.AvatarId == "avtr_confirmed");
+            Assert.Contains("file_confirmed", confirmed.AvatarUrl);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 
@@ -1358,6 +1470,48 @@ public class ActivityFeedSnapshotTests
                 new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
                 {
                     Content = new System.Net.Http.StringContent("[]", System.Text.Encoding.UTF8, "application/json")
+                });
+        }
+    }
+
+    /// <summary>
+    /// Answers the avatar read for avtr_misu with the record of the avatar actually called
+    /// "Misu", which is what confirms a logged switch's picture.
+    /// </summary>
+    private sealed class MisuRecordHandler : System.Net.Http.HttpMessageHandler
+    {
+        protected override System.Threading.Tasks.Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            var body = path.EndsWith("/avatars/avtr_misu", StringComparison.Ordinal)
+                ? """
+                  {
+                    "id": "avtr_misu",
+                    "name": "Misu",
+                    "authorName": "Misu Maker",
+                    "releaseStatus": "public",
+                    "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_misu_record/1/256"
+                  }
+                  """
+                : path.Contains("/avatars/avtr_misu/", StringComparison.Ordinal)
+                    ? """
+                      {
+                        "name": "Misu",
+                        "authorName": "Misu Maker",
+                        "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_misu_record/1/256"
+                      }
+                      """
+                    : "[]";
+
+            return System.Threading.Tasks.Task.FromResult(
+                new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new System.Net.Http.StringContent(
+                        body,
+                        System.Text.Encoding.UTF8,
+                        "application/json")
                 });
         }
     }
