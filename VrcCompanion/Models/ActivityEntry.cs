@@ -120,9 +120,10 @@ public sealed class ActivityEntry : INotifyPropertyChanged
     /// <summary>
     /// Where <see cref="AvatarUrl"/> came from: the player's own record, this account's
     /// saved history, or a public avatar index. The avatar card shows it so a reader can
-    /// tell a confirmed picture from one borrowed off a stale record. Not persisted.
+    /// tell a confirmed picture from one borrowed off a stale record. Persisted, because a
+    /// reload has to know whether a saved picture was ever confirmed: a switch row with a
+    /// picture and no source is a guess an older build wrote, and it is dropped.
     /// </summary>
-    [JsonIgnore]
     public string AvatarPictureSource { get; set; } = string.Empty;
 
     /// <summary>

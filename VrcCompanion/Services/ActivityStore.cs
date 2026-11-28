@@ -148,9 +148,14 @@ public sealed class ActivityStore
                 {
                     row.AvatarUrl = avatarUrl;
                 }
-                else if (!string.IsNullOrWhiteSpace(row.UserId) &&
+                else if (row.Type != ActivityType.AvatarChanged &&
+                    !string.IsNullOrWhiteSpace(row.UserId) &&
                     account.AvatarUrls.TryGetValue(row.UserId, out var userUrl))
                 {
+                    // A switch row never takes the person's picture: restoring it by user id
+                    // put the avatar that person wears now on every older switch row of
+                    // theirs, which is the borrowed picture itself. Only the avatar's own id
+                    // can hand a switch row a picture.
                     row.AvatarUrl = userUrl;
                 }
             }
@@ -389,14 +394,18 @@ public sealed class ActivityStore
                 : null;
             // Keyed by the avatar when the row names one, otherwise by the
             // friend, because most events carry the friend's picture URL without
-            // their avatar id. A row with neither keeps its own copy.
+            // their avatar id. A row with neither keeps its own copy. A switch row is only
+            // ever shared by its avatar id, never by the friend: sharing one by user id is
+            // what let a person's current avatar appear on every older switch row of theirs.
             var urlKey = string.IsNullOrWhiteSpace(entry.AvatarUrl)
                 ? null
                 : !string.IsNullOrWhiteSpace(entry.AvatarId)
                     ? entry.AvatarId
-                    : !string.IsNullOrWhiteSpace(entry.UserId)
-                        ? entry.UserId
-                        : null;
+                    : entry.Type == ActivityType.AvatarChanged
+                        ? null
+                        : !string.IsNullOrWhiteSpace(entry.UserId)
+                            ? entry.UserId
+                            : null;
             if (tags is null && urlKey is null)
             {
                 rows.Add(entry);

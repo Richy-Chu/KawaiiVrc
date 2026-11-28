@@ -928,6 +928,9 @@ public class MainViewModelSectionTests
                     UserId = "usr_remembered",
                     DisplayName = "Remembered Person",
                     AvatarUrl = avatarUrl,
+                    // Only a picture whose source was recorded survives a reload; an older
+                    // build could save one copied off the previous avatar.
+                    AvatarPictureSource = "The picture VRChat reported for this avatar",
                     Details = "changed avatar",
                     Timestamp = DateTimeOffset.UtcNow
                 }

@@ -9422,6 +9422,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 ? match.ThumbnailImageUrl
                 : match.ImageUrl;
             entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(image, 256) ?? image;
+            entry.AvatarPictureSource = "A public avatar index (by name and creator)";
         }
 
         entry.SetAvatarName(string.IsNullOrWhiteSpace(match.Name) ? name : match.Name);

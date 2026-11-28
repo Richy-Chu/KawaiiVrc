@@ -52,6 +52,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
     private readonly Dictionary<string, string?> _resolvedAvatarNames = new(StringComparer.Ordinal);
     private readonly HashSet<string> _unresolvedAvatarImages = new(StringComparer.Ordinal);
     private const int MaxAvatarNameLookupsPerPass = 24;
+    private const int MaxAvatarPictureLookupsPerPass = 12;
     private const int MaxUnresolvedAvatarImages = 4_000;
     private Dictionary<string, BioBaseline> _bioBaselines = new(StringComparer.Ordinal);
     private VrcUser? _previousSelfUser;
@@ -379,8 +380,11 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         "The player's current VRChat record (VRChat did not report this avatar's name)";
 
     /// <summary>
-    /// Drops pictures on loaded switch rows that no record ever confirmed. Returns true when
-    /// something changed, so the cleaned history is saved.
+    /// Drops pictures on loaded switch rows that no record ever confirmed. Every picture this
+    /// version takes records its source, so a saved switch picture with no source was written
+    /// by a build that could copy it off a friend record still describing the previous avatar.
+    /// The id is kept: it is what opens the avatar, and it is read again by the hydration pass.
+    /// Returns true when something changed, so the cleaned history is saved.
     /// </summary>
     private static bool ForgetUnconfirmedRowPictures(IEnumerable<ActivityEntry> entries)
     {
@@ -388,7 +392,6 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         foreach (var entry in entries)
         {
             if (entry.Type != ActivityType.AvatarChanged ||
-                !entry.AvatarIdIsCurrentAvatar ||
                 string.IsNullOrWhiteSpace(entry.AvatarUrl))
             {
                 continue;
@@ -1863,7 +1866,8 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             Location = friend.Location ?? string.Empty,
             Timestamp = DateTimeOffset.UtcNow,
             IsOnline = !string.Equals(friend.Location, "offline", StringComparison.OrdinalIgnoreCase),
-            Details = "changed avatar"
+            Details = "changed avatar",
+            AvatarPictureSource = "The picture VRChat reported for this avatar"
         };
         entry.SetAvatarName(avatarName);
 
@@ -2231,6 +2235,21 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 unresolved.AvatarAuthor);
         }
 
+        // A switch row that kept an id and no picture is settled by reading that id: the
+        // record's own name is the check, so a row whose id still points at a previous
+        // avatar is refused instead of drawing it. This is what heals rows an older build
+        // saved with the previous avatar's picture.
+        foreach (var unresolved in avatarEntries
+                     .Where(entry => entry.HasAvatar && !entry.HasAvatarImage)
+                     .OrderByDescending(entry => entry.Timestamp)
+                     .Take(MaxAvatarPictureLookupsPerPass))
+        {
+            QueueLoggedAvatarLookup(
+                unresolved,
+                unresolved.EffectiveAvatarName,
+                unresolved.AvatarAuthor);
+        }
+
         // Ask the API only for the avatars this feed is still missing a name
         // for. This loop used to call GetAvatarAsync once per avatar row on
         // every refresh, so a deep timeline fired hundreds of requests for names
@@ -2296,26 +2315,32 @@ public sealed class ActivityFeedViewModel : ViewModelBase
 
         var changed = false;
         var histories = new Dictionary<string, IReadOnlyList<FriendAvatar>>(StringComparer.Ordinal);
-        foreach (var entry in entries.Where(entry =>
-                     !entry.HasAvatar && (entry.HasAvatarImage || entry.HasAvatarName)))
+        foreach (var entry in entries)
         {
             if (entry.HasAvatarImage)
             {
-                var known = _friendAvatars.GetImageResolution(_accountId, entry.AvatarUrl);
-                if (!string.IsNullOrWhiteSpace(known?.AvatarId))
+                if (entry.HasAvatar)
                 {
-                    entry.AvatarId = known.AvatarId;
-                    // Keyed by the picture the row draws, so the id belongs to that avatar.
-                    entry.AvatarIdIsAuthoritative = true;
-                    if (!string.IsNullOrWhiteSpace(known.ReleaseStatus) &&
-                        !string.Equals(known.ReleaseStatus, "private", StringComparison.OrdinalIgnoreCase))
-                    {
-                        names.TryAdd(entry.AvatarId, null);
-                    }
-
-                    changed = true;
                     continue;
                 }
+
+                var known = _friendAvatars.GetImageResolution(_accountId, entry.AvatarUrl);
+                if (string.IsNullOrWhiteSpace(known?.AvatarId))
+                {
+                    continue;
+                }
+
+                entry.AvatarId = known.AvatarId;
+                // Keyed by the picture the row draws, so the id belongs to that avatar.
+                entry.AvatarIdIsAuthoritative = true;
+                if (!string.IsNullOrWhiteSpace(known.ReleaseStatus) &&
+                    !string.Equals(known.ReleaseStatus, "private", StringComparison.OrdinalIgnoreCase))
+                {
+                    names.TryAdd(entry.AvatarId, null);
+                }
+
+                changed = true;
+                continue;
             }
 
             if (string.IsNullOrWhiteSpace(entry.UserId))
@@ -2330,16 +2355,18 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             }
 
             FriendAvatar? match;
-            if (entry.HasAvatarImage)
+            if (entry.HasAvatar)
             {
-                var fileId = ImageUrlHelper.ExtractFileId(entry.AvatarUrl);
+                // The row kept the id its own record gave it, so only a confirmed row with
+                // that same avatar id *and* the name VRChat's log wrote is this avatar. An id
+                // that still points at the avatar worn before the switch names another one,
+                // and matching on the name alone is what drew that avatar's picture here.
                 match = history.FirstOrDefault(candidate =>
+                    candidate.IsConfirmed &&
                     !string.IsNullOrWhiteSpace(candidate.AvatarId) &&
-                    (string.Equals(candidate.ThumbnailUrl, entry.AvatarUrl, StringComparison.Ordinal) ||
-                     string.Equals(candidate.ImageUrl, entry.AvatarUrl, StringComparison.Ordinal) ||
-                     (fileId is not null &&
-                      (string.Equals(ImageUrlHelper.ExtractFileId(candidate.ThumbnailUrl), fileId, StringComparison.Ordinal) ||
-                       string.Equals(ImageUrlHelper.ExtractFileId(candidate.ImageUrl), fileId, StringComparison.Ordinal)))));
+                    string.Equals(candidate.AvatarId, entry.AvatarId, StringComparison.Ordinal) &&
+                    (string.IsNullOrWhiteSpace(entry.EffectiveAvatarName) ||
+                     string.Equals(candidate.Name, entry.EffectiveAvatarName, StringComparison.OrdinalIgnoreCase)));
             }
             else
             {
@@ -2354,7 +2381,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                             StringComparison.OrdinalIgnoreCase));
             }
 
-            if (match is null)
+            if (match is null || string.IsNullOrWhiteSpace(match.AvatarId))
             {
                 continue;
             }
@@ -2373,18 +2400,26 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 continue;
             }
 
-            entry.AvatarId = match.AvatarId;
-            // This avatar is in the player's own history under this name, so the id
-            // identifies the switch; a name search must not overrule it.
-            entry.AvatarIdIsAuthoritative = true;
-            if (!entry.HasAvatarImage)
+            var image = !string.IsNullOrWhiteSpace(match.ThumbnailUrl)
+                ? match.ThumbnailUrl
+                : match.ImageUrl;
+            if (string.IsNullOrWhiteSpace(image))
             {
-                entry.AvatarUrl = !string.IsNullOrWhiteSpace(match.ThumbnailUrl)
-                    ? match.ThumbnailUrl
-                    : match.ImageUrl;
-                entry.AvatarPictureSource = "Saved avatar history - the same name and creator";
+                continue;
             }
 
+            if (!entry.HasAvatar)
+            {
+                entry.AvatarId = match.AvatarId;
+                // This avatar is in the player's own history under this name, so the id
+                // identifies the switch; a name search must not overrule it.
+                entry.AvatarIdIsAuthoritative = true;
+            }
+
+            entry.AvatarUrl = image;
+            entry.AvatarPictureSource = entry.HasAvatar
+                ? "Saved avatar history - the same avatar id and name"
+                : "Saved avatar history - the same name and creator";
             names.TryAdd(match.AvatarId, match.Name);
             changed = true;
         }

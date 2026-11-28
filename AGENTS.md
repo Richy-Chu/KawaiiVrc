@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1150 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1152 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.169**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.170**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,34 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.170 changed
+
+- **A switch row can no longer borrow a person's picture from the store.** `ActivityStore.Normalize`
+  hoisted every row's picture into `AvatarUrls` keyed by its avatar id **or, when it had none, by the
+  friend's user id**, blanked the row's own copy, and `Load` put the shared one back. `TryAdd` keeps the
+  newest row, so the person's *current* avatar picture came back on every older switch row of theirs -
+  a borrow that re-created itself on every load. A switch row is now shared only by its own avatar id;
+  the user-id fallback is for presence rows alone, on both the write and the read side.
+- **`ActivityEntry.AvatarPictureSource` is persisted, and an unconfirmed saved picture is dropped.**
+  Every picture this version takes records its source, so a loaded `AvatarChanged` row with a picture
+  and no source was written by a build that could copy it off a friend record still describing the
+  previous avatar. `ForgetUnconfirmedRowPictures` clears that picture (keeping the id and the row) and
+  saves the cleanup. It no longer tests `AvatarIdIsCurrentAvatar`, which is not persisted, which is why
+  1.0.169's cleanup never fired on a reload.
+- **A saved row gets its picture back only from its own avatar.** `ResolveAvatarIdsFromLocalHistory`
+  now fills a missing picture from a confirmed history row matching **both** the row's avatar id and the
+  name VRChat's log wrote; a name-only match is limited to rows with no id. `HydrateAvatarNamesAsync`
+  also re-reads up to `MaxAvatarPictureLookupsPerPass` (12) recent id-bearing rows with no picture, whose
+  record name is the confirmation, so stored guesses heal over the next launches.
+- **Every picture path labels itself.** `AddProfileAvatarChange` ("The picture VRChat reported for this
+  avatar") and `MainViewModel`'s name-search write-back ("A public avatar index (by name and creator)")
+  set a source now, so a reload keeps them and the card names them.
+- **Tests: 1152.** `ActivityFeedSnapshotTests` adds `ASavedSwitchRowNeverBorrowsAnotherRowsPicture` (the
+  store round trip that used to put one row's picture on the other) and
+  `AReloadedRowTakesItsPictureBackOnlyFromItsOwnAvatar` (id + name, not the name alone).
+  `AvatarChangeHistoryBackfillsAnIdFromTheRememberedPicture` now labels its saved picture, because an
+  unlabelled one is exactly what this version drops.
 
 ### What 1.0.169 changed
 

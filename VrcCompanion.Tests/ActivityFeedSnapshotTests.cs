@@ -762,6 +762,140 @@ public class ActivityFeedSnapshotTests
     }
 
     [Fact]
+    public void ASavedSwitchRowNeverBorrowsAnotherRowsPicture()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "VrcCompanionTests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = new ActivityStore(Path.Combine(directory, "activity.json"));
+            // Two switch rows for one person. The store used to share a picture between a
+            // person's rows by user id, so the older row without a name drew the newer row's
+            // avatar - the borrowed picture, re-created on every load.
+            store.Save(
+                "acct_borrow",
+                new[]
+                {
+                    new ActivityEntry
+                    {
+                        Id = "avatar-usr_borrow-new",
+                        Type = ActivityType.AvatarChanged,
+                        UserId = "usr_borrow",
+                        DisplayName = "Borrow",
+                        AvatarName = "New Look",
+                        AvatarId = "avtr_new",
+                        AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_new/1/256",
+                        AvatarPictureSource = "The picture VRChat reported for this avatar",
+                        Details = "changed avatar · New Look",
+                        Timestamp = DateTimeOffset.UtcNow.AddMinutes(-5),
+                        Location = "wrld_test:1"
+                    },
+                    new ActivityEntry
+                    {
+                        Id = "avatar-usr_borrow-old",
+                        Type = ActivityType.AvatarChanged,
+                        UserId = "usr_borrow",
+                        DisplayName = "Borrow",
+                        AvatarName = "Misu",
+                        Details = "changed avatar · Misu",
+                        Timestamp = DateTimeOffset.UtcNow.AddMinutes(-10),
+                        Location = "wrld_test:1"
+                    }
+                });
+
+            var loaded = store.Load("acct_borrow");
+
+            var older = loaded.Single(entry => entry.AvatarName == "Misu");
+            Assert.Equal(string.Empty, older.AvatarUrl);
+            var newer = loaded.Single(entry => entry.AvatarName == "New Look");
+            Assert.Contains("file_new", newer.AvatarUrl);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AReloadedRowTakesItsPictureBackOnlyFromItsOwnAvatar()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "VrcCompanionTests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var activityPath = Path.Combine(directory, "activity.json");
+            var store = new ActivityStore(activityPath);
+            store.Save(
+                "acct_heal",
+                new[]
+                {
+                    new ActivityEntry
+                    {
+                        Id = "avatar-usr_heal-log-misu",
+                        Type = ActivityType.AvatarChanged,
+                        UserId = "usr_heal",
+                        DisplayName = "Heal",
+                        AvatarName = "Misu",
+                        AvatarId = "avtr_misu",
+                        Details = "changed avatar · Misu",
+                        Timestamp = DateTimeOffset.UtcNow.AddMinutes(-5),
+                        Location = "wrld_test:1"
+                    },
+                    new ActivityEntry
+                    {
+                        Id = "avatar-usr_heal-log-stale",
+                        Type = ActivityType.AvatarChanged,
+                        UserId = "usr_heal",
+                        DisplayName = "Heal",
+                        AvatarName = "Other",
+                        AvatarId = "avtr_misu",
+                        Details = "changed avatar · Other",
+                        Timestamp = DateTimeOffset.UtcNow.AddMinutes(-6),
+                        Location = "wrld_test:1"
+                    }
+                });
+
+            // This player's confirmed history knows "Misu" by that exact id, and nothing
+            // by the name "Other".
+            var avatars = new FriendAvatarStore(Path.Combine(directory, "avatars.json"));
+            avatars.Observe(
+                "acct_heal",
+                "usr_heal",
+                "avtr_misu",
+                "Misu",
+                "https://api.vrchat.cloud/api/1/file/file_misu/1/file",
+                "https://api.vrchat.cloud/api/1/image/file_misu/1/256",
+                "Misu Maker");
+
+            using var api = new VrcApiClient();
+            var feed = new ActivityFeedViewModel(api, store, avatars);
+
+            feed.SetAccount("acct_heal");
+
+            Settle.Until(() => feed.Entries
+                .First(entry => entry.AvatarName == "Misu").AvatarUrl.Length > 0);
+            var misu = feed.Entries.First(entry => entry.AvatarName == "Misu");
+            Assert.Contains("file_misu", misu.AvatarUrl);
+            Assert.Equal("Saved avatar history - the same avatar id and name", misu.AvatarPictureSource);
+
+            // The id is that same avatar, but this row's log names another one, so the
+            // picture it belongs to is not this row's picture.
+            var other = feed.Entries.First(entry => entry.AvatarName == "Other");
+            Assert.Equal(string.Empty, other.AvatarUrl);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ARecordNamingAnotherAvatarNeverRenamesTheSwitch()
     {
         TestHooks.UseCommunityHandler(new AuthorCheckAvatarHandler());
