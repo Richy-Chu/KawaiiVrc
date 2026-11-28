@@ -894,7 +894,12 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 Avatar? publicById = null;
                 try
                 {
-                    publicById = await _api.FindPublicAvatarByIdAsync(entry.AvatarId, avatarName);
+                    // The row's own picture has to agree with the index record, so a stale
+                    // id cannot make the row open some other avatar.
+                    publicById = await _api.FindPublicAvatarByIdAsync(
+                        entry.AvatarId,
+                        avatarName,
+                        entry.AvatarUrl);
                 }
                 catch (Exception ex)
                 {

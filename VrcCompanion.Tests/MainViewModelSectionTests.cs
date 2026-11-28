@@ -1074,7 +1074,7 @@ public class MainViewModelSectionTests
                 "name": "Frost",
                 "authorName": "Demon_Edi",
                 "releaseStatus": "public",
-                "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_frost/1/256"
+                "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_row_frost/1/256"
               }
             ]
             """;

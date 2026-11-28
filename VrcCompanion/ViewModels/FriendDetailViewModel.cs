@@ -1516,7 +1516,11 @@ public sealed class FriendDetailViewModel : ViewModelBase
         Avatar? indexed;
         try
         {
-            indexed = await _api.FindPublicAvatarByIdAsync(avatarId, item.Name, cancellationToken);
+            indexed = await _api.FindPublicAvatarByIdAsync(
+                avatarId,
+                item.Name,
+                string.IsNullOrWhiteSpace(item.ImageUrl) ? item.ThumbnailUrl : item.ImageUrl,
+                cancellationToken);
         }
         catch (OperationCanceledException)
         {

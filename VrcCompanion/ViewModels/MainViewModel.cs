@@ -9098,7 +9098,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // asked before the name fallbacks and before anything is locked.
             try
             {
-                var publicById = await _api.FindPublicAvatarByIdAsync(entry.AvatarId, name);
+                // The row already draws a picture for this avatar; the index record must
+                // show that same picture, not just carry the id.
+                var publicById = await _api.FindPublicAvatarByIdAsync(entry.AvatarId, name, entry.AvatarUrl);
                 if (publicById is not null)
                 {
                     AvatarLookupCache.Remember(publicById);

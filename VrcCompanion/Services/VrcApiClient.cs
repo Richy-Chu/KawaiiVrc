@@ -2164,12 +2164,18 @@ public sealed class VrcApiClient : IDisposable
     /// Confirms an avatar id against the public avatar indexes. VRChat answers 403/404
     /// for a record it will not expose, and that is not proof the avatar is private: a
     /// public avatar can be refused while a public index still lists it. Only a record
-    /// carrying the same id counts, so this can never substitute a different avatar that
-    /// merely shares a picture, a name or an author.
+    /// carrying the same id counts, and when the caller knows the avatar's picture the
+    /// record must show that same file too, so this can never substitute a different
+    /// avatar that merely shares an id, a picture, a name or an author.
     /// </summary>
+    /// <param name="pictureUrl">
+    /// The avatar picture the caller already has for this id. When both sides carry a
+    /// VRChat file id they must agree; a missing picture on either side is not compared.
+    /// </param>
     public async Task<Avatar?> FindPublicAvatarByIdAsync(
         string? avatarId,
         string? name = null,
+        string? pictureUrl = null,
         CancellationToken cancellationToken = default)
     {
         var id = avatarId?.Trim() ?? string.Empty;
@@ -2184,26 +2190,10 @@ public sealed class VrcApiClient : IDisposable
         deadline.CancelAfter(TimeSpan.FromSeconds(6));
         var token = deadline.Token;
 
-        // avtr.icu resolves a map keyed by the id it was asked about, so an avatar id
-        // asks the same question a picture's file id does.
-        try
-        {
-            var direct = await FetchAvtrIcuByAvatarIdAsync(id, token);
-            if (direct is not null)
-            {
-                return direct;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"avatar id index {id}: {ex.Message}");
-        }
-
-        // The federated search is asked with the id itself; a provider that ignores the
-        // query simply returns nothing that matches, and the id filter discards it.
+        // The federated search is asked with the id itself. This is the route verified
+        // against the live indexes: avtr.icu's search answers an avtr_… query with the
+        // exact record. Its /resolve map, which does answer picture file ids, is not
+        // asked: with an avatar id it returned the record only intermittently.
         try
         {
             var rows = await SearchAllCommunityAvatarsAsync(
@@ -2211,9 +2201,11 @@ public sealed class VrcApiClient : IDisposable
                 limit: 10,
                 providerLimit: 10,
                 cancellationToken: token);
-            var match = rows.FirstOrDefault(row => IsSamePublicAvatar(row, id));
+            var match = rows.FirstOrDefault(row => IsSamePublicAvatar(row, id, pictureUrl));
             if (match is not null)
             {
+                System.Diagnostics.Debug.WriteLine(
+                    $"public avatar id {id}: matched {match.SourceName}");
                 return match;
             }
         }
@@ -2239,7 +2231,7 @@ public sealed class VrcApiClient : IDisposable
                 limit: 50,
                 providerLimit: 50,
                 cancellationToken: token);
-            var match = rows.FirstOrDefault(row => IsSamePublicAvatar(row, id));
+            var match = rows.FirstOrDefault(row => IsSamePublicAvatar(row, id, pictureUrl));
             if (match is not null)
             {
                 return match;
@@ -2253,15 +2245,40 @@ public sealed class VrcApiClient : IDisposable
             System.Diagnostics.Debug.WriteLine($"avatar id name search {id}: {ex.Message}");
         }
 
+        System.Diagnostics.Debug.WriteLine($"public avatar id {id}: no public index listed it");
         return null;
     }
 
-    private static bool IsSamePublicAvatar(Avatar avatar, string avatarId)
+    private static bool IsSamePublicAvatar(Avatar avatar, string avatarId, string? pictureUrl)
         => !string.IsNullOrWhiteSpace(avatar.Id) &&
            !IsPlaceholderAvatarId(avatar.Id) &&
            string.Equals(avatar.Id.Trim(), avatarId, StringComparison.Ordinal) &&
            !avatar.IsPrivate &&
-           !avatar.IsUnavailable;
+           !avatar.IsUnavailable &&
+           AvatarPictureMatches(avatar, pictureUrl);
+
+    /// <summary>
+    /// True when the record shows the picture the caller already has. A record for the
+    /// same id must carry the same VRChat file id; when either side has no file id there
+    /// is nothing to compare, so the id match stands.
+    /// </summary>
+    internal static bool AvatarPictureMatches(Avatar avatar, string? pictureUrl)
+    {
+        var expected = ExtractAvatarFileId(pictureUrl);
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return true;
+        }
+
+        var actual = ExtractAvatarFileId(avatar.ImageUrl) ??
+                     ExtractAvatarFileId(avatar.ThumbnailImageUrl);
+        if (string.IsNullOrWhiteSpace(actual))
+        {
+            return true;
+        }
+
+        return string.Equals(actual, expected, StringComparison.Ordinal);
+    }
 
     private async Task<Avatar?> FetchVrcxAvatarByFileIdAsync(
         string name,
@@ -2319,41 +2336,6 @@ public sealed class VrcApiClient : IDisposable
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"avtr.icu avatar file lookup: {ex.Message}");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// The same map lookup, asked with an avatar id instead of a picture's file id.
-    /// Only a record that carries back the requested id is accepted.
-    /// </summary>
-    private async Task<Avatar?> FetchAvtrIcuByAvatarIdAsync(
-        string avatarId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var request = new HttpRequestMessage(
-                new HttpMethod("QUERY"),
-                "https://avtr.icu/resolve")
-            {
-                Content = JsonContent.Create(new { ids = new[] { avatarId } })
-            };
-            request.Headers.TryAddWithoutValidation("Referer", "https://vrccompanion.app");
-
-            using var response = await CommunityHttpForThisClient.SendAsync(request, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            var body = await ReadLimitedBodyAsync(response.Content, cancellationToken);
-            var avatar = ParseAvtrIcuAvatarObject(body, avatarId);
-            return avatar is not null && IsSamePublicAvatar(avatar, avatarId) ? avatar : null;
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"avtr.icu avatar id lookup: {ex.Message}");
             return null;
         }
     }

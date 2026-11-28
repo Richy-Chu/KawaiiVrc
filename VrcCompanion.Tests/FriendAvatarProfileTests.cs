@@ -359,6 +359,46 @@ public class FriendAvatarProfileTests
     }
 
     [Fact]
+    public async Task AnIndexRecordMustShowTheAvatarsPictureAndNotJustItsId()
+    {
+        AvatarLookupCache.Clear();
+        // An index row for the same id that draws another avatar's picture is not this
+        // avatar, so it cannot confirm the id as public.
+        TestHooks.UseCommunityHandler(new FrostIndexHandler("file_someone_else"));
+        try
+        {
+            using var api = new VrcApiClient(null, new NoAvatarHandler());
+            var otherPicture = await api.FindPublicAvatarByIdAsync(
+                "avtr_frost",
+                "Frost",
+                "https://api.vrchat.cloud/api/1/image/file_frost/1/256");
+            Assert.Null(otherPicture);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+
+        // The same row with the picture the avatar carries is the record.
+        TestHooks.UseCommunityHandler(new FrostIndexHandler());
+        try
+        {
+            using var api = new VrcApiClient(null, new NoAvatarHandler());
+            var samePicture = await api.FindPublicAvatarByIdAsync(
+                "avtr_frost",
+                "Frost",
+                "https://api.vrchat.cloud/api/1/image/file_frost/1/256");
+            Assert.NotNull(samePicture);
+            Assert.Equal("avtr_frost", samePicture!.Id);
+            Assert.Equal("public", samePicture.ReleaseStatus);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+        }
+    }
+
+    [Fact]
     public void NonFriendProfileUsesTheSameCurrentAvatarSection()
     {
         WithStore((store, notes) =>
@@ -1623,13 +1663,17 @@ public class FriendAvatarProfileTests
 
     private sealed class FrostIndexHandler : HttpMessageHandler
     {
+        private readonly string _frostPicture;
+
+        public FrostIndexHandler(string frostPicture = "file_frost") => _frostPicture = frostPicture;
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
             => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
-                    """
+                    $$"""
                     [
                       {
                         "id": "avtr_namesake_frost",
@@ -1643,7 +1687,7 @@ public class FriendAvatarProfileTests
                         "name": "Frost",
                         "authorName": "Demon_Edi",
                         "releaseStatus": "public",
-                        "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_frost/1/256"
+                        "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/{{_frostPicture}}/1/256"
                       }
                     ]
                     """,
