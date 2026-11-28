@@ -1519,7 +1519,7 @@ public sealed class FriendDetailViewModel : ViewModelBase
             indexed = await _api.FindPublicAvatarByIdAsync(
                 avatarId,
                 item.Name,
-                string.IsNullOrWhiteSpace(item.ImageUrl) ? item.ThumbnailUrl : item.ImageUrl,
+                TrustedAvatarPicture(item),
                 cancellationToken);
         }
         catch (OperationCanceledException)
@@ -1547,6 +1547,54 @@ public sealed class FriendDetailViewModel : ViewModelBase
         _avatarStore.RememberDetails(_api.CurrentUser?.Id, _userId, indexed, item.IsCurrent);
         return indexed;
     }
+
+    /// <summary>
+    /// The picture this card can compare with an index record. Only the profile's own
+    /// current-avatar image for this row counts: a custom profile image (icon, profile
+    /// picture override, or artwork VRChat echoed into the avatar fields) is a different
+    /// file from the avatar's picture, so comparing it would reject the correct record and
+    /// lock a public avatar.
+    /// </summary>
+    private string? TrustedAvatarPicture(FriendAvatar item)
+    {
+        if (!item.IsCurrent)
+        {
+            return null;
+        }
+
+        var profileId = _profile?.CurrentAvatar;
+        if (!string.IsNullOrWhiteSpace(profileId) &&
+            !string.IsNullOrWhiteSpace(item.AvatarId) &&
+            !string.Equals(profileId.Trim(), item.AvatarId.Trim(), StringComparison.Ordinal))
+        {
+            // The profile now names a different avatar, so this row's picture is history.
+            return null;
+        }
+
+        var image = FirstNonEmpty(
+            _profile?.CurrentAvatarImageUrl,
+            _friend.User.CurrentAvatarImageUrl,
+            _profile?.CurrentAvatarThumbnailImageUrl,
+            _friend.User.CurrentAvatarThumbnailImageUrl);
+        if (image is null)
+        {
+            return null;
+        }
+
+        var artwork = new[]
+        {
+            _profile?.UserIcon,
+            _profile?.IconUrl,
+            _friend.User.ProfilePicOverride,
+            _friend.User.ProfilePicOverrideThumbnail,
+            _friend.User.UserIcon,
+            _friend.User.IconUrl
+        };
+        return artwork.Any(candidate => SameImage(image, candidate)) ? null : image;
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
     private async Task<Avatar?> ResolveAvatarAsync(
         FriendAvatar item,

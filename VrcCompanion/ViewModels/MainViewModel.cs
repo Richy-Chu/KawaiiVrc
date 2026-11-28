@@ -9099,8 +9099,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             try
             {
                 // The row already draws a picture for this avatar; the index record must
-                // show that same picture, not just carry the id.
-                var publicById = await _api.FindPublicAvatarByIdAsync(entry.AvatarId, name, entry.AvatarUrl);
+                // show that same picture, not just carry the id. Only a picture that came
+                // with the id from the player's own record is trusted: a name-search guess
+                // can draw another avatar and must not lock this one.
+                var rowPicture = entry.AvatarIdIsAuthoritative ? entry.AvatarUrl : null;
+                var publicById = await _api.FindPublicAvatarByIdAsync(entry.AvatarId, name, rowPicture);
                 if (publicById is not null)
                 {
                     AvatarLookupCache.Remember(publicById);
@@ -9127,8 +9130,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         if (nameOnly)
         {
-            // Nothing identifies this avatar beyond its name, so no public record is opened;
-            // the row still shows the picture it already draws.
+            // The row has only a name, but it also draws a picture. A public index record
+            // for that exact picture is this avatar - a different avatar with the same name
+            // has a different picture - so it can open. With no such record the row stays
+            // locked and keeps its picture.
+            var pictured = await ResolveActivityAvatarByPictureAsync(entry, name);
+            if (pictured is not null)
+            {
+                return pictured;
+            }
+
             return LockedActivityAvatar(entry, name);
         }
 
@@ -9378,6 +9389,74 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Description =
                 "VRChat has not confirmed this avatar's record yet. The app is checking the public indexes; reopen it if it does not resolve."
         };
+    }
+
+    /// <summary>
+    /// The public index record for the picture a name-only row draws. The picture's own
+    /// file is the identity, so a namesake with a different photo cannot answer here; the
+    /// row opens exactly the avatar it is showing.
+    /// </summary>
+    private async Task<Avatar?> ResolveActivityAvatarByPictureAsync(ActivityEntry entry, string? name)
+    {
+        if (!entry.HasAvatarImage)
+        {
+            return null;
+        }
+
+        Avatar? indexed;
+        try
+        {
+            indexed = await _api.ResolveCommunityAvatarByImageAsync(entry.AvatarUrl, entry.UserId);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"activity avatar picture index: {ex.Message}");
+            return null;
+        }
+
+        // This was a picture query, so the record has to carry that same picture: an
+        // index that answers without one is not proof of which avatar the row draws.
+        var expected = ImageUrlHelper.ExtractFileId(entry.AvatarUrl);
+        var actual = indexed is null
+            ? null
+            : ImageUrlHelper.ExtractFileId(indexed.ImageUrl) ??
+              ImageUrlHelper.ExtractFileId(indexed.ThumbnailImageUrl);
+        if (indexed is null ||
+            string.IsNullOrWhiteSpace(indexed.Id) ||
+            indexed.IsPrivate ||
+            indexed.IsUnavailable ||
+            expected is null ||
+            !string.Equals(expected, actual, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        entry.AvatarId = indexed.Id;
+        entry.SetAvatarName(string.IsNullOrWhiteSpace(indexed.Name) ? name : indexed.Name);
+
+        // VRChat's record is authoritative when it answers; when it will not expose the
+        // avatar, the public index that lists its picture is still proof that it is public.
+        try
+        {
+            var avatar = await _api.GetAvatarAsync(indexed.Id);
+            if (avatar is not null)
+            {
+                if (avatar.IsPrivate || avatar.IsUnavailable)
+                {
+                    return null;
+                }
+
+                AvatarLookupCache.Remember(avatar);
+                return avatar;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"activity avatar pictured record: {ex.Message}");
+        }
+
+        AvatarLookupCache.Remember(indexed);
+        return indexed;
     }
 
     /// <summary>

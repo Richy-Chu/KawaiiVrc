@@ -1847,10 +1847,17 @@ public sealed class VrcApiClient : IDisposable
             ConnectCallback = ConnectCommunityAsync
         };
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
-        // avtr.icu rejects requests without a contact-bearing user agent.
+        // Two of the indexes check the user agent and disagree about the shape:
+        // avtr.icu wants a contact beside the app name and avtrDB (api.avtrdb.com)
+        // answers 403 to the old product token even with the same contact. Measured
+        // against both, this form is accepted by each: app name, version and a
+        // contact in parentheses.
+        var version = typeof(VrcApiClient).Assembly.GetName().Version is { } assemblyVersion
+            ? $"{assemblyVersion.Major}.{assemblyVersion.Minor}.{assemblyVersion.Build}"
+            : "1.0";
         client.DefaultRequestHeaders.TryAddWithoutValidation(
             "User-Agent",
-            "VrcCompanion/1.0 contact@vrccompanion.app");
+            $"KawaiiVrc/{version} (contact@vrccompanion.app)");
         return client;
     }
 

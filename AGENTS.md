@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1127 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1129 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.159**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.160**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,40 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.160 changed
+
+- **A custom profile image can no longer relock a public avatar.** 1.0.159 compared the
+  index record with the card's own picture, but a card whose picture is profile artwork (icon,
+  profile-picture override, or artwork VRChat echoed into the avatar image fields) has a file id
+  of its own, so the comparison rejected the correct record. `FriendDetailViewModel` now passes
+  only `TrustedAvatarPicture`: the profile's current-avatar image for the current row, and never
+  a URL that matches the profile artwork. With no trusted picture the id alone decides, which is
+  the behaviour 1.0.158 had. The Activity popup and logged rows likewise pass a picture only when
+  the id came with it from the player's own record (`AvatarIdIsAuthoritative`); a name-search
+  guess must not lock a correctly identified avatar.
+- **A name-only row can open the public avatar its picture belongs to.** 1.0.157 locked every
+  row that had an avatar name but no id and no author, which left a public avatar such as
+  "Hays 2.0 (mixed)" on the unavailable card. `MainViewModel.ResolveActivityAvatarByPictureAsync`
+  now asks the public indexes for the row's own picture file and accepts only a record that
+  carries that same picture; a namesake with a different photo still cannot answer, and the row
+  still never runs a name search. VRChat's record is used when it answers; the public index
+  record stands when VRChat will not expose it. No picture match means the row stays locked as
+  before.
+- **An open avatar popup is not blanked by the library refresh.** `AvatarViewModel.LoadLibraryAsync`
+  replaced `SelectedAvatar` with `_library.FirstOrDefault(id match)`, which is null for another
+  player's avatar and for a locked record with no id, so a background refresh could empty a popup
+  that was already open (and stop a late resolution from landing). It now only replaces the row
+  when the library actually has that id.
+- **avtrDB answers the app again.** `api.avtrdb.com` returned 403 to the old
+  `VrcCompanion/1.0 contact@…` user agent, and avtrDB is the first name index every lookup asks.
+  Measured against both index hosts, `KawaiiVrc/{version} (contact@vrccompanion.app)` is accepted
+  by avtrDB and by avtr.icu (which requires the contact), so `CreateCommunityHttp` now sends that
+  form, with the version read from the assembly.
+- **Tests: 1129.** New: `ANameOnlyRowOpensThePublicAvatarItsPictureBelongsTo`
+  (`MainViewModelSectionTests`, a name-only row whose index record carries its picture opens as
+  public with zero name searches) and `ACustomProfileImageNeverDecidesWhetherTheAvatarIsPublic`
+  (`FriendAvatarProfileTests`, artwork echoed into the avatar fields still opens by id).
 
 ### What 1.0.159 changed
 

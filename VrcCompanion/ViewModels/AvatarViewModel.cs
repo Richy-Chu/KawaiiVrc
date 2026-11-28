@@ -1696,10 +1696,17 @@ public sealed class AvatarViewModel : ViewModelBase
             // readable content chips.
             _ = HydrateMissingContentTagsAsync();
 
-            // Keep the detail view bound to the refreshed instance.
+            // Keep the detail view bound to the refreshed instance when the library
+            // knows it. Another player's avatar (or the locked record of a row that has
+            // no id) is not in this account's library, so a refresh must not blank a
+            // popup that is already open.
             if (SelectedAvatar is not null)
             {
-                SelectedAvatar = _library.FirstOrDefault(avatar => avatar.Id == SelectedAvatar.Id);
+                var refreshed = _library.FirstOrDefault(avatar => avatar.Id == SelectedAvatar.Id);
+                if (refreshed is not null)
+                {
+                    SelectedAvatar = refreshed;
+                }
             }
         }
         catch (VrcApiException ex)

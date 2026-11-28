@@ -399,6 +399,63 @@ public class FriendAvatarProfileTests
     }
 
     [Fact]
+    public async Task ACustomProfileImageNeverDecidesWhetherTheAvatarIsPublic()
+    {
+        var directory = NewDirectory();
+        TestHooks.UseCommunityHandler(new FrostIndexHandler());
+        try
+        {
+            using var api = new VrcApiClient(null, new NoAvatarHandler());
+            TestHooks.SetCurrentUser(api, new VrcUser { Id = "acct_me", DisplayName = "Me" });
+            const string artwork = "https://api.vrchat.cloud/api/1/image/file_custom_profile/1/256";
+            var profile = new FriendDetailViewModel(
+                new FriendItem(new VrcUser
+                {
+                    Id = UserId,
+                    DisplayName = "Avatar Person",
+                    CurrentAvatar = "avtr_frost",
+                    CurrentAvatarName = "Frost",
+                    // A custom profile image VRChat echoed into the avatar image fields.
+                    CurrentAvatarImageUrl = artwork,
+                    CurrentAvatarThumbnailImageUrl = artwork,
+                    UserIcon = artwork
+                }),
+                api,
+                ImageLoader.Shared,
+                new FriendNotesStore(Path.Combine(directory, "notes.json")),
+                avatarStore: new FriendAvatarStore(Path.Combine(directory, "avatars.json")));
+            profile.Profile = new VrcProfile
+            {
+                Id = UserId,
+                DisplayName = "Avatar Person",
+                CurrentAvatar = "avtr_frost",
+                CurrentAvatarName = "Frost",
+                CurrentAvatarImageUrl = artwork,
+                CurrentAvatarThumbnailImageUrl = artwork,
+                UserIcon = artwork
+            };
+
+            // VRChat refuses the record, and the card's only picture is the profile's custom
+            // image. The index lists the id, so the card is public: that image is not the
+            // avatar's picture and cannot decide the avatar's privacy.
+            await Settle.UntilAsync(() => profile.Avatars.Any(avatar =>
+                string.Equals(avatar.AvatarId, "avtr_frost", StringComparison.Ordinal) &&
+                avatar.IsPublic));
+
+            var avatar = profile.Avatars.First(item =>
+                string.Equals(item.AvatarId, "avtr_frost", StringComparison.Ordinal));
+            Assert.False(avatar.IsUnavailable);
+            Assert.False(avatar.IsPrivate);
+            Assert.Equal("Public", avatar.PrivacyLabel);
+        }
+        finally
+        {
+            TestHooks.UseCommunityHandler(null);
+            await DeleteDirectoryAsync(directory);
+        }
+    }
+
+    [Fact]
     public void NonFriendProfileUsesTheSameCurrentAvatarSection()
     {
         WithStore((store, notes) =>

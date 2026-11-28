@@ -243,6 +243,52 @@ public class MainViewModelSectionTests
     }
 
     [Fact]
+    public void ANameOnlyRowOpensThePublicAvatarItsPictureBelongsTo()
+    {
+        RunOnSta(() =>
+        {
+            var handler = new PicturedNameOnlyHandler();
+            TestHooks.UseCommunityHandler(handler);
+            try
+            {
+                using var api = new VrcApiClient(null, handler);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                // The log named this avatar without its author and the profile named no id,
+                // but the row draws the avatar's own picture and a public index has it. The
+                // picture is the identity, so the row opens that record - still with no name
+                // search that a namesake could answer.
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "chloe",
+                    AvatarName = "Hays 2.0 (mixed)",
+                    AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_hays_row/1/256",
+                    Details = "changed avatar · Hays 2.0 (mixed)"
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() => avatars.SelectedAvatar?.Id == "avtr_hays_public");
+                Assert.True(avatars.SelectedAvatar!.CanUse);
+                Assert.False(avatars.SelectedAvatar.IsUnavailable);
+                Assert.Equal("public", avatars.SelectedAvatar.ReleaseStatus);
+                Assert.Equal("Hays 2.0 (mixed)", avatars.SelectedAvatar.Name);
+                Assert.Equal("avtr_hays_public", entry.AvatarId);
+                Assert.Equal(0, handler.Searches);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
     public void AvatarRowOpensThePlayersOwnAvatarInsteadOfASameNamedOne()
     {
         RunOnSta(() =>
@@ -1004,6 +1050,67 @@ public class MainViewModelSectionTests
             });
     }
 
+    private sealed class PicturedNameOnlyHandler : HttpMessageHandler
+    {
+        private const string Record = """
+            [
+              {
+                "id": "avtr_hays_public",
+                "name": "Hays 2.0 (mixed)",
+                "authorName": "Hays Maker",
+                "releaseStatus": "public",
+                "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_hays_row/1/256"
+              }
+            ]
+            """;
+
+        private int _searches;
+
+        public int Searches => Volatile.Read(ref _searches);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri;
+            if (uri is null)
+            {
+                return Json("[]");
+            }
+
+            if (uri.Host.Contains("vrchat", StringComparison.OrdinalIgnoreCase))
+            {
+                if (uri.AbsolutePath.Contains("/avatars/", StringComparison.Ordinal))
+                {
+                    return Json("""
+                        {
+                          "id": "avtr_hays_public",
+                          "name": "Hays 2.0 (mixed)",
+                          "authorName": "Hays Maker",
+                          "releaseStatus": "public",
+                          "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_hays_row/1/256"
+                        }
+                        """);
+                }
+
+                if (uri.AbsolutePath.EndsWith("/avatars", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref _searches);
+                }
+
+                return Json("[]");
+            }
+
+            return Json(Record);
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
     private sealed class NamesakeProbeHandler : HttpMessageHandler
     {
         private int _searches;
@@ -1018,7 +1125,10 @@ public class MainViewModelSectionTests
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
-            if (path.Contains("/avatars/", StringComparison.Ordinal))
+            // Only VRChat's avatar endpoint counts: a community provider URL can also
+            // contain "/avatars/", and those requests are not avatar reads.
+            var isVrChat = request.RequestUri?.Host.Contains("vrchat", StringComparison.OrdinalIgnoreCase) == true;
+            if (isVrChat && path.Contains("/avatars/", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _avatarGets);
                 return Json("""
@@ -1031,7 +1141,8 @@ public class MainViewModelSectionTests
                     """);
             }
 
-            if (path.EndsWith("/avatars", StringComparison.Ordinal))
+            if (path.EndsWith("/avatars", StringComparison.Ordinal) &&
+                request.RequestUri?.Query.Contains("search=", StringComparison.Ordinal) == true)
             {
                 Interlocked.Increment(ref _searches);
                 return Json("""

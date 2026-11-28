@@ -895,11 +895,14 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 try
                 {
                     // The row's own picture has to agree with the index record, so a stale
-                    // id cannot make the row open some other avatar.
+                    // id cannot make the row open some other avatar. Only a picture that
+                    // came with the id from the player's record is trusted; a name-search
+                    // guess may draw a different avatar and must not lock this one.
+                    var rowPicture = entry.AvatarIdIsAuthoritative ? entry.AvatarUrl : null;
                     publicById = await _api.FindPublicAvatarByIdAsync(
                         entry.AvatarId,
                         avatarName,
-                        entry.AvatarUrl);
+                        rowPicture);
                 }
                 catch (Exception ex)
                 {
