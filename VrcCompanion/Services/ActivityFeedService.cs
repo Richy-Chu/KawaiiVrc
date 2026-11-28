@@ -108,6 +108,11 @@ public sealed class ActivityFeedService
                         DisplayName = friend.DisplayName,
                         AvatarUrl = AvatarChangeThumbnailUrl(friend),
                         AvatarId = friend.CurrentAvatar ?? string.Empty,
+                        // The friend's current record is the only source that may call a
+                        // refused avatar private, and its author is what lets the popup
+                        // reject a saved id that belongs to a same-named avatar.
+                        AvatarIdIsCurrentAvatar = !string.IsNullOrWhiteSpace(friend.CurrentAvatar),
+                        AvatarAuthor = friend.CurrentAvatarAuthorName,
                         AvatarName = friend.CurrentAvatarName ?? string.Empty,
                         Location = location ?? string.Empty,
                         Timestamp = detectedAt,

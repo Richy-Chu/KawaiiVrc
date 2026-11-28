@@ -406,6 +406,7 @@ public class MainViewModelSectionTests
                     DisplayName = "SyKari",
                     AvatarId = "avtr_sykari_private",
                     AvatarIdIsAuthoritative = true,
+                    AvatarIdIsCurrentAvatar = true,
                     AvatarName = ":3",
                     AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_sykari_cat/1/256",
                     Details = "changed avatar · :3"
@@ -421,6 +422,147 @@ public class MainViewModelSectionTests
                 Assert.False(avatars.SelectedAvatar.CanUse);
                 // Never the public namesake the index offered for this name.
                 Assert.NotEqual("avtr_gavial_public", avatars.SelectedAvatar.Id);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
+    public void ACurrentAvatarIdWithoutAPictureStillOpensAsPrivate()
+    {
+        RunOnSta(() =>
+        {
+            var probe = new PrivateAvatarProbeHandler();
+            TestHooks.UseCommunityHandler(probe);
+            try
+            {
+                using var api = new VrcApiClient(null, probe);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                // VRChat's user record can name the avatar without exposing its picture.
+                // That id is still the avatar the player wears, so a refused record is
+                // private rather than a reason to search the name and open gavial's ":3".
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "SyKari",
+                    AvatarId = "avtr_sykari_private",
+                    AvatarIdIsAuthoritative = true,
+                    AvatarIdIsCurrentAvatar = true,
+                    AvatarName = ":3",
+                    AvatarAuthor = "SyKari",
+                    Details = "changed avatar · :3"
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() => avatars.SelectedAvatar?.IsPrivate == true);
+                Assert.Equal("avtr_sykari_private", avatars.SelectedAvatar!.Id);
+                Assert.Equal(":3", avatars.SelectedAvatar.Name);
+                Assert.False(avatars.SelectedAvatar.CanUse);
+                Assert.NotEqual("avtr_gavial_public", avatars.SelectedAvatar.Id);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
+    public void ASavedIdThatIsRefusedIsUnavailableRatherThanPrivate()
+    {
+        RunOnSta(() =>
+        {
+            var probe = new PrivateAvatarProbeHandler();
+            TestHooks.UseCommunityHandler(probe);
+            try
+            {
+                using var api = new VrcApiClient(null, probe);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                // The id came from an older row, not the player's current record. VRChat
+                // refusing it proves neither that it is private nor that it is the avatar
+                // the row is about, so the card must not claim either.
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "SyKari",
+                    AvatarId = "avtr_sykari_old",
+                    AvatarIdIsAuthoritative = true,
+                    AvatarName = ":3",
+                    AvatarAuthor = "SyKari",
+                    AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_sykari_cat/1/256",
+                    Details = "changed avatar · :3"
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() => avatars.SelectedAvatar?.IsUnavailable == true);
+                Assert.Equal("avtr_sykari_old", avatars.SelectedAvatar!.Id);
+                Assert.Equal(":3", avatars.SelectedAvatar.Name);
+                Assert.Contains("file_sykari_cat", avatars.SelectedAvatar.ImageUrl);
+                Assert.False(avatars.SelectedAvatar.CanUse);
+                Assert.Contains("could not be confirmed", avatars.SelectedAvatar.Description);
+                Assert.NotEqual("avtr_gavial_public", avatars.SelectedAvatar.Id);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
+    public void AnIdWhoseRecordIsByAnotherAuthorIsNotAccepted()
+    {
+        RunOnSta(() =>
+        {
+            var handler = new WrongAuthorAvatarHandler();
+            TestHooks.UseCommunityHandler(handler);
+            try
+            {
+                using var api = new VrcApiClient(null, handler);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                // The saved id resolves to a public ":3" by Someone Else, while the log
+                // named gavial for this switch. The author check is what keeps that public
+                // record from being opened as the player's avatar.
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "SyKari",
+                    AvatarId = "avtr_wrong_author",
+                    AvatarIdIsAuthoritative = true,
+                    AvatarIdIsCurrentAvatar = true,
+                    AvatarName = ":3",
+                    AvatarAuthor = "gavial",
+                    AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_sykari_cat/1/256",
+                    Details = "changed avatar · :3"
+                };
+
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() => avatars.SelectedAvatar?.IsUnavailable == true);
+                Assert.Equal("avtr_wrong_author", avatars.SelectedAvatar!.Id);
+                Assert.False(avatars.SelectedAvatar.CanUse);
+                Assert.Contains("file_sykari_cat", avatars.SelectedAvatar.ImageUrl);
+                Assert.NotEqual("Someone Else", avatars.SelectedAvatar.AuthorName);
             }
             finally
             {
@@ -1317,6 +1459,46 @@ public class MainViewModelSectionTests
             }
 
             // The public indexes know no record for this private avatar.
+            return Json("[]");
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
+    /// <summary>
+    /// The saved id resolves to a public avatar, but by a different creator than the log
+    /// named for this switch.
+    /// </summary>
+    private sealed class WrongAuthorAvatarHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri;
+            if (uri is null)
+            {
+                return Json("[]");
+            }
+
+            if (uri.Host.Contains("vrchat", StringComparison.OrdinalIgnoreCase) &&
+                uri.AbsolutePath.Contains("/avatars/", StringComparison.Ordinal))
+            {
+                return Json("""
+                    {
+                      "id": "avtr_wrong_author",
+                      "name": ":3",
+                      "authorName": "Someone Else",
+                      "releaseStatus": "public",
+                      "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_other/1/256"
+                    }
+                    """);
+            }
+
             return Json("[]");
         }
 

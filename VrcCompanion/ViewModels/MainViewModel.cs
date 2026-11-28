@@ -6811,6 +6811,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _lastLoggedAvatars[CurrentUser.Id] = logged.Name;
         _lastLocalAvatarSwitchAt = DateTimeOffset.UtcNow;
         var known = AvatarLookupCache.FindByName(logged.Name);
+        // The cache is keyed by name alone, and a same-named avatar by another creator is a
+        // different avatar. Only the one the log's author matches may be used here.
+        if (known is not null &&
+            !ImageUrlHelper.AuthorFits(known.AuthorName, logged.AuthorName))
+        {
+            known = null;
+        }
+
         var avatarId = known?.Id ?? string.Empty;
         var image = !string.IsNullOrWhiteSpace(known?.ThumbnailImageUrl)
             ? known.ThumbnailImageUrl
@@ -9089,6 +9097,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     // The player's own record gave both the id and the picture, so this
                     // is the avatar they wear; the name may be missing from the payload.
                     entry.AvatarIdIsAuthoritative = true;
+                    entry.AvatarIdIsCurrentAvatar = true;
+                    if (string.IsNullOrWhiteSpace(entry.AvatarAuthor) &&
+                        !string.IsNullOrWhiteSpace(user.CurrentAvatarAuthorName))
+                    {
+                        entry.AvatarAuthor = user.CurrentAvatarAuthorName;
+                    }
+
                     entry.SetAvatarName(user.CurrentAvatarName);
                 }
             }
@@ -9102,7 +9117,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // An id taken from the player's own record is the avatar they wear, the same one
         // the row picture came from. A name search could return a different avatar that
         // shares the name, so it must not overrule this id.
-        var authoritative = entry.HasAvatar && entry.AvatarIdIsAuthoritative;
+        var authoritative = entry.HasAvatar &&
+                            (entry.AvatarIdIsAuthoritative || entry.AvatarIdIsCurrentAvatar);
         // The log named no author and the player's own record gave no id, so the only thing
         // this row has is the name - and a public avatar that shares it may well be someone
         // else's. It keeps the picture it draws and opens a locked record instead.
@@ -9110,6 +9126,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                        !entry.HasAvatar &&
                        string.IsNullOrWhiteSpace(entry.AvatarAuthor);
         Avatar? knownPrivate = null;
+        Avatar? rejectedPublic = null;
         if (entry.HasAvatar)
         {
             // Try the id we already have first. It is normally the correct public
@@ -9126,17 +9143,26 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                                           avatar.Name.Trim(),
                                           name.Trim(),
                                           StringComparison.OrdinalIgnoreCase);
+                    // A saved id can belong to another avatar that shares the name. The
+                    // author the log named is what tells the two apart, so a record by a
+                    // different author is not this avatar, whatever its id says.
+                    var authorFits = ActivityAvatarAuthorFits(entry, avatar);
                     if (!avatar.IsPrivate && !avatar.IsUnavailable &&
                         (authoritative || nameMatches))
                     {
-                        AvatarLookupCache.Remember(avatar);
-                        return avatar;
+                        if (authorFits)
+                        {
+                            AvatarLookupCache.Remember(avatar);
+                            return avatar;
+                        }
+
+                        rejectedPublic = avatar;
                     }
 
-                    if (avatar.IsPrivate)
+                    if (avatar.IsPrivate && authorFits)
                     {
-                        // Keep the authoritative private answer in case the
-                        // public name search has no better record.
+                        // Keep the private answer for this id in case the name search has
+                        // no better record.
                         knownPrivate = avatar;
                     }
                 }
@@ -9161,7 +9187,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 // can draw another avatar and must not lock this one.
                 var rowPicture = entry.AvatarIdIsAuthoritative ? entry.AvatarUrl : null;
                 var publicById = await _api.FindPublicAvatarByIdAsync(entry.AvatarId, name, rowPicture);
-                if (publicById is not null)
+                if (publicById is not null && ActivityAvatarAuthorFits(entry, publicById))
                 {
                     AvatarLookupCache.Remember(publicById);
                     return publicById;
@@ -9179,7 +9205,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // identifies the avatar they were wearing. VRChat refusing that record is what
             // a private or unlisted avatar looks like; a name search would only find a
             // different avatar that happens to share the name (VRChat names are not unique).
-            return knownPrivate ?? PrivateActivityAvatar(entry, name);
+            if (knownPrivate is not null)
+            {
+                return knownPrivate;
+            }
+
+            // Only a current-record id can be called private. A saved id may be an older
+            // avatar (or another avatar that shares the name), and a public record that
+            // failed the author check is not this avatar either, so both stay read-only.
+            return entry.AvatarIdIsCurrentAvatar && rejectedPublic is null
+                ? PrivateActivityAvatar(entry, name)
+                : UnavailableActivityAvatar(entry, name);
         }
 
         if (entry.HasAvatarName && !authoritative && !nameOnly)
@@ -9226,7 +9262,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Debug.WriteLine($"activity avatar image index: {ex.Message}");
         }
 
-        if (indexed is null || string.IsNullOrWhiteSpace(indexed.Id))
+        if (indexed is null ||
+            string.IsNullOrWhiteSpace(indexed.Id) ||
+            !ActivityAvatarAuthorFits(entry, indexed))
         {
             return null;
         }
@@ -9417,6 +9455,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ImageUrlHelper.AuthorFits(avatar.AuthorName, author));
     }
 
+    /// <summary>
+    /// A record with the author the log named is that avatar; a record by another author is
+    /// a different avatar that only shares the name. A missing author on either side is not
+    /// a contradiction, so it does not reject the record.
+    /// </summary>
+    private static bool ActivityAvatarAuthorFits(ActivityEntry entry, Avatar avatar)
+        => ImageUrlHelper.AuthorFits(avatar.AuthorName, entry.AvatarAuthor);
+
     private static bool ActivityAvatarImageMatches(VrcUser user, string? imageUrl)
     {
         var fileId = ImageUrlHelper.ExtractFileId(imageUrl);
@@ -9540,6 +9586,28 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Description =
                 "This is the avatar this player was wearing. VRChat does not expose another " +
                 "account's private avatar record, so only its owner can wear it."
+        };
+    }
+
+    /// <summary>
+    /// A saved avatar id that could not be confirmed. It is not called private: the id may
+    /// come from older history, so it can be an avatar that was deleted or a different
+    /// avatar that shares the name.
+    /// </summary>
+    private Avatar UnavailableActivityAvatar(ActivityEntry entry, string? name)
+    {
+        var imageUrl = ResolveActivityAvatarImage(entry);
+        return new Avatar
+        {
+            Id = entry.AvatarId,
+            Name = string.IsNullOrWhiteSpace(name) ? "Avatar unavailable" : name,
+            ImageUrl = imageUrl,
+            ThumbnailImageUrl = imageUrl,
+            ReleaseStatus = "unavailable",
+            Description =
+                "This row's saved avatar id could not be confirmed against VRChat or the " +
+                "public indexes. It may be an older avatar or a private one, so it is shown " +
+                "read-only."
         };
     }
 

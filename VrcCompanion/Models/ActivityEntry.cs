@@ -117,6 +117,15 @@ public sealed class ActivityEntry : INotifyPropertyChanged
     [JsonIgnore]
     public bool AvatarIdIsAuthoritative { get; set; }
 
+    /// <summary>
+    /// True when <see cref="AvatarId"/> came from the player's current VRChat record.
+    /// Only that may be reported as private when VRChat refuses the record: an id
+    /// remembered from older history can belong to another avatar with the same name or to
+    /// one that was deleted, and calling that private would be a guess. Not persisted.
+    /// </summary>
+    [JsonIgnore]
+    public bool AvatarIdIsCurrentAvatar { get; set; }
+
     /// <summary>The avatar the friend changed to, when this is an avatar change.</summary>
     [JsonPropertyName("avatarId")]
     public string AvatarId

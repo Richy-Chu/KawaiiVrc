@@ -658,9 +658,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             (nameMatches || (nameUnknown && !string.IsNullOrWhiteSpace(ownAvatarUrl))))
         {
             entry.AvatarId = friend.CurrentAvatar;
-            // Only a record with its picture is authoritative: without one the row still
-            // needs the name lookup to fill the circle, exactly as before.
-            entry.AvatarIdIsAuthoritative = !string.IsNullOrWhiteSpace(ownAvatarUrl);
+            // The friend's own record gave this id, so it identifies the avatar even when
+            // VRChat omitted its picture: the id lookup supplies that picture, and a refused
+            // record is private rather than a reason to search the name.
+            entry.AvatarIdIsAuthoritative = true;
+            // This id is the avatar VRChat's own user record says they wear right now, the
+            // only one that may be reported as private when VRChat refuses the record.
+            entry.AvatarIdIsCurrentAvatar = true;
             entry.AvatarUrl = ownAvatarUrl ?? string.Empty;
             if (string.IsNullOrWhiteSpace(entry.AvatarAuthor) &&
                 !string.IsNullOrWhiteSpace(friend.CurrentAvatarAuthorName))
@@ -741,6 +745,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         row.SetAvatarName(avatarName);
         // The account endpoint is the authority on what this account is wearing.
         row.AvatarIdIsAuthoritative = true;
+        row.AvatarIdIsCurrentAvatar = true;
         var image = ImageUrlHelper.PickAvatarThumbnailUrl(
             null,
             null,
@@ -881,7 +886,10 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 direct = await _api.GetAvatarAsync(entry.AvatarId);
                 if (direct is not null)
                 {
-                    if (!direct.IsPrivate && !direct.IsUnavailable)
+                    // A saved id may belong to another avatar that shares the name, so the
+                    // author the log named has to agree before the record is accepted.
+                    var authorFits = AvatarAuthorFits(entry, direct);
+                    if (!direct.IsPrivate && !direct.IsUnavailable && authorFits)
                     {
                         AvatarLookupCache.Remember(direct);
                         var directImage = !string.IsNullOrWhiteSpace(direct.ThumbnailImageUrl)
@@ -897,7 +905,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                         return;
                     }
 
-                    if (direct.IsPrivate)
+                    if (direct.IsPrivate && authorFits)
                     {
                         // VRChat answered for this exact id and said private. That is the
                         // answer, not a reason to look for a different avatar by name.
@@ -929,7 +937,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                     Debug.WriteLine($"log avatar public id {entry.AvatarId}: {ex.Message}");
                 }
 
-                if (publicById is not null)
+                if (publicById is not null && AvatarAuthorFits(entry, publicById))
                 {
                     AvatarLookupCache.Remember(publicById);
                     entry.AvatarId = publicById.Id;
@@ -957,7 +965,7 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 }
             }
 
-            if (entry.AvatarIdIsAuthoritative)
+            if (entry.AvatarIdIsAuthoritative || entry.AvatarIdIsCurrentAvatar)
             {
                 // The id came from the player's own record or from an avatar they were seen
                 // wearing. VRChat refusing it means private or unlisted; a name search would
@@ -997,6 +1005,9 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             _loggedAvatarLookups.Remove(entry.Id);
         }
     }
+
+    private static bool AvatarAuthorFits(ActivityEntry entry, Avatar avatar)
+        => ImageUrlHelper.AuthorFits(avatar.AuthorName, entry.AvatarAuthor);
 
     private static Avatar? PickMatchingAvatar(
         IEnumerable<Avatar> avatars,

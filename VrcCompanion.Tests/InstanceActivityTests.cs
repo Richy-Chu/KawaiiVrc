@@ -967,6 +967,25 @@ public class InstanceActivityTests
     }
 
     [Fact]
+    public void AProfileAvatarByAnotherCreatorDoesNotClaimTheSwitch()
+    {
+        var row = new InstanceActivityItem(AvatarRow("chloe", ":3", "gavial", 1));
+
+        // Her profile also wears an avatar called ":3", but it is her own private one. The
+        // log named gavial for this switch, so the profile's avatar is a different avatar.
+        row.SetPersonAvatarImage(
+            "https://files.vrchat.cloud/sykari-cat.png",
+            "avtr_sykari_private",
+            ":3",
+            "SyKari");
+
+        Assert.Equal(string.Empty, row.AvatarEntry!.AvatarId);
+        Assert.False(row.AvatarEntry.AvatarIdIsAuthoritative);
+        Assert.False(row.AvatarEntry.AvatarIdIsCurrentAvatar);
+        Assert.False(row.HasAvatarImage);
+    }
+
+    [Fact]
     public void AProfileNamingAnotherAvatarDoesNotClaimTheSwitch()
     {
         var row = new InstanceActivityItem(AvatarRow("chloe", "New Look", "Jamuu", 1));

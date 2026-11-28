@@ -196,10 +196,16 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         var author = avatarAuthor?.Trim() ?? string.Empty;
         // The profile's current avatar is this row's avatar only when the profile names the
         // same avatar or does not name one. A profile naming a different avatar is about a
-        // later switch, and stamping its id here would open the wrong record.
-        var sameAvatar = name.Length == 0 ||
-                         AvatarName.Length == 0 ||
-                         string.Equals(name, AvatarName.Trim(), StringComparison.OrdinalIgnoreCase);
+        // later switch, and stamping its id here would open the wrong record. The author the
+        // log named is the second check: a different creator means a different avatar even
+        // when the names are identical.
+        var authorConflict = AvatarAuthor.Length > 0 &&
+                             author.Length > 0 &&
+                             !ImageUrlHelper.AuthorFits(author, AvatarAuthor);
+        var sameAvatar = !authorConflict &&
+                         (name.Length == 0 ||
+                          AvatarName.Length == 0 ||
+                          string.Equals(name, AvatarName.Trim(), StringComparison.OrdinalIgnoreCase));
         // The id is the player's own record, so it identifies the avatar even when VRChat
         // does not expose that avatar's picture (a private avatar usually has none). The
         // popup then reports that exact record instead of searching the name and opening
@@ -216,6 +222,9 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
             {
                 entry.AvatarId = id;
                 entry.AvatarIdIsAuthoritative = true;
+                // The person lookup read the player's current VRChat record, so only this
+                // id may be reported as private when VRChat refuses the avatar.
+                entry.AvatarIdIsCurrentAvatar = true;
                 if (name.Length > 0)
                 {
                     entry.SetAvatarName(name);
@@ -352,6 +361,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         AvatarId = _personAvatarId.Length > 0 ? _personAvatarId : Activity.AvatarId,
         AvatarName = _personAvatarName.Length > 0 ? _personAvatarName : AvatarName,
         AvatarIdIsAuthoritative = _personAvatarId.Length > 0,
+        AvatarIdIsCurrentAvatar = _personAvatarId.Length > 0,
         AvatarAuthor = _personAvatarAuthor.Length > 0
             ? _personAvatarAuthor
             : string.IsNullOrWhiteSpace(AvatarAuthor) ? null : AvatarAuthor,
