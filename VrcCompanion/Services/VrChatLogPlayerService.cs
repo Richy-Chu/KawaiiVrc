@@ -107,8 +107,15 @@ public sealed class VrChatLogPlayerService
     private readonly Func<bool> _isGameRunning;
     private readonly Dictionary<string, VrChatLogPlayer> _players = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarNames = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _avatarAuthors =
-        new(StringComparer.OrdinalIgnoreCase);
+    // The author VRChat printed for a switch belongs to the player who switched, not to the
+    // avatar's name: a shared name like ":3" can be two different avatars, and an author left
+    // behind by another player's load must never be attached to this one.
+    private readonly Dictionary<string, string> _avatarAuthorByPlayer =
+        new(StringComparer.CurrentCultureIgnoreCase);
+    // VRChat writes "Unpacking Avatar (name by author)" beside the switch it belongs to. Hold
+    // it until that switch line arrives, then consume it so a later player cannot reuse it.
+    private string _pendingUnpackName = string.Empty;
+    private string _pendingUnpackAuthor = string.Empty;
     private readonly HashSet<string> _blockedNames = new(StringComparer.CurrentCultureIgnoreCase);
     private readonly HashSet<string> _unblockedNames = new(StringComparer.CurrentCultureIgnoreCase);
     private readonly List<VrChatLogActivity> _activity = new(ActivityLimit);
@@ -203,7 +210,9 @@ public sealed class VrChatLogPlayerService
                 _position = 0;
                 _players.Clear();
                 _avatarNames.Clear();
-                _avatarAuthors.Clear();
+                _avatarAuthorByPlayer.Clear();
+                _pendingUnpackName = string.Empty;
+                _pendingUnpackAuthor = string.Empty;
                 _blockedNames.Clear();
                 _unblockedNames.Clear();
                 ClearActivity();
@@ -220,7 +229,9 @@ public sealed class VrChatLogPlayerService
                 _position = 0;
                 _players.Clear();
                 _avatarNames.Clear();
-                _avatarAuthors.Clear();
+                _avatarAuthorByPlayer.Clear();
+                _pendingUnpackName = string.Empty;
+                _pendingUnpackAuthor = string.Empty;
                 ClearActivity();
                 _location = string.Empty;
             }
@@ -258,7 +269,9 @@ public sealed class VrChatLogPlayerService
     {
         _players.Clear();
         _avatarNames.Clear();
-        _avatarAuthors.Clear();
+        _avatarAuthorByPlayer.Clear();
+        _pendingUnpackName = string.Empty;
+        _pendingUnpackAuthor = string.Empty;
         _blockedNames.Clear();
         _unblockedNames.Clear();
         ClearActivity();
@@ -286,7 +299,7 @@ public sealed class VrChatLogPlayerService
                 continue;
             }
 
-            _avatarAuthors.TryGetValue(avatarName, out var author);
+            var author = AuthorFor(player.DisplayName);
             var key = string.IsNullOrWhiteSpace(player.UserId)
                 ? "name:" + player.DisplayName
                 : player.UserId;
@@ -299,8 +312,7 @@ public sealed class VrChatLogPlayerService
         var switches = new Dictionary<string, LoggedAvatar>(StringComparer.OrdinalIgnoreCase);
         foreach (var pair in _avatarNames)
         {
-            _avatarAuthors.TryGetValue(pair.Value, out var author);
-            switches[pair.Key] = new LoggedAvatar(pair.Value, author);
+            switches[pair.Key] = new LoggedAvatar(pair.Value, AuthorFor(pair.Key));
         }
 
         return new VrChatLogSnapshot(
@@ -335,6 +347,8 @@ public sealed class VrChatLogPlayerService
                     // these is what lets the box show everyone's avatar again.
                     _blockedNames.Clear();
                     _unblockedNames.Clear();
+                    _pendingUnpackName = string.Empty;
+                    _pendingUnpackAuthor = string.Empty;
                     // Joins and leaves belong to the room they happened in, so a new
                     // instance starts its own list instead of inheriting the last one.
                     ClearActivity();
@@ -359,7 +373,16 @@ public sealed class VrChatLogPlayerService
             var author = unpacking.Groups["author"].Value.Trim();
             if (avatarName.Length > 0 && author.Length > 0)
             {
-                _avatarAuthors[avatarName] = author;
+                // VRChat writes this line either just before or just after the switch it
+                // belongs to. Attach it to a recent switch of the same avatar when there is
+                // one; otherwise hold it for the switch that follows. It is never remembered
+                // by avatar name, because another player may wear a different avatar that
+                // shares the name.
+                if (!TryAttachAuthorToRecentSwitch(avatarName, author, LineTimestamp(line)))
+                {
+                    _pendingUnpackName = avatarName;
+                    _pendingUnpackAuthor = author;
+                }
             }
 
             return;
@@ -373,7 +396,19 @@ public sealed class VrChatLogPlayerService
             if (player.Length > 0 && avatar.Length > 0)
             {
                 _avatarNames[player] = avatar;
-                RecordAvatarChange(player, avatar, line);
+                // A switch consumes the unpack line beside it whether the names match or
+                // not, so a stale pending author cannot reach the next player.
+                var author = ConsumePendingAuthor(avatar);
+                if (author.Length > 0)
+                {
+                    _avatarAuthorByPlayer[player] = author;
+                }
+                else
+                {
+                    _avatarAuthorByPlayer.Remove(player);
+                }
+
+                RecordAvatarChange(player, avatar, line, author);
             }
 
             return;
@@ -392,7 +427,7 @@ public sealed class VrChatLogPlayerService
             // joined; RecordAvatarChange folds it into a real switch line if one follows.
             if (_avatarNames.TryGetValue(name, out var worn) && !string.IsNullOrWhiteSpace(worn))
             {
-                RecordAvatarChange(name, worn, line);
+                RecordAvatarChange(name, worn, line, AuthorFor(name));
             }
 
             return;
@@ -430,6 +465,8 @@ public sealed class VrChatLogPlayerService
             // The avatars stay known across a leave; see the Joining branch.
             _blockedNames.Clear();
             _unblockedNames.Clear();
+            _pendingUnpackName = string.Empty;
+            _pendingUnpackAuthor = string.Empty;
             ClearActivity();
             _location = string.Empty;
             return;
@@ -478,7 +515,11 @@ public sealed class VrChatLogPlayerService
     /// the row resolves it by name exactly like the Activity page's own switch rows; the
     /// author is filled in when that avatar's unpacking line has already been read.
     /// </summary>
-    private void RecordAvatarChange(string player, string avatarName, string line)
+    private void RecordAvatarChange(
+        string player,
+        string avatarName,
+        string line,
+        string? authorOverride = null)
     {
         // A join re-shows the avatar we already knew, and VRChat sometimes repeats a
         // switch line; either way the newest row for this player already says it.
@@ -495,7 +536,12 @@ public sealed class VrChatLogPlayerService
             .FirstOrDefault(candidate =>
                 string.Equals(candidate.DisplayName, player, StringComparison.CurrentCultureIgnoreCase))
             ?.UserId ?? string.Empty;
-        _avatarAuthors.TryGetValue(avatarName, out var author);
+        // Only the author this player's own switch paired with counts. Falling back to an
+        // author remembered for the avatar's name is what made one player's ":3" open
+        // another player's public avatar.
+        var author = !string.IsNullOrWhiteSpace(authorOverride)
+            ? authorOverride
+            : AuthorFor(player);
 
         RecordActivity(
             VrChatLogActivityKind.AvatarChanged,
@@ -505,6 +551,81 @@ public sealed class VrChatLogPlayerService
             line,
             avatarName,
             author ?? string.Empty);
+    }
+
+    /// <summary>
+    /// The author VRChat printed for this player's own switch. Empty when the log did not
+    /// pair an unpack line with it, which is the honest answer.
+    /// </summary>
+    private string AuthorFor(string player)
+        => !string.IsNullOrWhiteSpace(player) &&
+           _avatarAuthorByPlayer.TryGetValue(player, out var author)
+            ? author
+            : string.Empty;
+
+    /// <summary>
+    /// The switch a nearby unpack line belongs to. Only a switch of this avatar by the
+    /// player who still wears it, with no author yet, and only within a few seconds can be
+    /// that switch; an author from another player's older load is never attached.
+    /// </summary>
+    private bool TryAttachAuthorToRecentSwitch(
+        string avatarName,
+        string author,
+        DateTimeOffset at)
+    {
+        for (var index = _activity.Count - 1; index >= 0; index--)
+        {
+            var row = _activity[index];
+            if (at - row.At > TimeSpan.FromSeconds(3))
+            {
+                return false;
+            }
+
+            if (row.Kind != VrChatLogActivityKind.AvatarChanged ||
+                !string.Equals(row.AvatarName, avatarName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // The row must still be that player's current avatar; otherwise the unpack
+            // belongs to their later switch and the line below this one.
+            if (!_avatarNames.TryGetValue(row.DisplayName, out var latest) ||
+                !string.Equals(latest, avatarName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(row.AvatarAuthor))
+            {
+                return false;
+            }
+
+            _activity[index] = row with { AvatarAuthor = author };
+            _avatarAuthorByPlayer[row.DisplayName] = author;
+            _activitySnapshot = null;
+            _activityRevision++;
+            return true;
+        }
+
+        return false;
+    }
+
+    private string ConsumePendingAuthor(string avatarName)
+    {
+        if (_pendingUnpackName.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var author = string.Equals(
+            _pendingUnpackName,
+            avatarName,
+            StringComparison.OrdinalIgnoreCase)
+            ? _pendingUnpackAuthor
+            : string.Empty;
+        _pendingUnpackName = string.Empty;
+        _pendingUnpackAuthor = string.Empty;
+        return author;
     }
 
     private void RecordActivity(

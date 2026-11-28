@@ -6,13 +6,13 @@ KawaiiVrc is a WPF app (`VrcCompanion/`, net8.0-windows10.0.19041.0) with its xu
     dotnet build VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release -v q --nologo
     dotnet test VrcCompanion.Tests/VrcCompanion.Tests.csproj -c Release --no-build --nologo
 
-A full run is 1133 tests and takes about 5 minutes. CI builds with SDK 8, while a
+A full run is 1136 tests and takes about 5 minutes. CI builds with SDK 8, while a
 newer SDK may be the local default: to check SDK 8 compatibility, write a `global.json` with
 `{"sdk":{"version":"8.0.427","rollForward":"latestPatch"}}`, build, then delete it.
 
 ## Where the app stands
 
-`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.163**,
+`VrcCompanion/VrcCompanion.csproj` holds the only version. The latest shipped release is **1.0.164**,
 and every release from 1.0.78 on has been performance work: on a weak machine the
 window froze for five to six seconds at a time, and two log readers ran synchronously on the UI
 thread. The changes below are load-bearing and several have no test under them, so read this before
@@ -128,6 +128,42 @@ file inline and never freed it.
 
 - **Each notification filter can be marked read or cleared on its own.** The header keeps `MarkAllReadCommand`/`ClearAllNotificationsCommand` for the whole list; the filter row adds `MarkFilteredNotificationsReadCommand` and `ClearFilteredNotificationsCommand`, which work from `_notificationsView` - the selected filter tab plus the search box - so they touch exactly the rows on screen. Clearing still adds the ids to `_clearedNotificationIds` and persists; marking read still goes through VRChat one row at a time.
 - **The filter row shows its own counts.** `HasVisibleNotifications`/`HasUnreadVisibleNotifications` are raised from `UpdateNotificationFilterState`, and both buttons hide when the filter has nothing (or nothing unread) to act on.
+
+### What 1.0.164 changed
+
+- **A private avatar keeps its own identity, picture and status.** VRChat names an avatar in its
+  log but never its id or creator, and avatar names are not unique: two players in one instance
+  can wear two different avatars called ":3". A row whose id came from the player's own record
+  (`ActivityEntry.AvatarIdIsAuthoritative`) now opens exactly that record. When VRChat refuses it,
+  the popup shows that avatar's picture and says Private instead of falling through to a public
+  index and opening a namesake. `MainViewModel.PrivateActivityAvatar` is that card; do not replace
+  it with a name search, because a name cannot tell the two avatars apart.
+- **The log's creator belongs to the player's own switch, not to the avatar's name.**
+  `VrChatLogPlayerService` and `VrChatLogAvatarService` pair the `Unpacking Avatar (name by
+  creator)` line with the switch beside it, whether the log wrote the unpack first or the switch
+  first (`_avatarAuthorByPlayer`, `_authorsByPlayer`). A creator seen for another player's load is
+  no longer reused for every later avatar that shares the name; an unpaired switch has no creator,
+  which is the honest answer. `VrChatLogPlayerService.Current()` reads the per-player map for both
+  the roster and the switch list, so a row and its popup agree.
+- **A name search is never stored as the friend's avatar history.** `RememberDetails` ran with a
+  name-search guess under the friend's user id, so the wrong avatar became that friend's history
+  and every later row could resolve to it. Only an id confirmed by the player's own record or by
+  a picture match is remembered now.
+- **A lookup that answers with a different picture is rejected.** Both `MainViewModel`'s and
+  `ActivityFeedViewModel`'s name resolvers require the record to show the picture the row already
+  draws (`VrcApiClient.AvatarPictureMatches`), and never overwrite that picture with the record's.
+  A bare name with no creator no longer falls back to any same-named public avatar.
+- **A stale profile does not claim an older switch.** `InstanceActivityItem.SetPersonAvatarImage`
+  takes the profile's avatar id, name and picture only when the profile does not name an avatar or
+  names the same one the log did, so a player who has since switched does not stamp their new
+  avatar onto an older row. The id is still taken without a picture: that is exactly the private
+  case, and the popup reports it as private.
+- **Tests: 1136.** `InstanceActivityTests` adds
+  `AnAuthorFromAnotherPlayersAvatarLoadIsNotAttachedToASharedName` and
+  `AProfileNamingAnotherAvatarDoesNotClaimTheSwitch`; `MainViewModelSectionTests` adds
+  `APrivateAvatarThePlayerWearsIsNotReplacedByAPublicAvatarWithTheSameName` (VRChat refuses the
+  id, a public namesake answers every name search, and the popup still opens the private avatar
+  with its own picture).
 
 ### What 1.0.163 changed
 

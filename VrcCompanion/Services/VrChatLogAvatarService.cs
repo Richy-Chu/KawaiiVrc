@@ -49,7 +49,14 @@ public sealed class VrChatLogAvatarService
     private readonly Dictionary<string, string> _idsByName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarsByName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarsById = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _authorsByAvatarName = new(StringComparer.OrdinalIgnoreCase);
+    // An avatar's name is not unique, so an author is remembered for the player whose own
+    // switch line paired with its unpack line, never for every avatar that shares the name.
+    private readonly Dictionary<string, string> _authorsByPlayer = new(StringComparer.CurrentCultureIgnoreCase);
+    private string _pendingUnpackName = string.Empty;
+    private string _pendingUnpackAuthor = string.Empty;
+    // A switch whose unpack line has not been read yet. It is what an unpack line directly
+    // after the switch pairs with; the list is short because only the nearby lines matter.
+    private readonly List<(string Player, string Avatar)> _unpairedSwitches = new();
     private DateTime _lastRefresh = DateTime.MinValue;
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(30);
 
@@ -77,14 +84,19 @@ public sealed class VrChatLogAvatarService
 
             RefreshIfNeeded();
             string? avatar = null;
+            var playerName = string.IsNullOrWhiteSpace(displayName) ? null : displayName.Trim();
             if (!string.IsNullOrWhiteSpace(userId))
             {
                 _avatarsById.TryGetValue(userId, out avatar);
+                if (_namesById.TryGetValue(userId, out var knownName))
+                {
+                    playerName = knownName;
+                }
             }
 
-            if (string.IsNullOrWhiteSpace(avatar) && !string.IsNullOrWhiteSpace(displayName))
+            if (string.IsNullOrWhiteSpace(avatar) && playerName is not null)
             {
-                _avatarsByName.TryGetValue(displayName, out avatar);
+                _avatarsByName.TryGetValue(playerName, out avatar);
             }
 
             if (string.IsNullOrWhiteSpace(avatar))
@@ -92,7 +104,7 @@ public sealed class VrChatLogAvatarService
                 return null;
             }
 
-            _authorsByAvatarName.TryGetValue(avatar, out var author);
+            _authorsByPlayer.TryGetValue(playerName ?? string.Empty, out var author);
             return new LoggedAvatar(avatar, author);
         }
     }
@@ -199,6 +211,22 @@ public sealed class VrChatLogAvatarService
                         _avatarsById[playerId] = avatar;
                     }
 
+                    var unpackAuthor = ConsumePendingAuthor(avatar);
+                    if (unpackAuthor.Length > 0)
+                    {
+                        _authorsByPlayer[player] = unpackAuthor;
+                    }
+                    else
+                    {
+                        // No unpack line before this switch; VRChat may write it just after.
+                        _authorsByPlayer.Remove(player);
+                        _unpairedSwitches.Add((player, avatar));
+                        if (_unpairedSwitches.Count > 8)
+                        {
+                            _unpairedSwitches.RemoveAt(0);
+                        }
+                    }
+
                     continue;
                 }
 
@@ -217,7 +245,11 @@ public sealed class VrChatLogAvatarService
                 var author = unpacking.Groups["author"].Value.Trim();
                 if (avatarName.Length > 0 && author.Length > 0)
                 {
-                    _authorsByAvatarName[avatarName] = author;
+                    if (!TryAttachAuthorToRecentSwitch(avatarName, author))
+                    {
+                        _pendingUnpackName = avatarName;
+                        _pendingUnpackAuthor = author;
+                    }
                 }
             }
         }
@@ -225,6 +257,53 @@ public sealed class VrChatLogAvatarService
         {
             // Ignore a log being rotated while it is read.
         }
+    }
+
+    /// <summary>
+    /// Pairs an unpack line with the switch just before it, when that is the same avatar
+    /// and the player still wears it. Otherwise the line waits for the switch that follows.
+    /// </summary>
+    private bool TryAttachAuthorToRecentSwitch(string avatarName, string author)
+    {
+        for (var index = _unpairedSwitches.Count - 1; index >= 0; index--)
+        {
+            var (player, avatar) = _unpairedSwitches[index];
+            if (!string.Equals(avatar, avatarName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // An older switch by the same player is not the one this load belongs to.
+            if (!_avatarsByName.TryGetValue(player, out var latest) ||
+                !string.Equals(latest, avatarName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            _authorsByPlayer[player] = author;
+            _unpairedSwitches.RemoveAt(index);
+            return true;
+        }
+
+        return false;
+    }
+
+    private string ConsumePendingAuthor(string avatarName)
+    {
+        if (_pendingUnpackName.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var author = string.Equals(
+            _pendingUnpackName,
+            avatarName,
+            StringComparison.OrdinalIgnoreCase)
+            ? _pendingUnpackAuthor
+            : string.Empty;
+        _pendingUnpackName = string.Empty;
+        _pendingUnpackAuthor = string.Empty;
+        return author;
     }
 
     private static string LogDirectory() => VrcLogPaths.Directory;

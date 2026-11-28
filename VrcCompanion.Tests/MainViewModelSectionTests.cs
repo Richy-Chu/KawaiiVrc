@@ -382,6 +382,54 @@ public class MainViewModelSectionTests
     }
 
     [Fact]
+    public void APrivateAvatarThePlayerWearsIsNotReplacedByAPublicAvatarWithTheSameName()
+    {
+        RunOnSta(() =>
+        {
+            var probe = new PrivateAvatarProbeHandler();
+            TestHooks.UseCommunityHandler(probe);
+            try
+            {
+                using var api = new VrcApiClient(null, probe);
+                var shell = new MainViewModel(api);
+                TestHooks.SetLoggedIn(shell);
+                var avatars = new AvatarViewModel(api);
+                TestHooks.AttachAvatarViewModel(shell, avatars);
+
+                // Her own record says she wears this ":3" and draws its cat picture.
+                // VRChat will not expose that record. A public ":3" by gavial shares the
+                // name but is a different avatar, so it must not open in its place.
+                var entry = new ActivityEntry
+                {
+                    Type = ActivityType.AvatarChanged,
+                    UserId = "usr_activity",
+                    DisplayName = "SyKari",
+                    AvatarId = "avtr_sykari_private",
+                    AvatarIdIsAuthoritative = true,
+                    AvatarName = ":3",
+                    AvatarUrl = "https://api.vrchat.cloud/api/1/image/file_sykari_cat/1/256",
+                    Details = "changed avatar · :3"
+                };
+
+                Assert.True(shell.OpenActivityAvatarCommand.CanExecute(entry));
+                shell.OpenActivityAvatarCommand.Execute(entry);
+
+                Settle.Until(() => avatars.SelectedAvatar?.IsPrivate == true);
+                Assert.Equal("avtr_sykari_private", avatars.SelectedAvatar!.Id);
+                Assert.Equal(":3", avatars.SelectedAvatar.Name);
+                Assert.Contains("file_sykari_cat", avatars.SelectedAvatar.ImageUrl);
+                Assert.False(avatars.SelectedAvatar.CanUse);
+                // Never the public namesake the index offered for this name.
+                Assert.NotEqual("avtr_gavial_public", avatars.SelectedAvatar.Id);
+            }
+            finally
+            {
+                TestHooks.UseCommunityHandler(null);
+            }
+        });
+    }
+
+    [Fact]
     public void WearingAnAvatarRecordsTheSignedInUserImmediately()
     {
         RunOnSta(() =>
@@ -1218,6 +1266,58 @@ public class MainViewModelSectionTests
             }
 
             return Json(IndexRows);
+        }
+
+        private static Task<HttpResponseMessage> Json(string json)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+    }
+
+    /// <summary>
+    /// VRChat refuses the avatar record by id and a public namesake answers every name
+    /// search. A row whose id came from the player's own record must never reach it.
+    /// </summary>
+    private sealed class PrivateAvatarProbeHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri;
+            if (uri is null)
+            {
+                return Json("[]");
+            }
+
+            if (uri.Host.Contains("vrchat", StringComparison.OrdinalIgnoreCase))
+            {
+                if (uri.AbsolutePath.Contains("/avatars/", StringComparison.Ordinal))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+                }
+
+                if (uri.Query.Contains("search=", StringComparison.Ordinal))
+                {
+                    return Json("""
+                        [
+                          {
+                            "id": "avtr_gavial_public",
+                            "name": ":3",
+                            "authorName": "gavial",
+                            "releaseStatus": "public",
+                            "thumbnailImageUrl": "https://api.vrchat.cloud/api/1/image/file_gavial/1/256"
+                          }
+                        ]
+                        """);
+                }
+
+                return Json("[]");
+            }
+
+            // The public indexes know no record for this private avatar.
+            return Json("[]");
         }
 
         private static Task<HttpResponseMessage> Json(string json)

@@ -194,9 +194,17 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         var id = avatarId?.Trim() ?? string.Empty;
         var name = avatarName?.Trim() ?? string.Empty;
         var author = avatarAuthor?.Trim() ?? string.Empty;
-        // The id is authoritative only with the picture that goes with it, so a row
-        // never opens a record this profile did not actually draw.
-        if (id.Length > 0 && !string.IsNullOrWhiteSpace(url))
+        // The profile's current avatar is this row's avatar only when the profile names the
+        // same avatar or does not name one. A profile naming a different avatar is about a
+        // later switch, and stamping its id here would open the wrong record.
+        var sameAvatar = name.Length == 0 ||
+                         AvatarName.Length == 0 ||
+                         string.Equals(name, AvatarName.Trim(), StringComparison.OrdinalIgnoreCase);
+        // The id is the player's own record, so it identifies the avatar even when VRChat
+        // does not expose that avatar's picture (a private avatar usually has none). The
+        // popup then reports that exact record instead of searching the name and opening
+        // a different avatar that happens to share it.
+        if (id.Length > 0 && sameAvatar)
         {
             _personAvatarId = id;
             if (name.Length > 0)
@@ -219,9 +227,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
         // name. That name-plus-author pair is what lets View avatar open the right
         // public record instead of the locked "no author" card. It is only the same
         // avatar when the profile names the avatar this row is about.
-        if (author.Length > 0 &&
-            name.Length > 0 &&
-            string.Equals(name, AvatarName.Trim(), StringComparison.OrdinalIgnoreCase))
+        if (author.Length > 0 && name.Length > 0 && sameAvatar)
         {
             _personAvatarAuthor = author;
             if (_avatarEntry is { } entry)
@@ -230,7 +236,7 @@ public sealed class InstanceActivityItem : INotifyPropertyChanged
             }
         }
 
-        ApplyAvatarImage(url, priority: 2);
+        ApplyAvatarImage(sameAvatar ? url : null, priority: 2);
     }
 
     private void ApplyAvatarImage(string? url, int priority)

@@ -423,6 +423,32 @@ public class InstanceActivityTests
     }
 
     [Fact]
+    public void AnAuthorFromAnotherPlayersAvatarLoadIsNotAttachedToASharedName()
+    {
+        using var log = new LogFile(
+            $"2026.11.27 12:00:00 Log        -  [Behaviour] Joining {Location}",
+            $"2026.11.27 12:00:05 Log        -  [Behaviour] OnPlayerJoined Someone ({SomeoneId})",
+            $"2026.11.27 12:00:05 Log        -  [Behaviour] OnPlayerJoined Other ({OtherId})",
+            "2026.11.27 12:00:07 Log        -  [AssetBundleDownloadManager] [1] Unpacking Avatar (:3 by gavial)",
+            "2026.11.27 12:00:08 Log        -  [Behaviour] Switching Other to avatar :3",
+            // Another player wears a different avatar with the same name; VRChat already
+            // has that bundle loaded, so this switch has no unpack line of its own.
+            "2026.11.27 12:00:20 Log        -  [Behaviour] Switching Someone to avatar :3");
+
+        var service = new VrChatLogPlayerService(() => log.Path);
+        var activity = service.Poll()!.Activity!;
+
+        var other = Assert.Single(activity, row =>
+            row.Kind == VrChatLogActivityKind.AvatarChanged && row.DisplayName == "Other");
+        Assert.Equal("gavial", other.AvatarAuthor);
+
+        var someone = Assert.Single(activity, row =>
+            row.Kind == VrChatLogActivityKind.AvatarChanged && row.DisplayName == "Someone");
+        // The author belonged to Other's load, not to every avatar that shares the name.
+        Assert.Equal(string.Empty, someone.AvatarAuthor);
+    }
+
+    [Fact]
     public void TheAvatarFilterKeepsOnlyAvatarChanges()
     {
         var feed = new InstanceActivityFeed();
@@ -861,7 +887,7 @@ public class InstanceActivityTests
                 null,
                 own,
                 "avtr_her_davina",
-                "Her DAVINA")));
+                "DAVINA")));
 
         feed.Apply(new[] { AvatarRow("chloe", "DAVINA", "Jamuu", 1) });
 
@@ -870,7 +896,7 @@ public class InstanceActivityTests
         var entry = Assert.Single(feed.Activity).AvatarEntry!;
         Assert.Equal("avtr_her_davina", entry.AvatarId);
         Assert.True(entry.AvatarIdIsAuthoritative);
-        Assert.Equal("Her DAVINA", entry.AvatarName);
+        Assert.Equal("DAVINA", entry.AvatarName);
     }
 
     [Fact]
@@ -919,13 +945,13 @@ public class InstanceActivityTests
             null,
             own,
             "avtr_her_davina",
-            "Her DAVINA");
+            "DAVINA");
         feed.RefreshPerson(SomeoneId, "chloe");
 
         Assert.Equal(own, row.AvatarImageUrl);
         Assert.Equal("avtr_her_davina", row.AvatarEntry!.AvatarId);
         Assert.True(row.AvatarEntry!.AvatarIdIsAuthoritative);
-        Assert.Equal("Her DAVINA", row.AvatarEntry!.AvatarName);
+        Assert.Equal("DAVINA", row.AvatarEntry!.AvatarName);
     }
 
     [Fact]
@@ -938,6 +964,25 @@ public class InstanceActivityTests
         row.SetAvatarImage("https://files.vrchat.cloud/other-davina.png");
 
         Assert.Equal(own, row.AvatarImageUrl);
+    }
+
+    [Fact]
+    public void AProfileNamingAnotherAvatarDoesNotClaimTheSwitch()
+    {
+        var row = new InstanceActivityItem(AvatarRow("chloe", "New Look", "Jamuu", 1));
+
+        // Her profile has moved on to another avatar. That record is about a later switch,
+        // so its id, picture and name must not be stamped over the log's avatar.
+        row.SetPersonAvatarImage(
+            "https://files.vrchat.cloud/old-look.png",
+            "avtr_old_look",
+            "Old Look",
+            "Maker");
+
+        Assert.Equal(string.Empty, row.AvatarEntry!.AvatarId);
+        Assert.False(row.AvatarEntry.AvatarIdIsAuthoritative);
+        Assert.Equal("New Look", row.AvatarEntry.AvatarName);
+        Assert.False(row.HasAvatarImage);
     }
 
     [Fact]

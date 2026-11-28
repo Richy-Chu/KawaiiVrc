@@ -697,6 +697,9 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         }
 
         entry.AvatarId = known.AvatarId;
+        // This is an avatar this player was actually seen wearing under this name, so its
+        // id identifies the switch even though VRChat's log carries no id.
+        entry.AvatarIdIsAuthoritative = true;
         entry.AvatarUrl = !string.IsNullOrWhiteSpace(known.ThumbnailUrl)
             ? known.ThumbnailUrl
             : known.ImageUrl;
@@ -872,14 +875,12 @@ public sealed class ActivityFeedViewModel : ViewModelBase
         try
         {
             Avatar? direct = null;
+            Avatar? knownPrivate = null;
             if (entry.HasAvatar)
             {
                 direct = await _api.GetAvatarAsync(entry.AvatarId);
                 if (direct is not null)
                 {
-                    // A private same-name duplicate is not proof that this is the
-                    // avatar the friend switched to. Keep looking for the public
-                    // record by name before accepting it.
                     if (!direct.IsPrivate && !direct.IsUnavailable)
                     {
                         AvatarLookupCache.Remember(direct);
@@ -889,10 +890,18 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                         if (!string.IsNullOrWhiteSpace(directImage))
                         {
                             entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(directImage, 256) ?? directImage;
-                            entry.SetAvatarName(string.IsNullOrWhiteSpace(direct.Name) ? avatarName : direct.Name);
-                            SaveHistory();
-                            return;
                         }
+
+                        entry.SetAvatarName(string.IsNullOrWhiteSpace(direct.Name) ? avatarName : direct.Name);
+                        SaveHistory();
+                        return;
+                    }
+
+                    if (direct.IsPrivate)
+                    {
+                        // VRChat answered for this exact id and said private. That is the
+                        // answer, not a reason to look for a different avatar by name.
+                        knownPrivate = direct;
                     }
                 }
             }
@@ -948,6 +957,20 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 }
             }
 
+            if (entry.AvatarIdIsAuthoritative)
+            {
+                // The id came from the player's own record or from an avatar they were seen
+                // wearing. VRChat refusing it means private or unlisted; a name search would
+                // only find a different avatar that shares the name, so the row keeps the
+                // avatar and picture its own record gave.
+                if (knownPrivate is not null)
+                {
+                    AvatarLookupCache.Remember(knownPrivate);
+                }
+
+                return;
+            }
+
             var match = await FindLoggedAvatarAsync(avatarName, avatarAuthor);
             if (match is null)
             {
@@ -961,11 +984,8 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(image, 256) ?? image;
             entry.SetAvatarName(string.IsNullOrWhiteSpace(match.Name) ? avatarName : match.Name);
 
-            if (_accountId is not null && !string.IsNullOrWhiteSpace(entry.UserId))
-            {
-                _friendAvatars.RememberDetails(_accountId, entry.UserId, match, isCurrent: false);
-            }
-
+            // A name search is a guess about which avatar the player wore; storing it in
+            // their avatar history made the guess permanent for every later row.
             SaveHistory();
         }
         catch (Exception ex)
@@ -995,24 +1015,13 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             return null;
         }
 
-        var authorMatch = candidates.FirstOrDefault(avatar =>
+        // Only an avatar created by the author the log paired with this switch is that
+        // avatar. A bare name - or a record with no author - cannot tell two avatars with
+        // the same name apart, and picking one is what showed a stranger's avatar.
+        return candidates.FirstOrDefault(avatar =>
             !string.IsNullOrWhiteSpace(author) &&
             !string.IsNullOrWhiteSpace(avatar.AuthorName) &&
             ImageUrlHelper.AuthorFits(avatar.AuthorName, author));
-        if (authorMatch is not null)
-        {
-            return authorMatch;
-        }
-
-        if (string.IsNullOrWhiteSpace(author))
-        {
-            return candidates[0];
-        }
-
-        // The log named an author, and none of these avatars is by them. Another
-        // author's avatar that shares the name is a different avatar, so the row must
-        // not borrow it - that is what showed someone else's avatar for a switch.
-        return candidates.FirstOrDefault(avatar => string.IsNullOrWhiteSpace(avatar.AuthorName));
     }
 
     /// <summary>
@@ -2052,6 +2061,8 @@ public sealed class ActivityFeedViewModel : ViewModelBase
                 if (!string.IsNullOrWhiteSpace(known?.AvatarId))
                 {
                     entry.AvatarId = known.AvatarId;
+                    // Keyed by the picture the row draws, so the id belongs to that avatar.
+                    entry.AvatarIdIsAuthoritative = true;
                     if (!string.IsNullOrWhiteSpace(known.ReleaseStatus) &&
                         !string.Equals(known.ReleaseStatus, "private", StringComparison.OrdinalIgnoreCase))
                     {
@@ -2105,6 +2116,9 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             }
 
             entry.AvatarId = match.AvatarId;
+            // This avatar is in the player's own history under this name, so the id
+            // identifies the switch; a name search must not overrule it.
+            entry.AvatarIdIsAuthoritative = true;
             if (!entry.HasAvatarImage)
             {
                 entry.AvatarUrl = !string.IsNullOrWhiteSpace(match.ThumbnailUrl)
@@ -2203,6 +2217,8 @@ public sealed class ActivityFeedViewModel : ViewModelBase
             }
 
             entry.AvatarId = avatar.Id;
+            // The index matched this row's own picture, which is evidence for the avatar.
+            entry.AvatarIdIsAuthoritative = true;
             names.TryAdd(avatar.Id, avatar.Name);
             _friendAvatars.RememberImageResolution(
                 _accountId,

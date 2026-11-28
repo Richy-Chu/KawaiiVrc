@@ -9064,6 +9064,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 if (match is not null)
                 {
                     entry.AvatarId = match.AvatarId;
+                    // The picture file id matched an avatar this player was seen wearing,
+                    // so this id identifies the row's avatar; a name search must not
+                    // replace it with a different avatar that shares the name.
+                    entry.AvatarIdIsAuthoritative = true;
                     entry.SetAvatarName(match.Name);
                 }
             }
@@ -9082,6 +9086,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     ActivityAvatarImageMatches(user, entry.AvatarUrl))
                 {
                     entry.AvatarId = user.CurrentAvatar;
+                    // The player's own record gave both the id and the picture, so this
+                    // is the avatar they wear; the name may be missing from the payload.
+                    entry.AvatarIdIsAuthoritative = true;
                     entry.SetAvatarName(user.CurrentAvatarName);
                 }
             }
@@ -9164,6 +9171,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 Debug.WriteLine($"activity avatar public id: {ex.Message}");
             }
+        }
+
+        if (authoritative)
+        {
+            // The id and picture came from the player's own record, so this row already
+            // identifies the avatar they were wearing. VRChat refusing that record is what
+            // a private or unlisted avatar looks like; a name search would only find a
+            // different avatar that happens to share the name (VRChat names are not unique).
+            return knownPrivate ?? PrivateActivityAvatar(entry, name);
         }
 
         if (entry.HasAvatarName && !authoritative && !nameOnly)
@@ -9322,23 +9338,30 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return null;
         }
 
+        // The row already draws a picture of the avatar the player switched to. A record
+        // that shows another picture is a different avatar with the same name, however
+        // well its name and author match.
+        if (entry.HasAvatarImage &&
+            !VrcApiClient.AvatarPictureMatches(match, entry.AvatarUrl))
+        {
+            return null;
+        }
+
         AvatarLookupCache.Remember(match);
         entry.AvatarId = match.Id;
-        var image = !string.IsNullOrWhiteSpace(match.ThumbnailImageUrl)
-            ? match.ThumbnailImageUrl
-            : match.ImageUrl;
-        entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(image, 256) ?? image;
+        if (!entry.HasAvatarImage)
+        {
+            var image = !string.IsNullOrWhiteSpace(match.ThumbnailImageUrl)
+                ? match.ThumbnailImageUrl
+                : match.ImageUrl;
+            entry.AvatarUrl = ImageUrlHelper.ToThumbnailUrl(image, 256) ?? image;
+        }
+
         entry.SetAvatarName(string.IsNullOrWhiteSpace(match.Name) ? name : match.Name);
 
-        if (!string.IsNullOrWhiteSpace(entry.UserId) &&
-            !string.IsNullOrWhiteSpace(_api.CurrentUser?.Id))
-        {
-            FriendAvatarStore.Shared.RememberDetails(
-                _api.CurrentUser.Id,
-                entry.UserId,
-                match,
-                isCurrent: false);
-        }
+        // Deliberately not written to FriendAvatarStore: a name search is a guess about
+        // which avatar the player wore, and storing it as their history made that guess
+        // permanent for every later row.
 
         try
         {
@@ -9385,24 +9408,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return null;
         }
 
-        var authorMatch = candidates.FirstOrDefault(avatar =>
+        // Only an avatar created by the author the log paired with this switch is that
+        // avatar. A bare name - or a record with no author - cannot tell two avatars with
+        // the same name apart, and picking one is what showed a stranger's avatar.
+        return candidates.FirstOrDefault(avatar =>
             !string.IsNullOrWhiteSpace(author) &&
             !string.IsNullOrWhiteSpace(avatar.AuthorName) &&
             ImageUrlHelper.AuthorFits(avatar.AuthorName, author));
-        if (authorMatch is not null)
-        {
-            return authorMatch;
-        }
-
-        if (string.IsNullOrWhiteSpace(author))
-        {
-            return candidates[0];
-        }
-
-        // The log named an author, and none of these avatars is by them. Another
-        // author's avatar that shares the name is a different avatar, so this row must
-        // not borrow it - that is what showed someone else's avatar for a switch.
-        return candidates.FirstOrDefault(avatar => string.IsNullOrWhiteSpace(avatar.AuthorName));
     }
 
     private static bool ActivityAvatarImageMatches(VrcUser user, string? imageUrl)
@@ -9507,6 +9519,28 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         AvatarLookupCache.Remember(indexed);
         return indexed;
+    }
+
+    /// <summary>
+    /// The avatar the player's own record named, with that record's picture, when VRChat
+    /// will not expose the avatar and no public index lists its id. That is what another
+    /// account's private avatar looks like; it is shown as private rather than replaced by
+    /// a public avatar that shares its name.
+    /// </summary>
+    private Avatar PrivateActivityAvatar(ActivityEntry entry, string? name)
+    {
+        var imageUrl = ResolveActivityAvatarImage(entry);
+        return new Avatar
+        {
+            Id = entry.AvatarId,
+            Name = string.IsNullOrWhiteSpace(name) ? "Private avatar" : name,
+            ImageUrl = imageUrl,
+            ThumbnailImageUrl = imageUrl,
+            ReleaseStatus = "private",
+            Description =
+                "This is the avatar this player was wearing. VRChat does not expose another " +
+                "account's private avatar record, so only its owner can wear it."
+        };
     }
 
     /// <summary>
